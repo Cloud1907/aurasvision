@@ -91,7 +91,7 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(out_dir / (Path(source).stem + "_count.mp4")), fourcc, fps, (w, h))
 
-    yolo = load_yolo(model, device)
+    yolo = load_yolo(model, device, instance_key=camera_id)
     result = CountResult(fps=fps)
     frame_idx = 0
     track_hits: dict[int, int] = {}   # her track_id kaç karede görüldü (parça filtresi)
