@@ -1,0 +1,17 @@
+# --- Çekirdek (sayım + tespit + takip) ---
+ultralytics>=8.3.0          # YOLO + ByteTrack/BoT-SORT, torch (MPS) dahil
+lap>=0.5.12                 # ByteTrack ilişkilendirme (Ultralytics tracker bağımlılığı)
+opencv-python>=4.10.0
+numpy>=1.26,<2.2
+pyyaml>=6.0
+
+# --- Plaka (ALPR) ---
+fast-alpr>=0.1.0            # tespit + OCR (onnxruntime tabanlı)
+
+# --- Yüz (tanıma + anonim demografi) ---
+insightface>=0.7.3
+onnxruntime>=1.18.0        # Apple Silicon: CPU provider (POC için yeterli)
+
+# --- Web arayüzü ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0

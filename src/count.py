@@ -1,0 +1,165 @@
+"""Kişi sayma — YOLO + ByteTrack + çoklu çizgi geçişi.
+
+Her track'in merkez noktası, her çizginin hangi tarafında olduğuna bakılır; taraf
+değişimi = geçiş. A→B (pozitif tarafa) = giriş, B→A = çıkış. Birden çok çizgi
+desteklenir; her çizgi ayrı sayılır (isim + giriş/çıkış).
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from .config import Config
+from .detect import load_yolo
+from .device import select_device
+
+
+@dataclass
+class CountResult:
+    in_count: int = 0
+    out_count: int = 0
+    frames: int = 0
+    fps: float = 0.0
+    events: list[dict[str, Any]] = field(default_factory=list)
+    lines: list[dict[str, Any]] = field(default_factory=list)  # [{name,in,out}]
+
+
+def _side(px: float, py: float, line: tuple[float, float, float, float]) -> float:
+    x1, y1, x2, y2 = line
+    return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+
+
+def _ascii(s: str) -> str:
+    """cv2 Hershey fontu Türkçe karakter basamaz → ASCII'ye çevir."""
+    return (s or "").translate(str.maketrans("çğıİöşüÇĞÖŞÜ", "cgiIosuCGOSU"))
+
+
+def run_count(source: str, cfg: Config, save_video: bool = False,
+              store=None, run_id: int | None = None,
+              lines: list[dict] | None = None) -> CountResult:
+    """Videoda kişileri sayar. `lines`: [{"name","pts":[[ax,ay],[bx,by]]}] normalize.
+    Verilmezse config'teki tek çizgi kullanılır.
+    """
+    import cv2
+
+    model = cfg.get("detect.model", "yolo11n.pt")
+    device = select_device(cfg.get("device", "auto"))
+    classes = cfg.get("count.classes", [0])
+    tracker = cfg.get("count.tracker", "bytetrack.yaml")
+    conf = cfg.get("detect.conf", 0.35)
+    iou = cfg.get("detect.iou", 0.5)
+    imgsz = cfg.get("detect.imgsz", 640)
+    vid_stride = cfg.get("detect.vid_stride", 1)
+    min_track_frames = cfg.get("count.min_track_frames", 0)
+    anchor = cfg.get("count.anchor", "foot")   # foot=ayak (alt-orta, eğilmede kararlı) | center=merkez
+
+    if not lines:
+        ln = cfg.get("count.line", {"x1": 0.5, "y1": 0.0, "x2": 0.5, "y2": 1.0})
+        lines = [{"name": "Çizgi", "pts": [[ln["x1"], ln["y1"]], [ln["x2"], ln["y2"]]]}]
+
+    cap = cv2.VideoCapture(source)
+    if not cap.isOpened():
+        raise FileNotFoundError(f"Video açılamadı: {source}")
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    cap.release()
+
+    # Her çizgi için piksel koordinat + durum
+    L = []
+    for li in lines:
+        a, b = li["pts"][0], li["pts"][1]
+        L.append({"name": li.get("name") or "Çizgi",
+                  "px": (a[0] * w, a[1] * h, b[0] * w, b[1] * h),
+                  "last": {}, "counted": set(), "in": 0, "out": 0})
+
+    writer = None
+    if save_video:
+        out_dir = Path(cfg.get("paths.output_dir", "output"))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(out_dir / (Path(source).stem + "_count.mp4")), fourcc, fps, (w, h))
+
+    yolo = load_yolo(model, device)
+    result = CountResult(fps=fps)
+    frame_idx = 0
+    track_hits: dict[int, int] = {}   # her track_id kaç karede görüldü (parça filtresi)
+
+    for r in yolo.track(source=source, stream=True, persist=True, tracker=tracker,
+                        classes=classes, conf=conf, iou=iou, imgsz=imgsz,
+                        vid_stride=vid_stride, device=device, verbose=False):
+        frame_idx += 1
+        result.frames = frame_idx
+        ts = frame_idx * vid_stride / fps
+
+        boxes = r.boxes
+        if boxes is not None and boxes.id is not None:
+            ids = boxes.id.int().tolist()
+            xyxy = boxes.xyxy.tolist()
+            for tid, (x1, y1, x2, y2) in zip(ids, xyxy):
+                track_hits[tid] = track_hits.get(tid, 0) + 1
+                # Ayak noktası (alt-orta): eğilme/oturmada kutu merkezi kayar ama ayak sabit kalır
+                cx = (x1 + x2) / 2.0
+                cy = y2 if anchor == "foot" else (y1 + y2) / 2.0
+                for lc in L:
+                    s = _side(cx, cy, lc["px"])
+                    prev = lc["last"].get(tid)
+                    # Geçiş + bu track yeterince uzun görüldü mü (kısa parça/sahte ID sayılmaz)
+                    if (prev is not None and (prev <= 0 < s or prev >= 0 > s)
+                            and tid not in lc["counted"] and track_hits[tid] >= min_track_frames):
+                        direction = "in" if s > prev else "out"
+                        lc["counted"].add(tid)
+                        lc[direction] += 1
+                        if direction == "in":
+                            result.in_count += 1
+                        else:
+                            result.out_count += 1
+                        result.events.append({"track_id": tid, "direction": direction, "line": lc["name"],
+                                              "frame_idx": frame_idx, "ts_seconds": round(ts, 2)})
+                        if store and run_id is not None:
+                            store.add_count_event(run_id, tid, direction, frame_idx, ts, lc["name"])
+                    lc["last"][tid] = s
+
+        if writer is not None:
+            annotated = r.plot()
+            for lc in L:
+                _draw_line(cv2, annotated, lc)
+            # Sol üst: toplam + çizgi başına döküm
+            cv2.putText(annotated, f"TOPLAM  giris:{result.in_count}  cikis:{result.out_count}",
+                        (14, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 220, 0), 2)
+            for i, lc in enumerate(L):
+                cv2.putText(annotated, f"{_ascii(lc['name'])}: {lc['in']} / {lc['out']}",
+                            (14, 28 + 24 * (i + 1)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 0), 1)
+            writer.write(annotated)
+
+    if writer is not None:
+        writer.release()
+    if store is not None:
+        store.commit()
+    result.lines = [{"name": lc["name"], "in": lc["in"], "out": lc["out"]} for lc in L]
+    return result
+
+
+def _draw_line(cv2, img, lc) -> None:
+    """Çizgiyi A/B yan etiketleri + isim ile çizer (editörle aynı görünüm)."""
+    col = (0, 0, 255)  # KIRMIZI (BGR) — yoğun/parlak sahnede en görünür
+    ax, ay, bx, by = [int(v) for v in lc["px"]]
+    cv2.line(img, (ax, ay), (bx, by), col, 4)
+    for x, y in ((ax, ay), (bx, by)):           # uç tutamaçları
+        cv2.circle(img, (x, y), 5, (255, 255, 255), -1)
+        cv2.circle(img, (x, y), 5, col, 2)
+    mx, my = (ax + bx) / 2.0, (ay + by) / 2.0
+    dx, dy = bx - ax, by - ay
+    n = math.hypot(dx, dy) or 1.0
+    ux, uy = dx / n, dy / n
+    nx, ny = -uy, ux
+    off = 26
+    A = (int(mx - nx * off), int(my - ny * off))   # A yanı (negatif taraf)
+    B = (int(mx + nx * off), int(my + ny * off))   # B yanı (pozitif taraf = giriş)
+    for pt, lbl in ((A, "A"), (B, "B")):
+        cv2.circle(img, pt, 11, col, -1)
+        cv2.putText(img, lbl, (pt[0] - 5, pt[1] + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+    # çizgi adı — çizginin üstünde
+    cv2.putText(img, _ascii(lc["name"]), (ax + 8, ay - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)

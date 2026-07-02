@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Model ağırlıkları (repoya girmez — manifest forbidden)
+*.pt
+*.onnx
+*.engine
+~/.insightface/
+
+# Veri & çıktı
+data/videos/
+output/
+*.db
+*.sqlite
+
+# Ortam
+.env
+
+# macOS
+.DS_Store

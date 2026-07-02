@@ -1,0 +1,57 @@
+# VideoAI — POC yapılandırması
+# Tüm eşik/parametreler burada; kodda magic number yok (manifest convention).
+
+device: auto            # auto | mps | cuda | cpu  (auto: MPS > CUDA > CPU)
+
+# Kameralar — POC'ta demo videolar kamera gibi tanımlı.
+# Üretimde source: rtsp://kullanıcı:şifre@ip:554/stream (şifre .env'den, hardcode yok).
+cameras:
+  - id: giris
+    name: "Giriş Kapısı"
+    source: data/videos/people-detection.mp4
+  - id: otopark
+    name: "Otopark (ANPR)"
+    source: data/videos/person-bicycle-car-detection.mp4
+  - id: kasa
+    name: "Kasa Önü"
+    source: data/videos/store-aisle-detection.mp4
+
+server:
+  host: 127.0.0.1
+  port: 8000
+
+paths:
+  output_dir: output
+  db_path: output/videoai.db
+  video_dir: data/videos
+
+detect:
+  model: yolo11n.pt      # küçük model — M4'te akıcı; daha doğru için yolo11s/m
+  conf: 0.35             # tespit güven eşiği
+  iou: 0.5
+  imgsz: 640
+  vid_stride: 3          # her N karede bir işle (retail'de 2-3 yapıp yükü düşür)
+
+count:
+  classes: [0]           # COCO sınıf 0 = person
+  tracker: botsort.yaml  # BoT-SORT: ByteTrack'ten daha az ID kopması (mükerrer sayım azalır)
+  min_track_frames: 6    # bir track bu kadar kare görülmeden geçişi sayılmaz (parça/sahte ID filtresi)
+  # Çizgi geçişi: kareye göre normalize (0-1). Varsayılan: dikey orta çizgi.
+  line:
+    x1: 0.5
+    y1: 0.0
+    x2: 0.5
+    y2: 1.0
+
+plate:
+  # fast-alpr varsayılan modelleri (TR için ileride fine-tune)
+  detector: yolo-v9-t-384-license-plate-end2end
+  ocr: global-plates-mobile-vit-v2-model
+  min_conf: 0.4
+
+face:
+  model_pack: buffalo_l  # InsightFace: tespit + ArcFace + yaş/cinsiyet
+  det_size: 640
+  # Anonim demografi varsayılan; isimli tanıma KVKK kapısına bağlı (forbidden).
+  identify: false
+  match_threshold: 0.5   # cosine benzerlik eşiği (kalibre et)
