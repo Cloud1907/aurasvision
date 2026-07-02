@@ -53,9 +53,56 @@ Kaba kapasite (mevcut motor): 100 kam × 5 fps ÷ stride 3 ≈ 167 infer/sn gere
 
 ## Aşama 2 — TensorRT engine (yolo11s.engine, FP16 @640)
 
-Smoke test: tek akış `predict` 279 FPS (PyTorch yolo11s.pt: ~180 FPS).
+`yolo export model=yolo11s.pt format=engine half=True` (32 sn sürdü);
+config: `detect.model: yolo11s.engine`.
 
-(tablolar eklenecek)
+### Maksimum verim (dosya kaynak, 720p, vid_stride 3) — taban ile karşılaştırma
+
+| akış | toplam işlenen FPS (TRT s) | taban (PyTorch n) | kazanım | GPU util % | CPU % |
+|---|---|---|---|---|---|
+| 1 | 125.4 | 109.7 | 1.14× | 18 | 9.6 |
+| 8 | **268.0** | 124.1 | **2.16×** | 42 | 29.3 |
+| 16 | 224.7 | 102.0 | 2.20× | 34 | 29.5 |
+
+Not: TRT'de daha BÜYÜK model (s > n) çalışırken bile 2.2× verim. 8→16 thread'de
+düşüş sürüyor → Python thread modeli tavanı; Faz 3 batch pipeline'ın gerekçesi.
+
+### RTSP keep-up, 16 akış (TRT)
+
+| akış | işlenen FPS ort/min | toplam | GPU util ort/maks % | CPU % |
+|---|---|---|---|---|
+| 16 | 1.6 / 1.1 | 26.0 | 5 / 22 | 3.3 |
+
+### İkinci kademe: ONNX Runtime CUDA EP (onnxruntime-gpu 1.24, sbsa/cu130)
+
+| model | CPU ms/kare | CUDA ms/kare | kazanım |
+|---|---|---|---|
+| InsightFace det_10g (640) | 65 | 14.2 | 4.6× |
+| InsightFace tam pipeline (det+attrs) | — | 6.3 | — |
+| fast-alpr (det+OCR) | 17.6 | 7.3 | 2.4× |
+
+Kurulum notu: PyPI `onnxruntime` (CPU) ile GPU paketi aynı modül yolunu paylaşıyor —
+önce `pip uninstall onnxruntime`, sonra `pip install onnxruntime-gpu
+--index-url https://pypi.jetson-ai-lab.io/sbsa/cu130`. CUDA EP, cuDNN 9'u dlopen
+yolunda arar; venv'deki pip `nvidia-cudnn-cu13` kütüphaneleri `src/device.py
+_preload_cuda_libs()` ile RTLD_GLOBAL önden yüklenir.
+
+### imgsz 640 vs 1280 (doğruluk/hız, videoya eşit dağılmış 80 kare)
+
+| video | model@imgsz | ort. kişi/kare | maks | ms/kare |
+|---|---|---|---|---|
+| people-detection | yolo11n.pt@640 | 0.69 | 4 | 3.4 |
+| people-detection | yolo11s.engine@640 | 0.70 | 4 | **2.2** |
+| people-detection | yolo11s_1280.engine@1280 | 0.69 | 3 | 7.5 |
+| store-aisle | yolo11n.pt@640 | 3.31 | 5 | 3.2 |
+| store-aisle | yolo11s.engine@640 | 3.40 | 5 | **2.3** |
+| store-aisle | yolo11s_1280.engine@1280 | 3.50 | 6 | 7.5 |
+
+**Karar:** demo sahnelerinde (yakın/orta mesafe) 1280 kazandırmıyor (+%3 tespit,
+3.4× GPU maliyeti). Varsayılan `imgsz: 640` kalır; uzak/kalabalık sahneler için
+`yolo11s_1280.engine` üretilmiştir — kamera bazlı override (`cameras.tasks` JSONB)
+ile seçilir. (Config'teki crowd_meydan notu — n@640=1 vs s@1280=10 — uzak plan
+meydan sahnesi içindir; böyle kamera geldiğinde 1280 gerekir.)
 
 ## Notlar / bulgular
 

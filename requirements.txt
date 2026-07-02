@@ -11,6 +11,10 @@ fast-alpr>=0.1.0            # tespit + OCR (onnxruntime tabanlı)
 # --- Yüz (tanıma + anonim demografi) ---
 insightface>=0.7.3
 onnxruntime>=1.18.0        # Apple Silicon: CPU provider (POC için yeterli)
+# GB10/DGX Spark (aarch64 SBSA): resmî PyPI'da GPU wheel yok; şunu kullan:
+#   pip uninstall -y onnxruntime && \
+#   pip install onnxruntime-gpu --index-url https://pypi.jetson-ai-lab.io/sbsa/cu130
+# TensorRT engine (detect.model: yolo11s.engine) için: pip install tensorrt
 
 # --- Web arayüzü ---
 fastapi>=0.115.0

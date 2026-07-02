@@ -49,7 +49,8 @@ paths:
   video_dir: data/videos
 
 detect:
-  model: yolo11n.pt      # küçük model — M4'te akıcı; daha doğru için yolo11s/m
+  model: yolo11s.engine  # TensorRT FP16 (GB10; üret: yolo export model=yolo11s.pt format=engine half=True)
+                         # GPU'suz geliştirmede (Mac) yolo11n.pt kullan
   conf: 0.35             # tespit güven eşiği
   iou: 0.5
   imgsz: 640             # KALABALIK/uzak sahnede 1280 yap (ölçüm: crowd_meydan tek karede

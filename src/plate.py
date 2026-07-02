@@ -74,15 +74,17 @@ def _vote(reads: list[dict[str, Any]], max_dist: int = 2) -> list[dict[str, Any]
 
 
 @functools.lru_cache(maxsize=1)
-def _load_alpr(detector: str, ocr: str):
+def _load_alpr(detector: str, ocr: str, device: str = "auto"):
     """fast-alpr ALPR örneğini bir kez yükler (model reuse).
 
-    Apple Silicon: CoreML EP, yolo-v9 detektörünün dinamik şekliyle uyuşmuyor
-    (zero-element hatası). Bu yüzden CPU provider'a zorlanır — POC için yeterli.
+    CUDA'da GPU provider (onnxruntime-gpu varsa); MPS/CPU'da CPU provider
+    (Apple Silicon'da CoreML EP, yolo-v9 detektörünün dinamik şekliyle uyuşmuyor).
     """
     from fast_alpr import ALPR
 
-    providers = ["CPUExecutionProvider"]
+    from .device import ort_providers
+
+    providers = ort_providers(device)
     return ALPR(detector_model=detector, ocr_model=ocr,
                 detector_providers=providers, ocr_providers=providers)
 
@@ -107,7 +109,7 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     vid_stride = cfg.get("detect.vid_stride", 1)
     camera_id = camera_id or Path(source).stem
 
-    alpr = _load_alpr(detector, ocr)
+    alpr = _load_alpr(detector, ocr, cfg.get("device", "auto"))
 
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():

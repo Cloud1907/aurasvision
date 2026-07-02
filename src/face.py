@@ -119,11 +119,14 @@ def embed_largest_face(source: str, cfg: Config, samples: int = 12) -> list | No
 def _load_face(model_pack: str, det_size: int, device: str):
     """InsightFace FaceAnalysis'i bir kez yükler.
 
-    CUDA'da GPU provider (ctx_id=0); Apple Silicon/CPU'da CPU provider (ctx_id=-1).
+    CUDA'da GPU provider (ctx_id=0, onnxruntime-gpu varsa CUDA EP);
+    Apple Silicon/CPU'da CPU provider (ctx_id=-1).
     """
     from insightface.app import FaceAnalysis
 
-    app = FaceAnalysis(name=model_pack)
+    from .device import ort_providers
+
+    app = FaceAnalysis(name=model_pack, providers=ort_providers(device))
     ctx_id = 0 if device == "cuda" else -1   # MPS/CPU → -1 (CPU provider)
     app.prepare(ctx_id=ctx_id, det_size=(det_size, det_size))
     return app
