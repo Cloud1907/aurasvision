@@ -260,9 +260,11 @@ class RunPayload(BaseModel):
 
 
 def _webify(video_rel: str) -> None:
-    """OpenCV 'mp4v' çıktısını tarayıcı-uyumlu H.264'e çevirir (ffmpeg).
+    """OpenCV 'mp4v' çıktısını tarayıcı-uyumlu H.264'e çevirir.
 
-    Tarayıcılar mp4v (MPEG-4 Part 2) oynatmaz; H.264 (avc1) gerekir. ffmpeg kurulu.
+    Tarayıcılar mp4v (MPEG-4 Part 2) oynatmaz; H.264 (avc1) gerekir.
+    ffmpeg CLI varsa o kullanılır; yoksa PyAV (pip 'av', libx264 bundle'lı) —
+    GB10/DGX OS'ta host ffmpeg'i kurulu gelmiyor.
     """
     import shutil
     import subprocess
@@ -271,19 +273,38 @@ def _webify(video_rel: str) -> None:
     path = ROOT / cfg.get("paths.output_dir", "output") / name
     if not path.exists():
         return
-    ff = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
     tmp = path.with_name(path.stem + "_web.mp4")
+    ff = shutil.which("ffmpeg")
     try:
-        subprocess.run([ff, "-y", "-i", str(path), "-c:v", "libx264", "-preset", "veryfast",
-                        "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an",
-                        "-loglevel", "error", str(tmp)], check=True, timeout=300)
+        if ff:
+            subprocess.run([ff, "-y", "-i", str(path), "-c:v", "libx264", "-preset", "veryfast",
+                            "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an",
+                            "-loglevel", "error", str(tmp)], check=True, timeout=300)
+        else:
+            _webify_av(path, tmp)
         tmp.replace(path)
-    except Exception:
+    except Exception as e:
+        print(f"[server] webify başarısız ({name}): {e}", flush=True)
         if tmp.exists():
             try:
                 tmp.unlink()
             except OSError:
                 pass
+
+
+def _webify_av(src, dst) -> None:
+    """PyAV ile mp4v → H.264 (faststart, ses yok)."""
+    import av
+
+    with av.open(str(src)) as inp, av.open(str(dst), "w", options={"movflags": "+faststart"}) as out:
+        ivs = inp.streams.video[0]
+        ovs = out.add_stream("libx264", rate=ivs.average_rate or 25)
+        ovs.width, ovs.height = ivs.width, ivs.height
+        ovs.pix_fmt = "yuv420p"
+        ovs.options = {"preset": "veryfast"}
+        for frame in inp.decode(ivs):
+            out.mux(ovs.encode(frame))
+        out.mux(ovs.encode(None))
 
 
 JOBS: dict[str, dict] = {}
