@@ -41,7 +41,19 @@ go2rtc:
   config_path: go2rtc/go2rtc.yaml   # API kameralardan otomatik üretir
 
 worker:
-  loop_interval: 30   # dosya kaynakları: analiz bitince kaç sn sonra tekrar (0 = tek geçiş)
+  engine: nvdec       # nvdec: GB10 GPU pipeline (NVDEC+batch TensorRT, ADR-0003)
+                      # ultralytics: eski motor (Mac/CPU geliştirme + fallback)
+  # Kamera/worker oranı (GB10 ölçümü, docs/olcumler-gb10.md): worker başına ~48
+  # kamera tam 5 fps'te taşınır (GPU ~%40); 100 kamera = 2 worker süreci
+  # (AURAS_CAMERAS=... ile bölüştür). Tek worker 96 kamerada ~3.6 fps/kam'a düşer.
+  loop_interval: 30   # ultralytics motoru, dosya kaynakları: tur arası bekleme sn (0 = tek geçiş)
+  batch_max: 32       # nvdec: tek TensorRT inference'ına girecek azami kare
+  second_stage_interval: 0.7   # nvdec: plaka/yüz tetikleri arası asgari sn (kamera başına)
+  plate_flush_seconds: 5.0     # nvdec: plaka okumalarının oylanıp DB'ye inme aralığı
+
+motion:               # nvdec: hareket ön-filtresi (Y-düzlemi fark, GPU)
+  enabled: true
+  min_frac: 0.002     # değişen piksel oranı bunun altındaysa kare analize girmez
 
 paths:
   output_dir: output
@@ -49,8 +61,10 @@ paths:
   video_dir: data/videos
 
 detect:
-  model: yolo11s.engine  # TensorRT FP16 (GB10; üret: yolo export model=yolo11s.pt format=engine half=True)
+  model: yolo11s.engine  # TensorRT FP16 dinamik batch (GB10; üret:
+                         # yolo export model=yolo11s.pt format=engine half=True dynamic=True batch=32)
                          # GPU'suz geliştirmede (Mac) yolo11n.pt kullan
+  fps: 5                 # nvdec motoru: kamera başına analiz temposu (substream hedefi)
   conf: 0.35             # tespit güven eşiği
   iou: 0.5
   imgsz: 640             # KALABALIK/uzak sahnede 1280 yap (ölçüm: crowd_meydan tek karede
@@ -81,3 +95,4 @@ face:
   # Anonim demografi varsayılan; isimli tanıma KVKK kapısına bağlı (forbidden).
   identify: false
   match_threshold: 0.5   # cosine benzerlik eşiği (kalibre et)
+  track_timeout_seconds: 2.0   # nvdec: yüz bu kadar sn görünmezse track kapanır (tek olay yazılır)

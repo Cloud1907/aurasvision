@@ -104,6 +104,59 @@ _preload_cuda_libs()` ile RTLD_GLOBAL önden yüklenir.
 ile seçilir. (Config'teki crowd_meydan notu — n@640=1 vs s@1280=10 — uzak plan
 meydan sahnesi içindir; böyle kamera geldiğinde 1280 gerekir.)
 
+## Aşama 3 — nvdec motoru (NVDEC + batch TensorRT pipeline, ADR-0003)
+
+### NVDEC ham decode kapasitesi (PyNvVideoCodec 2.1)
+
+| test | sonuç |
+|---|---|
+| tek akış 720p H.264 dosya | 2 751 kare/sn |
+| 4 paralel decoder | 3 815 kare/sn toplam |
+| 8 paralel decoder | **3 893 kare/sn** toplam (doyum) |
+| 32 eşzamanlı decoder oturumu | sorunsuz (0.3 sn'de açıldı) |
+| DLPack → torch | sıfır kopya, NV12 `(H·3/2, W)` uint8 cuda |
+
+Tek NVDEC ~3 900 kare/sn @720p → 100 kam × 5 fps (500 kare/sn) ihtiyacın ~7.8 katı.
+1080p'de tavan kabaca 2.5× düşer — substream kuralı (ADR-0002) geçerli.
+
+### Motor keep-up (bench-720p5 kaynaklar, hareket filtresi KAPALI, count görevi)
+
+| akış | hedef infer/sn | ölçülen (sürekli) | GPU util % | CPU % |
+|---|---|---|---|---|
+| 16 | 80 | 75-79 | ~40* | — |
+| 48 | ~235 | 233-237 | 38-41 | 25-35 |
+| 96 | ~470 | **339-347** | 80-82 | 49-57 |
+
+\* 16 akış ölçümü füzyonlu ön-işleme öncesi; sonrası daha düşük olur.
+Hedefteki küçük açık kaynak tarafı (ffmpeg döngü boşluğu, ~4.9 fps efektif).
+
+- 48 akışa kadar motor kaynak hızını birebir izler; **96 akışta ~3.6 fps/kamera**ya
+  iner (son-kare-kazanır: gecikme birikmez, tempo düşer). 96'da go2rtc'nin kendisi
+  de zorlanıyor (96 exec-ffmpeg producer'da tekil 5XX'ler) — gerçek RTSP kameralarda
+  bu katman yok.
+- **Kamera/worker oranı: 48** (GPU ~%40, tam 5 fps). 100 kamera = 2 worker süreci
+  (`AURAS_CAMERAS` bölüşümü) veya hareket filtresi açıkken tek worker
+  (tipik sahnede yük %30-60 düşer → 96 kam ≈ 190-330 infer/sn bandı).
+- Optimizasyon notu: NV12→RGB dönüşümü letterbox HEDEF çözünürlüğünde yapılıyor
+  (0.24 ms vs 0.79 ms/kare, tespitler birebir aynı); BGR yalnız plaka/yüz
+  tetiklenince üretiliyor. Bu değişiklik 48 akışta GPU'yu %96'dan %40'a indirdi.
+
+### Motor tasarım notları (ölçümle doğrulanmış)
+
+- **PyNvVideoCodec'in kendi demuxer'ı canlı akışta GIL tutuyor** — tek canlı TS
+  demux'ı bile tüm Python sürecini ~31× yavaşlatıyor (110k→3.5k tur/sn).
+  Çözüm: demux PyAV (av_read_frame GIL'siz) + paketler `PacketData` ile NVDEC'e.
+  `ThreadedDecoder` canlı akış desteklemiyor (seekable şart); callback-demuxer
+  hiç veri çekmiyor (asılı kalıyor).
+- PyNvVideoCodec demuxer'ı RTSP'de TCP'ye düşemiyor (`461 Unsupported transport`
+  → segfault); PyAV `rtsp_transport=tcp` ile sorun yok. Motor go2rtc HTTP-TS
+  veya RTSP-TCP tüketebilir.
+- Decoder thread'inde önce torch CUDA bağlamı aktive edilmeli; yoksa decoder
+  kendi bağlamını yaratıyor ve DLPack tensörleri çöp okunuyor.
+- Uçtan uca doğrulama: 3 demo kamerayla count+plate+face olayları
+  worker(nvdec)→Redis→ingestor→Timescale zincirinden geçti
+  (count 5, plate 5, face 37 yeni satır).
+
 ## Notlar / bulgular
 
 - **PyPI torch aarch64 wheel'i CUDA 13 ile geliyor** (`2.12.1+cu130`), ayrı index gerekmedi;

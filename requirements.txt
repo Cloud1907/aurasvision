@@ -25,3 +25,7 @@ psycopg[binary]>=3.1        # DATABASE_URL yoksa SQLite fallback (ek paket gerek
 
 # --- Olay veri yolu (worker → ingestor) ---
 redis>=5.0
+
+# --- GPU pipeline motoru (worker.engine: nvdec — GB10/CUDA makineler, ADR-0003) ---
+# pynvvideocodec>=2.1   # NVDEC decode (aarch64 wheel PyPI'da mevcut)
+# av>=15.0              # GIL-dostu demux (PyNvVideoCodec demuxer'ı canlı akışta GIL tutuyor)
