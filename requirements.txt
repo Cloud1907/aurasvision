@@ -15,3 +15,9 @@ onnxruntime>=1.18.0        # Apple Silicon: CPU provider (POC için yeterli)
 # --- Web arayüzü ---
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
+
+# --- Veritabanı (üretim: PostgreSQL + TimescaleDB + pgvector) ---
+psycopg[binary]>=3.1        # DATABASE_URL yoksa SQLite fallback (ek paket gerekmez)
+
+# --- Olay veri yolu (worker → ingestor) ---
+redis>=5.0

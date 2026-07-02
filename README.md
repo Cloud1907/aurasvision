@@ -30,7 +30,38 @@ python -m src.cli face    --source data/videos/people-detection.mp4
 python -m src.cli analyze --source data/videos/scene.mp4 --save
 ```
 
-Sonuçlar `output/videoai.db` (SQLite) içine yazılır; `--save` ile annotated video `output/` altına çıkar.
+Sonuçlar veritabanına yazılır; `--save` ile annotated video `output/` altına çıkar.
+
+**Veritabanı:** `DATABASE_URL` set ise PostgreSQL (TimescaleDB + pgvector), değilse
+SQLite (`output/aurasvision.db`) kullanılır. Postgres'i başlatmak için:
+
+```bash
+docker compose up -d db redis
+export DATABASE_URL=postgresql://auras:auras@localhost:5433/auras
+```
+
+**Web arayüzü:** `python -m src.server` → http://127.0.0.1:8000
+Erişim anahtarı için `AURAS_TOKEN=gizli` ortam değişkeni set edilir (UI ilk açılışta sorar).
+
+## Sürekli çalışma (Faz 2 — worker mimarisi)
+
+Test ekranı tek seferlik analiz içindir; sürekli izleme worker'la çalışır:
+
+```bash
+docker compose up -d db redis go2rtc      # altyapı (go2rtc = canlı izleme)
+export DATABASE_URL=postgresql://auras:auras@localhost:5433/auras
+export REDIS_URL=redis://localhost:6379/0
+
+python -m src.server     # UI + API (go2rtc config'ini otomatik üretir)
+python -m src.ingestor   # Redis → DB yazıcı
+python -m src.worker     # analiz — olayları Redis'e yayınlar
+```
+
+- Kamera başına görevler (Sayım/Plaka/Yüz) **Kameralar** ekranından açılıp kapanır;
+  worker bir sonraki turda otomatik uygular.
+- Ölçekleme: `AURAS_CAMERAS=giris,otopark python -m src.worker` ile kameralar
+  worker süreçlerine bölünür.
+- Kamera sağlığı (heartbeat) Kameralar ekranındaki durum çipinde görünür.
 
 ## Mimari
 
@@ -47,6 +78,12 @@ src/
 ```
 
 Tüm eşik/parametreler [config.yaml](config.yaml)'de. Çizgi konumu, model boyutu, güven eşikleri, `vid_stride` (kare atlama) oradan ayarlanır.
+
+## Üretim mimarisi (100 kamera)
+
+Tek GPU'lu makinede ~100 kameraya ölçekleme mimarisi (go2rtc + TensorRT/Savant worker +
+Redis Streams + PostgreSQL/TimescaleDB/pgvector), tablo şeması ve faz planı:
+**[docs/mimari-100-kamera.md](docs/mimari-100-kamera.md)** (karar özeti: `.agent-ofis/decisions/0002`).
 
 ## Notlar (POC → üretim)
 

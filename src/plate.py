@@ -53,7 +53,10 @@ def _vote(reads: list[dict[str, Any]], max_dist: int = 2) -> list[dict[str, Any]
         if hit:
             hit["members"].append((t, c))
         else:
-            clusters.append({"rep": t, "members": [(t, c)]})
+            # temsilci okumadan kare/zaman bilgisini de taşı (DB olayı için)
+            clusters.append({"rep": t, "members": [(t, c)],
+                             "frame_idx": r.get("frame_idx", 0),
+                             "ts_seconds": r.get("ts_seconds", 0.0)})
     out = []
     for cl in clusters:
         # küme içinde en sık + en güvenilir metni temsilci seç
@@ -65,7 +68,8 @@ def _vote(reads: list[dict[str, Any]], max_dist: int = 2) -> list[dict[str, Any]
         best = max(score, key=lambda k: (cnt[k], score[k]))
         confs = [c for _, c in cl["members"] if c]
         out.append({"plate": best, "count": len(cl["members"]),
-                    "conf": round(sum(confs) / len(confs), 3) if confs else None})
+                    "conf": round(sum(confs) / len(confs), 3) if confs else None,
+                    "frame_idx": cl["frame_idx"], "ts_seconds": cl["ts_seconds"]})
     return sorted(out, key=lambda x: -x["count"])
 
 
@@ -94,13 +98,14 @@ def _as_float_conf(conf) -> float | None:
 
 
 def run_plate(source: str, cfg: Config, save_video: bool = False,
-              store=None, run_id: int | None = None, on_read=None) -> PlateResult:
+              store=None, camera_id: str = "", on_read=None) -> PlateResult:
     import cv2
 
     detector = cfg.get("plate.detector", "yolo-v9-t-384-license-plate-end2end")
     ocr = cfg.get("plate.ocr", "global-plates-mobile-vit-v2-model")
     min_conf = cfg.get("plate.min_conf", 0.4)
     vid_stride = cfg.get("detect.vid_stride", 1)
+    camera_id = camera_id or Path(source).stem
 
     alpr = _load_alpr(detector, ocr)
 
@@ -144,8 +149,6 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
                               "frame_idx": frame_idx, "ts_seconds": round(ts, 2)})
             if on_read:
                 on_read(plate, conf, frame_idx, round(ts, 2))
-            if store and run_id is not None:
-                store.add_plate_read(run_id, plate, conf, frame_idx, ts)
 
         if writer is not None:
             drawn = alpr.draw_predictions(frame)
@@ -155,8 +158,12 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     cap.release()
     if writer is not None:
         writer.release()
-    if store is not None:
-        store.commit()
-    # Çok-kareli oylama: gürültülü okumaları konsolide et
+    # Çok-kareli oylama: gürültülü okumaları konsolide et.
+    # DB'ye kare başına değil ARAÇ başına tek satır yazılır (track bazlı olay).
     res.voted = _vote(res.reads)
+    if store is not None:
+        for v in res.voted:
+            store.add_plate_event(camera_id, v["plate"], v["conf"], v["count"],
+                                  v["ts_seconds"], v["frame_idx"])
+        store.commit()
     return res

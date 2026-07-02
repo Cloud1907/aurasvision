@@ -15,30 +15,25 @@ Alt komutlar:
 from __future__ import annotations
 
 import argparse
-import datetime as dt
-import json
 import sys
+from pathlib import Path
 
 from .config import load_config
 from .device import select_device
-from .store import Store
+from .store import open_store
 
 
-def _now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat()
-
-
-def _open_store(cfg) -> Store:
-    return Store(cfg.get("paths.db_path", "output/videoai.db"))
+def _cam_id(source: str) -> str:
+    return Path(source).stem or source
 
 
 def cmd_count(args, cfg) -> int:
     from .count import run_count
 
-    store = _open_store(cfg)
-    run_id = store.start_run("count", args.source, _now_iso(),
-                             json.dumps({"model": cfg.get("detect.model")}))
-    res = run_count(args.source, cfg, save_video=args.save, store=store, run_id=run_id)
+    store = open_store(cfg)
+    store.start_run("count", args.source, {"model": cfg.get("detect.model")})
+    res = run_count(args.source, cfg, save_video=args.save, store=store,
+                    camera_id=_cam_id(args.source))
     store.close()
     print(f"✓ Sayım bitti — IN: {res.in_count}  OUT: {res.out_count}  "
           f"(kare: {res.frames}, fps: {res.fps:.1f})")
@@ -50,25 +45,28 @@ def cmd_count(args, cfg) -> int:
 def cmd_plate(args, cfg) -> int:
     from .plate import run_plate
 
-    store = _open_store(cfg)
-    run_id = store.start_run("plate", args.source, _now_iso(), "{}")
-    res = run_plate(args.source, cfg, save_video=args.save, store=store, run_id=run_id)
+    store = open_store(cfg)
+    store.start_run("plate", args.source)
+    res = run_plate(args.source, cfg, save_video=args.save, store=store,
+                    camera_id=_cam_id(args.source))
     store.close()
-    print(f"✓ Plaka bitti — okunan benzersiz plaka: {len(res.plates)}  "
-          f"(toplam okuma: {res.total_reads}, kare: {res.frames})")
-    for p in sorted(res.plates):
-        print(f"   • {p}")
+    print(f"✓ Plaka bitti — araç (oylama sonrası): {len(res.voted)}  "
+          f"(ham okuma: {res.total_reads}, kare: {res.frames})")
+    for v in res.voted:
+        print(f"   • {v['plate']}  ×{v['count']}")
     return 0
 
 
 def cmd_face(args, cfg) -> int:
     from .face import run_face
 
-    store = _open_store(cfg)
-    run_id = store.start_run("face", args.source, _now_iso(), "{}")
-    res = run_face(args.source, cfg, save_video=args.save, store=store, run_id=run_id)
+    store = open_store(cfg)
+    store.start_run("face", args.source)
+    res = run_face(args.source, cfg, save_video=args.save, store=store,
+                   camera_id=_cam_id(args.source))
     store.close()
-    print(f"✓ Yüz bitti — tespit: {res.detections}  (kare: {res.frames})")
+    print(f"✓ Yüz bitti — kişi (track): {res.detections}  "
+          f"(ham tespit: {res.raw_detections}, kare: {res.frames})")
     print(f"   Anonim demografi → erkek: {res.male}  kadın: {res.female}  "
           f"ort. yaş: {res.avg_age:.0f}")
     return 0

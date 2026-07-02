@@ -9,33 +9,58 @@ cameras:
   - id: giris
     name: "Giriş Kapısı"
     source: data/videos/people-detection.mp4
+    tasks: {count: true, plate: false, face: false}
   - id: otopark
     name: "Otopark (ANPR)"
     source: data/videos/person-bicycle-car-detection.mp4
+    tasks: {count: false, plate: true, face: false}
   - id: kasa
     name: "Kasa Önü"
     source: data/videos/store-aisle-detection.mp4
+    tasks: {count: true, plate: false, face: true}
 
 server:
   host: 127.0.0.1
   port: 8000
+  # Erişim anahtarı AURAS_TOKEN ortam değişkeninden okunur (config'e yazılmaz).
+
+db:
+  # PostgreSQL (Timescale+pgvector): DATABASE_URL ortam değişkeni öncelikli.
+  # Boşsa SQLite'a düşer (yerel demo). Örn: postgresql://auras:auras@localhost:5433/auras
+  url: ""
+
+redis:
+  # Olay veri yolu (worker → ingestor). REDIS_URL env öncelikli.
+  # Örn: redis://localhost:6379/0 — boşsa worker/ingestor çalışmaz (Test ekranı etkilenmez).
+  url: ""
+
+go2rtc:
+  # Canlı izleme fan-out'u. url set ise UI canlı görünümde go2rtc player kullanır
+  # (docker compose go2rtc servisini başlatır). Boş bırakılırsa snapshot moduna düşer.
+  url: http://localhost:1984
+  config_path: go2rtc/go2rtc.yaml   # API kameralardan otomatik üretir
+
+worker:
+  loop_interval: 30   # dosya kaynakları: analiz bitince kaç sn sonra tekrar (0 = tek geçiş)
 
 paths:
   output_dir: output
-  db_path: output/videoai.db
+  db_path: output/aurasvision.db   # yalnız SQLite fallback için
   video_dir: data/videos
 
 detect:
   model: yolo11n.pt      # küçük model — M4'te akıcı; daha doğru için yolo11s/m
   conf: 0.35             # tespit güven eşiği
   iou: 0.5
-  imgsz: 640
+  imgsz: 640             # KALABALIK/uzak sahnede 1280 yap (ölçüm: crowd_meydan tek karede
+                         # n@640=1, n@1280=7, s@1280=10 kişi) — GPU maliyeti ~4x artar
   vid_stride: 3          # her N karede bir işle (retail'de 2-3 yapıp yükü düşür)
 
 count:
   classes: [0]           # COCO sınıf 0 = person
   tracker: botsort.yaml  # BoT-SORT: ByteTrack'ten daha az ID kopması (mükerrer sayım azalır)
   min_track_frames: 6    # bir track bu kadar kare görülmeden geçişi sayılmaz (parça/sahte ID filtresi)
+  cooldown_seconds: 2.0  # aynı track'in aynı çizgide iki sayımı arası asgari süre (salınım filtresi)
   # Çizgi geçişi: kareye göre normalize (0-1). Varsayılan: dikey orta çizgi.
   line:
     x1: 0.5

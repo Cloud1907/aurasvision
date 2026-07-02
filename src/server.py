@@ -15,21 +15,21 @@ Basit, kullanıcı-dostu yönetim arayüzü için backend:
 """
 from __future__ import annotations
 
-import datetime as dt
-import json
+import os
+import secrets
 import threading
 import time
 import uuid
 from pathlib import Path
 
 import cv2
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import load_config
-from .store import Store
+from .store import DEFAULT_TASKS, merged_cameras, open_store
 
 cfg = load_config()
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,26 +37,57 @@ WEB_DIR = ROOT / "web"
 
 app = FastAPI(title="AurasVision")
 
+# Erişim anahtarı: AURAS_TOKEN env set edilirse /api ve /media korunur.
+# UI 401 alınca anahtar sorar (localStorage). Set edilmezse (yerel demo) auth kapalı.
+API_TOKEN = os.environ.get("AURAS_TOKEN", "")
 
-def _store() -> Store:
-    return Store(cfg.get("paths.db_path", "output/videoai.db"))
+
+@app.middleware("http")
+async def _auth(request: Request, call_next):
+    p = request.url.path
+    if API_TOKEN and (p.startswith("/api") or p.startswith("/media")):
+        tok = request.headers.get("authorization", "")
+        tok = tok[7:] if tok.lower().startswith("bearer ") else request.query_params.get("token", "")
+        if not secrets.compare_digest(tok, API_TOKEN):
+            return JSONResponse({"detail": "yetkisiz"}, status_code=401)
+    return await call_next(request)
 
 
-def _now() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat()
+def _store():
+    return open_store(cfg)
 
 
 def _cameras() -> list[dict]:
-    base = list(cfg.get("cameras", []) or [])
-    ids = {c.get("id") for c in base}
     s = _store()
     try:
-        for c in s.list_cameras_db():
-            if c["id"] not in ids:
-                base.append(c)
+        return merged_cameras(cfg, s)
     finally:
         s.close()
-    return base
+
+
+def _sync_go2rtc() -> None:
+    """Kameralardan go2rtc config'i üretir (canlı izleme fan-out'u).
+
+    Kullanıcı go2rtc YAML'ı elle düzenlemez — kamera eklenince burada yenilenir.
+    Dosya kaynakları ffmpeg: şemasıyla verilir (go2rtc döngüde oynatır).
+    """
+    rel = cfg.get("go2rtc.config_path", "")
+    if not rel:
+        return
+    path = ROOT / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["# Otomatik üretilir (src/server.py) — kamera eklendikçe yenilenir.",
+             "streams:"]
+    for c in _cameras():
+        src = str(c["source"])
+        if not src.startswith(("rtsp://", "rtmp://", "http://", "https://")):
+            # Dosya kaynağı → sonsuz döngülü RTSP (gerçek kamera simülasyonu).
+            # compose ./data/videos'u konteynerde /data/videos'a mount eder.
+            fpath = "/" + src.lstrip("/")
+            src = (f"exec:ffmpeg -re -stream_loop -1 -i {fpath}"
+                   " -c copy -f rtsp {output}")
+        lines.append(f"  {c['id']}: {src}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _camera(camera_id: str) -> dict | None:
@@ -89,7 +120,8 @@ def api_add_camera(p: CameraPayload):
         existing = {c["id"] for c in _cameras()}
         while cid in existing:
             cid = f"{base}-{i}"; i += 1
-        s.add_camera(cid, p.name, p.source, _now())
+        s.add_camera(cid, p.name, p.source)
+        _sync_go2rtc()
         return {"ok": True, "id": cid}
     finally:
         s.close()
@@ -100,9 +132,44 @@ def api_del_camera(cid: str):
     s = _store()
     try:
         s.delete_camera(cid)
+        _sync_go2rtc()
         return {"ok": True}
     finally:
         s.close()
+
+
+class TasksPayload(BaseModel):
+    tasks: dict
+
+
+@app.post("/api/cameras/{cid}/tasks")
+def api_set_tasks(cid: str, p: TasksPayload):
+    cam = _camera(cid)
+    if not cam:
+        raise HTTPException(404, "Kamera bulunamadı")
+    tasks = {k: bool(p.tasks.get(k, False)) for k in DEFAULT_TASKS}
+    s = _store()
+    try:
+        # config kamerası DB'de yoksa önce upsert (görevler DB'de yaşar)
+        s.add_camera(cid, cam["name"], cam["source"])
+        s.set_camera_tasks(cid, tasks)
+        return {"ok": True, "tasks": tasks}
+    finally:
+        s.close()
+
+
+@app.get("/api/health")
+def api_health():
+    s = _store()
+    try:
+        return s.latest_health()
+    finally:
+        s.close()
+
+
+@app.get("/api/sysinfo")
+def api_sysinfo():
+    return {"go2rtc": cfg.get("go2rtc.url", "")}
 
 
 # Snapshot TTL cache — VideoCapture pahalı; aynı kareyi N sn tekrar üretme (perf).
@@ -164,23 +231,24 @@ def api_save_zones(payload: ZonePayload):
         s.clear_zones(payload.camera)   # editör tam durumu gönderir → değiştir
         for z in payload.zones:
             s.add_zone(payload.camera, z.get("kind", "line"), z.get("name", ""),
-                       json.dumps(z.get("points", [])), json.dumps(z.get("classes", [])),
-                       z.get("direction", ""), _now())
+                       z.get("points", []), z.get("classes", []),
+                       z.get("direction", "AtoB"))
         return {"ok": True, "count": len(payload.zones)}
     finally:
         s.close()
 
 
 def _saved_lines(camera_id: str) -> list[dict]:
-    """Kameranın kayıtlı TÜM 'line' bölgelerini [{name,pts}] döndürür (çoklu çizgi)."""
+    """Kameranın kayıtlı TÜM 'line' bölgelerini [{name,pts,direction}] döndürür."""
     out: list[dict] = []
     s = _store()
     try:
         for z in s.list_zones(camera_id):
             if z["kind"] == "line":
-                pts = json.loads(z["points"] or "[]")
+                pts = z["points"] or []
                 if len(pts) >= 2:
-                    out.append({"name": z.get("name") or "Çizgi", "pts": [pts[0], pts[1]]})
+                    out.append({"name": z.get("name") or "Çizgi", "pts": [pts[0], pts[1]],
+                                "direction": z.get("direction") or "AtoB"})
     finally:
         s.close()
     return out
@@ -231,14 +299,16 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
         job.update(stage="sırada bekliyor (başka analiz çalışıyor)")
         RUN_LOCK.acquire()
     source = cam["source"]; stem = Path(source).stem
-    s = _store(); summary: dict = {}; videos: list[str] = []
+    s = None; summary: dict = {}; videos: list[str] = []
     try:
+        # store açılışı da try içinde: hata olursa kilit finally'de MUTLAKA bırakılır
+        s = _store()
         s.clear_analysis()  # her test koşusu temiz başlar (önceki olaylar/uyarılar silinir)
         if p.kind in ("count", "analyze"):
             job.update(stage="Sayım çalışıyor")
             from .count import run_count
-            rid = s.start_run("count", source, _now(), "{}")
-            res = run_count(source, cfg, save_video=True, store=s, run_id=rid,
+            s.start_run("count", source)
+            res = run_count(source, cfg, save_video=True, store=s, camera_id=p.camera,
                             lines=_saved_lines(p.camera) or None)
             summary["count"] = {"in": res.in_count, "out": res.out_count,
                                 "frames": res.frames, "lines": res.lines}
@@ -247,26 +317,26 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
             job.update(stage="Plaka çalışıyor")
             job["live"] = []   # okundukça canlı eklenir (UI aşağı akıtır)
             from .plate import run_plate
-            rid = s.start_run("plate", source, _now(), "{}")
-            res = run_plate(source, cfg, save_video=True, store=s, run_id=rid,
+            s.start_run("plate", source)
+            res = run_plate(source, cfg, save_video=True, store=s, camera_id=p.camera,
                             on_read=lambda pl, c, f, t: job["live"].append(
                                 {"plate": pl, "conf": round(c, 2) if c else None, "frame": f, "ts": t}))
             voted = res.voted or [{"plate": x, "count": 1, "conf": None} for x in res.plates]
             plates = [v["plate"] for v in voted]
             matches = s.match_plates(plates)
             for m in matches:
-                s.add_alert("plate", m["plate"], m["list_type"], m.get("label") or "", p.camera, _now())
+                s.add_alert("plate", m["plate"], m["list_type"], m.get("label") or "", p.camera)
             summary["plate"] = {"plates": plates, "total": res.total_reads,
                                 "voted": voted, "alerts": matches}
             videos.append(f"/media/{stem}_plate.mp4")
         if p.kind in ("face", "analyze"):
             job.update(stage="Yüz çalışıyor")
             from .face import run_face
-            watch = [{**w, "embedding": json.loads(w["embedding"])} for w in s.faces_with_embedding()]
-            rid = s.start_run("face", source, _now(), "{}")
-            res = run_face(source, cfg, save_video=True, store=s, run_id=rid, watch=watch)
+            watch = s.faces_with_embedding()
+            s.start_run("face", source)
+            res = run_face(source, cfg, save_video=True, store=s, camera_id=p.camera, watch=watch)
             for m in res.matches:
-                s.add_alert("face", m["name"], m["list_type"], m.get("label") or "", p.camera, _now())
+                s.add_alert("face", m["name"], m["list_type"], m.get("label") or "", p.camera)
             summary["face"] = {"detections": res.detections, "male": res.male, "female": res.female,
                                "avg_age": round(res.avg_age, 1), "alerts": res.matches}
             videos.append(f"/media/{stem}_face.mp4")
@@ -277,13 +347,16 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
     except Exception as e:  # job hatayı taşır, sunucu çökmez
         job.update(status="error", error=str(e))
     finally:
-        s.close()
+        if s is not None:
+            s.close()
         RUN_LOCK.release()
 
 
 @app.post("/api/run")
 def api_run(p: RunPayload):
     job_id = uuid.uuid4().hex[:12]
+    while len(JOBS) > 50:   # eski job kayıtları birikmesin
+        JOBS.pop(next(iter(JOBS)))
     JOBS[job_id] = {"status": "running", "stage": "başlıyor", "summary": {}, "videos": []}
     threading.Thread(target=_run_analysis, args=(job_id, p), daemon=True).start()
     return {"job_id": job_id}
@@ -337,20 +410,17 @@ def api_add_watch(p: WatchPayload):
     s = _store()
     try:
         if p.kind == "plate":
-            s.add_watch_plate(p.value, p.label, p.list_type, _now())
+            s.add_watch_plate(p.value, p.label, p.list_type)
             return {"ok": True}
         # yüz: kamera verildiyse o kareden embedding çıkar (enroll)
-        emb_json = None
-        enrolled = False
+        emb = None
         if p.camera:
             cam = _camera(p.camera)
             if cam:
                 from .face import embed_largest_face
                 emb = embed_largest_face(cam["source"], cfg)
-                if emb is not None:
-                    emb_json = json.dumps(emb); enrolled = True
-        s.add_watch_face(p.value, p.label, p.list_type, _now(), embedding=emb_json)
-        return {"ok": True, "enrolled": enrolled}
+        s.add_watch_face(p.value, p.label, p.list_type, embedding=emb)
+        return {"ok": True, "enrolled": emb is not None}
     finally:
         s.close()
 
@@ -381,6 +451,7 @@ app.mount("/media", StaticFiles(directory=_OUT), name="media")
 def main() -> None:
     import uvicorn
 
+    _sync_go2rtc()
     host = cfg.get("server.host", "127.0.0.1")
     port = int(cfg.get("server.port", 8000))
     uvicorn.run(app, host=host, port=port)

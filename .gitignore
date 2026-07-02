@@ -21,3 +21,6 @@ output/
 
 # macOS
 .DS_Store
+
+# go2rtc (API üretir; üretimde RTSP kimlik bilgisi içerir — repoya girmez)
+go2rtc/

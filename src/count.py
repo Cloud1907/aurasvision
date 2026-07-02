@@ -37,9 +37,12 @@ def _ascii(s: str) -> str:
 
 
 def run_count(source: str, cfg: Config, save_video: bool = False,
-              store=None, run_id: int | None = None,
+              store=None, camera_id: str = "",
               lines: list[dict] | None = None) -> CountResult:
-    """Videoda kişileri sayar. `lines`: [{"name","pts":[[ax,ay],[bx,by]]}] normalize.
+    """Videoda kişileri sayar.
+
+    `lines`: [{"name","pts":[[ax,ay],[bx,by]],"direction"}] normalize koordinat.
+    direction: 'AtoB' (A→B geçişi = giriş, varsayılan) | 'BtoA' (ters).
     Verilmezse config'teki tek çizgi kullanılır.
     """
     import cv2
@@ -54,10 +57,14 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
     vid_stride = cfg.get("detect.vid_stride", 1)
     min_track_frames = cfg.get("count.min_track_frames", 0)
     anchor = cfg.get("count.anchor", "foot")   # foot=ayak (alt-orta, eğilmede kararlı) | center=merkez
+    # Aynı track'in aynı çizgide iki sayımı arası asgari süre (titreşim/çizgi-üstü salınım filtresi)
+    cooldown = float(cfg.get("count.cooldown_seconds", 2.0))
+    camera_id = camera_id or Path(source).stem
 
     if not lines:
         ln = cfg.get("count.line", {"x1": 0.5, "y1": 0.0, "x2": 0.5, "y2": 1.0})
-        lines = [{"name": "Çizgi", "pts": [[ln["x1"], ln["y1"]], [ln["x2"], ln["y2"]]]}]
+        lines = [{"name": "Çizgi", "pts": [[ln["x1"], ln["y1"]], [ln["x2"], ln["y2"]]],
+                  "direction": "AtoB"}]
 
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
@@ -73,7 +80,9 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
         a, b = li["pts"][0], li["pts"][1]
         L.append({"name": li.get("name") or "Çizgi",
                   "px": (a[0] * w, a[1] * h, b[0] * w, b[1] * h),
-                  "last": {}, "counted": set(), "in": 0, "out": 0})
+                  # 'BtoA' seçilirse yön etiketi ters çevrilir (B→A geçişi = giriş)
+                  "flip": (li.get("direction") or "AtoB") == "BtoA",
+                  "last": {}, "last_count": {}, "in": 0, "out": 0})
 
     writer = None
     if save_video:
@@ -92,7 +101,8 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
                         vid_stride=vid_stride, device=device, verbose=False):
         frame_idx += 1
         result.frames = frame_idx
-        ts = frame_idx * vid_stride / fps
+        real_frame = frame_idx * vid_stride   # kaynaktaki gerçek kare numarası (yaklaşık)
+        ts = real_frame / fps
 
         boxes = r.boxes
         if boxes is not None and boxes.id is not None:
@@ -106,20 +116,24 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
                 for lc in L:
                     s = _side(cx, cy, lc["px"])
                     prev = lc["last"].get(tid)
-                    # Geçiş + bu track yeterince uzun görüldü mü (kısa parça/sahte ID sayılmaz)
+                    # Geçiş + track yeterince uzun + cooldown geçti mi
+                    # (ömür-boyu-tek-sayım YOK: girip çıkan kişi iki olay üretir → in−out = içerideki)
                     if (prev is not None and (prev <= 0 < s or prev >= 0 > s)
-                            and tid not in lc["counted"] and track_hits[tid] >= min_track_frames):
+                            and track_hits[tid] >= min_track_frames
+                            and ts - lc["last_count"].get(tid, -1e9) >= cooldown):
                         direction = "in" if s > prev else "out"
-                        lc["counted"].add(tid)
+                        if lc["flip"]:
+                            direction = "out" if direction == "in" else "in"
+                        lc["last_count"][tid] = ts
                         lc[direction] += 1
                         if direction == "in":
                             result.in_count += 1
                         else:
                             result.out_count += 1
                         result.events.append({"track_id": tid, "direction": direction, "line": lc["name"],
-                                              "frame_idx": frame_idx, "ts_seconds": round(ts, 2)})
-                        if store and run_id is not None:
-                            store.add_count_event(run_id, tid, direction, frame_idx, ts, lc["name"])
+                                              "frame_idx": real_frame, "ts_seconds": round(ts, 2)})
+                        if store is not None:
+                            store.add_count_event(camera_id, tid, direction, lc["name"], ts, real_frame)
                     lc["last"][tid] = s
 
         if writer is not None:

@@ -1,0 +1,53 @@
+# AurasVision — Faz 1 altyapısı (tek makine, arm64/amd64)
+# Kullanım:
+#   docker compose up -d db redis
+#   export DATABASE_URL=postgresql://auras:auras@localhost:5433/auras
+# (Host portu 5433: makinedeki olası yerel Postgres 5432 ile çakışmasın diye.)
+#   python -m src.server
+# Şema ilk açılışta otomatik yüklenir (db/schema.sql → initdb); PgStore da
+# tablolar yoksa aynı dosyayı kendisi uygular.
+services:
+  db:
+    build: ./db
+    container_name: auras-db
+    environment:
+      POSTGRES_USER: auras
+      POSTGRES_PASSWORD: auras          # üretimde .env'den değiştir
+      POSTGRES_DB: auras
+    command: postgres -c shared_preload_libraries=timescaledb
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auras -d auras"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:                                # olay veri yolu (Redis Streams: worker → ingestor)
+    image: redis:7-alpine
+    container_name: auras-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: redis-server --appendonly yes
+
+  go2rtc:                               # kamera ingest + WebRTC canlı izleme
+    image: alexxit/go2rtc               # multi-arch (arm64 dahil)
+    container_name: auras-go2rtc
+    ports:
+      - "1984:1984"                     # web UI + API
+      - "8554:8554"                     # RTSP relay
+      - "8555:8555/tcp"                 # WebRTC
+      - "8555:8555/udp"
+    volumes:
+      - ./go2rtc:/config                # go2rtc.yaml API tarafından üretilir
+      - ./data/videos:/data/videos:ro   # demo dosya kaynakları
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

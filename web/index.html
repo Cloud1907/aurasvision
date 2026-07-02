@@ -150,12 +150,28 @@ const NAV=[["live","Canlı","live"],["cams","Kameralar","cams"],["zones","Bölge
 const TITLES={live:["Canlı görünüm","Tüm kameralar gerçek zamanlı"],cams:["Kameralar","IP / RTSP kaynakları"],zones:["Bölgeler ve çizgiler","Görüntüye çiz · sürükle düzelt · ✕ sil"],test:["Test ve çalıştır","Analizi çalıştır, sonucu ve videoyu gör"],events:["Olaylar","Birleşik akış — sayım · plaka · yüz"],lists:["İzleme listeleri","Kara liste / VIP — eşleşince uyarı"]};
 let CAMS=[],active="live";
 const $=s=>document.querySelector(s);
-const api=(p,o)=>fetch("/api"+p,o).then(r=>r.json());
+/* XSS koruması: kullanıcı/OCR kaynaklı her değer innerHTML'e esc() ile girer */
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/* Erişim anahtarı (AURAS_TOKEN): 401 gelirse bir kez sorulur, localStorage'da tutulur */
+let TOKEN=localStorage.getItem('vai-token')||'';
+const tokq=()=>TOKEN?'&token='+encodeURIComponent(TOKEN):'';
+async function api(p,o={}){
+  o.headers=Object.assign({},o.headers||{},TOKEN?{Authorization:'Bearer '+TOKEN}:{});
+  const r=await fetch("/api"+p,o);
+  if(r.status===401){
+    const t=prompt("Erişim anahtarı (AURAS_TOKEN):");
+    if(t){TOKEN=t;localStorage.setItem('vai-token',t);return api(p,o);}
+    throw new Error("yetkisiz");
+  }
+  return r.json();
+}
+const snap=id=>"/api/snapshot?camera="+encodeURIComponent(id)+tokq();
 
 function toggleTheme(){const d=document.documentElement;const nx=(d.getAttribute('data-theme')==='dark')?'light':'dark';d.setAttribute('data-theme',nx);try{localStorage.setItem('vai-theme',nx);}catch(e){}themeBtn();}
 function themeBtn(){const dark=document.documentElement.getAttribute('data-theme')==='dark';$("#theme").innerHTML=svg(dark?'sun':'moon',17);}
 
-async function boot(){themeBtn();CAMS=await api("/cameras");render();}
+let SYS={go2rtc:""};
+async function boot(){themeBtn();[CAMS,SYS]=await Promise.all([api("/cameras"),api("/sysinfo").catch(()=>({go2rtc:""}))]);render();}
 function render(){
   $("#nav").innerHTML=`<div class="lbl">İzleme</div>`+NAV.slice(0,4).map(navHtml).join("")+`<div class="lbl">Kayıt</div>`+NAV.slice(4).map(navHtml).join("");
   clearInterval(window._liveTimer);
@@ -168,23 +184,37 @@ function go(id){active=id;render();}
 
 const SCREENS={
   live(){
+    // go2rtc varsa gerçek canlı akış (MSE/WebRTC player), yoksa 5 sn'de bir snapshot
+    const inner=c=>SYS.go2rtc
+      ?`<iframe src="${SYS.go2rtc}/stream.html?src=${encodeURIComponent(c.id)}&mode=mse" style="width:100%;height:100%;border:0;" allow="autoplay" loading="lazy"></iframe>`
+      :`<div class="skel"></div><img loading="lazy" src="${snap(c.id)}" data-cam="${esc(c.id)}" alt="${esc(c.name)}"
+             onload="this.classList.add('loaded');this.previousElementSibling.remove()"/>`;
     $("#content").innerHTML=`<div class="tiles">${CAMS.map(c=>`
       <div class="tile">
-        <div class="skel"></div>
-        <img loading="lazy" src="/api/snapshot?camera=${c.id}" alt="${c.name}"
-             onload="this.classList.add('loaded');this.previousElementSibling.remove()"/>
+        ${inner(c)}
         <div class="grad"></div>
         <span class="live"><i></i> CANLI</span>
-        <span class="nm">${c.name}</span>
+        <span class="nm">${esc(c.name)}</span>
       </div>`).join("")}</div>`;
     clearInterval(window._liveTimer);
-    window._liveTimer=setInterval(()=>{document.querySelectorAll('.tile img').forEach(im=>{im.src=im.src.split('&t=')[0]+'&t='+Date.now();});},5000);
+    if(!SYS.go2rtc)window._liveTimer=setInterval(()=>{document.querySelectorAll('.tile img').forEach(im=>{im.src=snap(im.dataset.cam)+'&t='+Date.now();});},5000);
   },
-  cams(){
+  async cams(){
+    // worker heartbeat'inden gerçek durum (15 sn'den taze = çalışıyor)
+    let hs={};try{(await api("/health")).forEach(h=>hs[h.camera_id]=h);}catch(e){}
+    const stChip=c=>{const h=hs[c.id];
+      if(!h)return '<span class="chip" style="background:var(--hover);color:var(--ink-3);">worker yok</span>';
+      const fresh=(Date.now()-new Date(h.time.replace(' ','T')+(h.time.includes('+')?'':'Z')))<15000;
+      if(!fresh)return '<span class="chip" style="background:var(--hover);color:var(--ink-3);">boşta</span>';
+      if(h.status==='error')return '<span class="chip" style="background:var(--danger-soft);color:var(--danger);">hata</span>';
+      return '<span class="chip" style="background:var(--ok-soft);color:var(--ok);"><i style="width:6px;height:6px;border-radius:50%;background:currentColor;"></i> çalışıyor</span>';};
+    const taskBtns=c=>{const t=c.tasks||{};return [["count","Sayım"],["plate","Plaka"],["face","Yüz"]].map(([k,l])=>
+      `<button class="btn sm ${t[k]?'on':''}" onclick="toggleTask('${esc(c.id)}','${k}')">${l}</button>`).join("");};
     $("#content").innerHTML=`<div class="card">${CAMS.map(c=>`<div class="row">
       <span class="av" style="background:var(--accent-soft);color:var(--accent);">${svg('cams',18)}</span>
-      <div style="flex:1;min-width:0;"><div style="font-weight:500;">${c.name}</div><div class="mono mut-s">${c.source}</div></div>
-      <span class="chip" style="background:var(--ok-soft);color:var(--ok);"><i style="width:6px;height:6px;border-radius:50%;background:currentColor;"></i> online</span>
+      <div style="flex:1;min-width:0;"><div style="font-weight:500;">${esc(c.name)}</div><div class="mono mut-s">${esc(c.source)}</div></div>
+      <span style="display:inline-flex;gap:5px;">${taskBtns(c)}</span>
+      ${stChip(c)}
       <button class="btn sm ico" title="sil" onclick="delCam('${c.id}')">${svg('x',14)}</button>
       </div>`).join("")}</div>
       <div class="card pad" style="margin-top:16px;">
@@ -198,7 +228,7 @@ const SCREENS={
     const camId=window._zc||CAMS[0]?.id;window._zc=camId;
     $("#content").innerHTML=`
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
-        <select id="zcam" onchange="window._zc=this.value;SCREENS.zones()">${CAMS.map(c=>`<option value="${c.id}" ${c.id===camId?'selected':''}>${c.name}</option>`).join("")}</select>
+        <select id="zcam" onchange="window._zc=this.value;SCREENS.zones()">${CAMS.map(c=>`<option value="${esc(c.id)}" ${c.id===camId?'selected':''}>${esc(c.name)}</option>`).join("")}</select>
         <span class="mut-s">Çizgi: görüntüde bas-çek (A→B) · Bölge/İhlal: nokta tıkla, “Bitir”</span></div>
       <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
         <canvas id="cv" width="640" height="360" style="flex:1 1 440px;touch-action:none;"></canvas>
@@ -227,7 +257,7 @@ const SCREENS={
     const kinds=[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["analyze","Hepsi"]];
     $("#content").innerHTML=`
       <div style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap;">
-        <select id="tcam" onchange="window._tc=this.value">${CAMS.map(c=>`<option value="${c.id}" ${c.id===camId?'selected':''}>${c.name}</option>`).join("")}</select>
+        <select id="tcam" onchange="window._tc=this.value">${CAMS.map(c=>`<option value="${esc(c.id)}" ${c.id===camId?'selected':''}>${esc(c.name)}</option>`).join("")}</select>
         <div class="seg">${kinds.map(k=>`<button class="${k[0]===kind?'on':''}" onclick="window._tk='${k[0]}';SCREENS.test()">${k[1]}</button>`).join("")}</div>
         <button class="btn pri" onclick="runTest()">${svg('play',15)} Çalıştır</button>
         <span class="mut-s" id="trun"></span></div>
@@ -240,11 +270,11 @@ const SCREENS={
       <div style="padding:12px 16px;border-bottom:1px solid var(--line);color:var(--danger);font-weight:500;display:flex;align-items:center;gap:8px;">⚠ Uyarılar — izleme listesi eşleşmesi <span class="chip" style="background:var(--danger-soft);color:var(--danger);">${al.length}</span></div>
       ${al.map(a=>`<div class="row">
         <span class="av" style="background:var(--danger-soft);color:var(--danger);">!</span>
-        <div style="flex:1;"><div style="font-weight:500;">${a.kind==='plate'?'Plaka':'Yüz'} eşleşmesi · <span class="mono">${a.ref}</span></div><div class="mut-s">${a.label||''} ${a.camera?'· '+a.camera:''}</div></div>
-        <span class="chip" style="background:var(--danger-soft);color:var(--danger);">${a.list_type}</span></div>`).join("")}</div>`:"";
-    $("#content").innerHTML=alerts+`<div class="card">${ev.length?ev.map(e=>{const m=meta[e.type]||["live","var(--hover)","var(--ink-2)",e.type];return `<div class="row">
+        <div style="flex:1;"><div style="font-weight:500;">${a.kind==='plate'?'Plaka':'Yüz'} eşleşmesi · <span class="mono">${esc(a.ref)}</span></div><div class="mut-s">${esc(a.label||'')} ${a.camera_id?'· '+esc(a.camera_id):''}</div></div>
+        <span class="chip" style="background:var(--danger-soft);color:var(--danger);">${esc(a.list_type)}</span></div>`).join("")}</div>`:"";
+    $("#content").innerHTML=alerts+`<div class="card">${ev.length?ev.map(e=>{const m=meta[e.type]||["live","var(--hover)","var(--ink-2)",esc(e.type)];return `<div class="row">
       <span class="av" style="background:${m[1]};color:${m[2]};">${svg(m[0],17)}</span>
-      <div style="flex:1;"><div style="font-weight:500;">${m[3]}</div><div class="mono mut-s">${e.detail}</div></div>
+      <div style="flex:1;"><div style="font-weight:500;">${m[3]}${e.camera_id?' · <span class="mut-s">'+esc(e.camera_id)+'</span>':''}</div><div class="mono mut-s">${esc(e.detail)}</div></div>
       <span class="mut-s">${(+e.ts_seconds).toFixed(1)} sn · kare ${e.frame_idx}</span></div>`}).join("")
       :`<div class="empty">Henüz olay yok. Test ekranından bir analiz çalıştır.</div>`}</div>`;
   },
@@ -253,8 +283,9 @@ const SCREENS={
     const rows=await api("/lists?kind="+kind);
     const lt=t=>({blacklist:["kara liste","var(--danger-soft)","var(--danger)"],vip:["VIP","var(--accent-soft)","var(--accent)"],visitor:["ziyaretçi","var(--warn-soft)","var(--warn)"],allowed:["izinli","var(--ok-soft)","var(--ok)"]}[t]||["","var(--hover)","var(--ink-2)"]);
     const body=rows.length?rows.map(r=>{const p=lt(r.list_type);return `<tr>
-      <td class="${kind==='plate'?'mono':''}" style="font-weight:500;">${kind==='plate'?r.plate:r.name}</td>
-      <td class="mut-s">${r.label||'—'}</td>
+      <td class="${kind==='plate'?'mono':''}" style="font-weight:500;">${kind==='plate'?esc(r.plate):esc(r.name)}
+        ${kind==='face'?(r.enrolled?' <span class="chip" style="background:var(--ok-soft);color:var(--ok);">yüz kayıtlı</span>':' <span class="chip" style="background:var(--warn-soft);color:var(--warn);">embedding yok</span>'):''}</td>
+      <td class="mut-s">${esc(r.label||'—')}</td>
       <td><span class="chip" style="background:${p[1]};color:${p[2]};">${p[0]}</span></td>
       <td style="text-align:right;"><button class="btn sm ico" onclick="delWatch('${kind}',${r.id})">${svg('x',14)}</button></td></tr>`}).join("")
       :`<tr><td colspan="4" class="empty">Liste boş.</td></tr>`;
@@ -267,7 +298,7 @@ const SCREENS={
         <input id="w-val" placeholder="${kind==='plate'?'34 ABC 123':'Ahmet Yılmaz'}" style="flex:1;min-width:160px;"/>
         <input id="w-lab" placeholder="etiket" style="width:120px;"/>
         <select id="w-type"><option value="blacklist">kara liste</option><option value="vip">VIP</option><option value="visitor">ziyaretçi</option><option value="allowed">izinli</option></select>
-        ${kind==='face'?`<select id="w-cam" title="bu kameranın karesinden yüz alınır"><option value="">yüz alma yok</option>${CAMS.map(c=>`<option value="${c.id}">📷 ${c.name}</option>`).join("")}</select>`:''}
+        ${kind==='face'?`<select id="w-cam" title="bu kameranın karesinden yüz alınır"><option value="">yüz alma yok</option>${CAMS.map(c=>`<option value="${esc(c.id)}">📷 ${esc(c.name)}</option>`).join("")}</select>`:''}
         <button class="btn pri" onclick="addWatch('${kind}')">${svg('plus',15)} Ekle</button></div>
       ${kind==='face'?'<div class="mut-s" style="margin-top:8px;">Yüz tanıma için bir kamera seç → o karedeki en büyük yüz embedding olarak kaydedilir (KVKK: ham görüntü saklanmaz, sadece vektör).</div>':''}`;
   },
@@ -281,12 +312,14 @@ function curClasses(){const c=[];if($("#c-person")?.checked)c.push("person");if(
 function defName(kind){const n=ZONES.filter(z=>z.kind===kind).length+1;return (kind==="line"?"Çizgi ":kind==="zone"?"Bölge ":"İhlal ")+n;}
 async function initEditor(camId){
   CV=$("#cv");CX=CV.getContext("2d");DRAFT=[];DRAWING=null;DRAG=null;
-  const z=await api("/zones?camera="+camId);
-  ZONES=z.map(x=>({kind:x.kind,name:x.name||defName(x.kind),points:JSON.parse(x.points||"[]"),classes:JSON.parse(x.classes||"[]"),direction:x.direction}));
+  const z=await api("/zones?camera="+encodeURIComponent(camId));
+  // API points/classes'ı parse edilmiş dizi döndürür (eski string formatı da tolere edilir)
+  const arr=v=>typeof v==='string'?JSON.parse(v||"[]"):(v||[]);
+  ZONES=z.map(x=>({kind:x.kind,name:x.name||defName(x.kind),points:arr(x.points),classes:arr(x.classes),direction:x.direction||'AtoB'}));
   IMG=new Image();
   IMG.onload=()=>{draw();renderZoneList();};
   IMG.onerror=()=>{CX.fillStyle="#0b1120";CX.fillRect(0,0,CV.width,CV.height);CX.fillStyle="#64748b";CX.fillText("snapshot alınamadı",240,180);};
-  IMG.src="/api/snapshot?camera="+camId+"&t="+Date.now();
+  IMG.src=snap(camId)+"&t="+Date.now();
   CV.onmousedown=onDown;CV.onmousemove=onMove;window.onmouseup=onUp;
   renderZoneList();
 }
@@ -318,13 +351,14 @@ function onUp(){
 function finishPoly(){if((TOOL==="zone"||TOOL==="intrusion")&&DRAFT.length>=3){ZONES.push({kind:TOOL,name:defName(TOOL),points:DRAFT.slice(),classes:curClasses(),direction:""});DRAFT=[];draw();renderZoneList();}}
 function delZone(i){ZONES.splice(i,1);draw();renderZoneList();}
 function renameZone(i,v){ZONES[i].name=v;}
+function flipDir(i){ZONES[i].direction=ZONES[i].direction==='BtoA'?'AtoB':'BtoA';renderZoneList();}
 function renderZoneList(){
   const el=$("#zlist");if(!el)return;
   if(!ZONES.length){el.innerHTML='<span class="mut-s">Henüz çizim yok. Çizgi için görüntüde bas-çek yap.</span>';return;}
   el.innerHTML=ZONES.map((z,i)=>`<div class="row" style="padding-left:0;padding-right:0;">
     <span class="av" style="background:${z.kind==='line'?'var(--warn-soft)':z.kind==='zone'?'var(--accent-soft)':'var(--danger-soft)'};color:${COL[z.kind]};">${z.kind==='line'?'—':z.kind==='intrusion'?'⚠':'▱'}</span>
-    <input value="${z.name}" oninput="renameZone(${i},this.value)" style="flex:1;"/>
-    <span class="mut-s">${z.kind==='line'?'A→B sayım':z.kind==='intrusion'?'ihlal alanı':'alan'}</span>
+    <input value="${esc(z.name)}" oninput="renameZone(${i},this.value)" style="flex:1;"/>
+    ${z.kind==='line'?`<button class="btn sm" title="giriş yönünü ters çevir" onclick="flipDir(${i})">${z.direction==='BtoA'?'B→A giriş':'A→B giriş'}</button>`:`<span class="mut-s">${z.kind==='intrusion'?'ihlal alanı':'alan'}</span>`}
     <button class="btn sm ico" title="sil" onclick="delZone(${i})">${svg('x',14)}</button></div>`).join("");
 }
 function sideLabel(t,p,c){CX.beginPath();CX.arc(p[0],p[1],11,0,7);CX.fillStyle=c;CX.fill();CX.fillStyle="#fff";CX.font="bold 13px sans-serif";CX.textAlign="center";CX.textBaseline="middle";CX.fillText(t,p[0],p[1]);CX.textAlign="start";CX.textBaseline="alphabetic";}
@@ -374,6 +408,7 @@ async function runTest(){
       await new Promise(r=>setTimeout(r,500));
     }
     if(!st||st.status==="error"){$("#trun").textContent="hata: "+(st?st.error:"zaman aşımı");$("#tres").innerHTML="";return;}
+
     $("#trun").textContent="✓ bitti";
     renderResult(st.summary,st.videos);
   }catch(e){$("#trun").textContent="hata: "+e;$("#tres").innerHTML="";}
@@ -381,7 +416,7 @@ async function runTest(){
 function renderLive(live){
   const rows=live.slice(-40).map((r,i)=>`<div class="row" style="animation:fade .2s ease;">
     <span class="av" style="background:var(--warn-soft);color:var(--warn);">${svg('cams',16)}</span>
-    <div style="flex:1;"><span class="mono" style="font-weight:500;">${r.plate}</span></div>
+    <div style="flex:1;"><span class="mono" style="font-weight:500;">${esc(r.plate)}</span></div>
     <span class="mut-s">kare ${r.frame} · ${r.ts} sn${r.conf!=null?' · %'+Math.round(r.conf*100):''}</span></div>`).join("");
   $("#tres").innerHTML=`<div class="card"><div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;font-weight:500;">${svg('cams',17)} Canlı plaka akışı <span class="chip" style="background:var(--accent-soft);color:var(--accent);">${live.length}</span></div><div id="liverows" style="max-height:340px;overflow:auto;">${rows}</div></div>`;
   const lr=$("#liverows");if(lr)lr.scrollTop=lr.scrollHeight;
@@ -389,13 +424,13 @@ function renderLive(live){
 function renderResult(s,videos){
   const m=[];
   if(s.count){const ls=s.count.lines||[];
-    const perline=ls.length?`<div class="mut-s" style="margin-top:8px;line-height:1.9;">${ls.map(l=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-right:6px;"></span>${l.name}: <b>${l.in}</b> giriş / <b>${l.out}</b> çıkış`).join("<br>")}</div>`:'';
+    const perline=ls.length?`<div class="mut-s" style="margin-top:8px;line-height:1.9;">${ls.map(l=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-right:6px;"></span>${esc(l.name)}: <b>${l.in}</b> giriş / <b>${l.out}</b> çıkış`).join("<br>")}</div>`:'';
     m.push(`<div class="metric"><div class="k">Sayım · A→B giriş / B→A çıkış${ls.length>1?' · '+ls.length+' çizgi':''}</div><div class="v">${s.count.in} <span class="mut" style="font-size:15px;">giriş</span> · ${s.count.out} <span class="mut" style="font-size:15px;">çıkış</span></div><div class="mut-s">${s.count.frames} kare</div>${perline}</div>`);}
   if(s.plate){const al=s.plate.alerts||[],vt=s.plate.voted||[];
-    const list=vt.length?vt.slice(0,10).map(v=>`${v.plate}<span class="mut-s"> ×${v.count}</span>`).join(" · "):(s.plate.plates||[]).slice(0,10).join(" · ");
-    m.push(`<div class="metric" ${al.length?'style="border:1px solid var(--danger);"':''}><div class="k">Plaka · ${s.plate.total} okuma → ${vt.length} araç (oylama)</div><div class="mono" style="margin-top:4px;font-size:13px;line-height:1.9;">${list||'—'}</div>${al.length?`<div class="chip" style="background:var(--danger-soft);color:var(--danger);margin-top:8px;">⚠ ${al.length} kara liste: ${al.map(a=>a.plate).join(", ")}</div>`:''}</div>`);}
-  if(s.face){const al=s.face.alerts||[];m.push(`<div class="metric" ${al.length?'style="border:1px solid var(--danger);"':''}><div class="k">Yüz (anonim)</div><div class="v">${s.face.detections}</div><div class="mut-s">E:${s.face.male} · K:${s.face.female} · ort. yaş ${s.face.avg_age}</div>${al.length?`<div class="chip" style="background:var(--danger-soft);color:var(--danger);margin-top:8px;">⚠ ${al.length} liste eşleşmesi: ${al.map(a=>a.name).join(", ")}</div>`:''}</div>`);}
-  const cb="?t="+Date.now();  // cache-buster: aynı dosya adı → tarayıcı eskiyi göstermesin
+    const list=vt.length?vt.slice(0,10).map(v=>`${esc(v.plate)}<span class="mut-s"> ×${v.count}</span>`).join(" · "):(s.plate.plates||[]).slice(0,10).map(esc).join(" · ");
+    m.push(`<div class="metric" ${al.length?'style="border:1px solid var(--danger);"':''}><div class="k">Plaka · ${s.plate.total} okuma → ${vt.length} araç (oylama)</div><div class="mono" style="margin-top:4px;font-size:13px;line-height:1.9;">${list||'—'}</div>${al.length?`<div class="chip" style="background:var(--danger-soft);color:var(--danger);margin-top:8px;">⚠ ${al.length} kara liste: ${esc(al.map(a=>a.plate).join(", "))}</div>`:''}</div>`);}
+  if(s.face){const al=s.face.alerts||[];m.push(`<div class="metric" ${al.length?'style="border:1px solid var(--danger);"':''}><div class="k">Yüz (anonim) · kişi</div><div class="v">${s.face.detections}</div><div class="mut-s">E:${s.face.male} · K:${s.face.female} · ort. yaş ${s.face.avg_age}</div>${al.length?`<div class="chip" style="background:var(--danger-soft);color:var(--danger);margin-top:8px;">⚠ ${al.length} liste eşleşmesi: ${esc(al.map(a=>a.name).join(", "))}</div>`:''}</div>`);}
+  const cb="?t="+Date.now()+tokq();  // cache-buster + erişim anahtarı
   const vids=(videos||[]).map(v=>`<video src="${v}${cb}" controls style="width:100%;border-radius:var(--r-lg);border:1px solid var(--line);margin-top:14px;background:#000;box-shadow:var(--shadow);"></video>`).join("");
   // Okunan plakalar — video altında alt alta liste (ANPR kaydı)
   let plateList="";
@@ -403,13 +438,19 @@ function renderResult(s,videos){
     plateList=`<div class="card" style="margin-top:14px;"><div style="padding:12px 16px;border-bottom:1px solid var(--line);font-weight:500;display:flex;align-items:center;gap:8px;">${svg('cams',17)} Okunan plakalar <span class="chip" style="background:var(--accent-soft);color:var(--accent);">${vt.length}</span></div>`+
       (vt.length?vt.map(v=>{const black=bl.has(v.plate);return `<div class="row">
         <span class="av" style="background:${black?'var(--danger-soft)':'var(--warn-soft)'};color:${black?'var(--danger)':'var(--warn)'};">${black?'!':svg('cams',16)}</span>
-        <div style="flex:1;"><span class="mono" style="font-size:15px;font-weight:500;">${v.plate}</span> <span class="mut-s">×${v.count}</span></div>
+        <div style="flex:1;"><span class="mono" style="font-size:15px;font-weight:500;">${esc(v.plate)}</span> <span class="mut-s">×${v.count}</span></div>
         ${black?'<span class="chip" style="background:var(--danger-soft);color:var(--danger);">kara liste</span>':''}
         <span class="mut-s">${v.conf!=null?'%'+Math.round(v.conf*100):''}</span></div>`}).join(""):'<div class="empty">Plaka okunmadı.</div>')+`</div>`;}
   $("#tres").innerHTML=`<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">${m.join("")}</div>${vids}${plateList}`;
 }
 async function addCam(){const name=$("#cam-name").value.trim(),source=$("#cam-src").value.trim();if(!name||!source)return;await api("/cameras",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,source})});CAMS=await api("/cameras");SCREENS.cams();}
-async function delCam(id){await fetch("/api/cameras/"+id,{method:"DELETE"});CAMS=await api("/cameras");SCREENS.cams();}
+async function toggleTask(cid,key){
+  const c=CAMS.find(x=>x.id===cid);if(!c)return;
+  const t=Object.assign({count:false,plate:false,face:false},c.tasks||{});t[key]=!t[key];
+  const r=await api(`/cameras/${encodeURIComponent(cid)}/tasks`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:t})});
+  if(r&&r.ok){c.tasks=r.tasks;SCREENS.cams();}
+}
+async function delCam(id){await api("/cameras/"+encodeURIComponent(id),{method:"DELETE"});CAMS=await api("/cameras");SCREENS.cams();}
 async function addWatch(kind){
   const value=$("#w-val").value.trim();if(!value)return;
   const camera=kind==='face'&&$("#w-cam")?$("#w-cam").value:"";
@@ -417,7 +458,7 @@ async function addWatch(kind){
   if(kind==='face'&&camera&&r&&!r.enrolled)alert("Bu karede yüz bulunamadı — kişi eklendi ama eşleştirme için yüz embedding'i yok.");
   SCREENS.lists();
 }
-async function delWatch(kind,id){await fetch(`/api/lists/${kind}/${id}`,{method:"DELETE"});SCREENS.lists();}
+async function delWatch(kind,id){await api(`/lists/${kind}/${id}`,{method:"DELETE"});SCREENS.lists();}
 
 boot();
 </script>

@@ -11,4 +11,11 @@ Modüller:
   cli     — tek giriş noktası (count | face | plate | analyze)
 """
 
+import os as _os
+
+# RTSP'de UDP paket kaybı "Waiting for stream" ile sonuçlanır (go2rtc/NVR relay'lerde
+# tipik) → OpenCV/Ultralytics yakalayıcıları TCP taşımaya zorlanır. Kullanıcı kendi
+# değerini set ettiyse dokunulmaz.
+_os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+
 __version__ = "0.1.0"
