@@ -407,7 +407,7 @@ def run_gpu_worker(cams: list[dict], cfg, bus) -> None:
 
     state: dict[str, dict[str, Any]] = {
         c["id"]: {"cam": c, "tracker": None, "counter": None,
-                  "prev_y": None, "seq": 0, "frame_idx": 0} for c in cams}
+                  "prev_y": None, "seq": 0, "frame_idx": 0, "next_ts": 0.0} for c in cams}
 
     def refresh_db() -> None:
         s = open_store(cfg)
@@ -428,7 +428,12 @@ def run_gpu_worker(cams: list[dict], cfg, bus) -> None:
     refresh_db()
     print(f"[nvdec] {len(cams)} kamera, model={model}, fps={fps}", flush=True)
 
-    tick = 1.0 / fps
+    # döngü temposu = en hızlı kameranın temposu; her kamera kendi
+    # detect_fps'inde işlenir (kapı/turnike 10, genel sahne 5 — DB cameras.detect_fps)
+    def cam_fps(st) -> float:
+        return float(st["cam"].get("detect_fps") or fps)
+
+    tick = 1.0 / max([fps] + [cam_fps(st) for st in state.values()])
     last_refresh = last_health = time.time()
     infer_n, infer_t0 = 0, time.time()
 
@@ -436,9 +441,12 @@ def run_gpu_worker(cams: list[dict], cfg, bus) -> None:
         t_loop = time.time()
         batch, meta = [], []
         for cid, st in state.items():
+            if t_loop < st["next_ts"]:
+                continue
             nv12, wh, seq = decoders[cid].grab()
             if nv12 is None or seq == st["seq"]:
                 continue
+            st["next_ts"] = t_loop + 1.0 / cam_fps(st)
             st["seq"] = seq
             st["frame_idx"] += 1
             w, h = wh

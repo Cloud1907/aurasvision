@@ -46,6 +46,8 @@ def merged_cameras(cfg, store: "BaseStore") -> list[dict[str, Any]]:
         if c["id"] in by_id:
             if c.get("tasks"):
                 by_id[c["id"]]["tasks"] = c["tasks"]
+            if c.get("detect_fps"):
+                by_id[c["id"]]["detect_fps"] = c["detect_fps"]
         else:
             if not c.get("tasks"):
                 c["tasks"] = dict(DEFAULT_TASKS)
@@ -409,7 +411,7 @@ class PgStore(BaseStore):
         return rows
 
     def list_cameras_db(self) -> list[dict[str, Any]]:
-        rows = self._all("SELECT id, name, source, tasks::text AS tasks"
+        rows = self._all("SELECT id, name, source, tasks::text AS tasks, detect_fps"
                          " FROM cameras ORDER BY created_at")
         for r in rows:
             r["tasks"] = json.loads(r["tasks"]) if r.get("tasks") else None

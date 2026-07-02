@@ -157,6 +157,35 @@ Hedefteki küçük açık kaynak tarafı (ffmpeg döngü boşluğu, ~4.9 fps efe
   worker(nvdec)→Redis→ingestor→Timescale zincirinden geçti
   (count 5, plate 5, face 37 yeni satır).
 
+## Gerçek görüntü doğrulaması — Abide B Kapısı (Dahua, 2560×1440 @60fps, H.264)
+
+İki saha kaydı `data/videos/abide-b-kapisi_*.avi` kamera olarak eklendi
+(id: `abide-b-1411`, `abide-b-1454`); turnike sırasına paralel çapraz "Turnike"
+çizgisi tanımlandı (`[[0.08,0.52],[0.98,0.35]]`, AtoB = kameraya doğru geçiş).
+
+- **Tespit kalitesi:** bu sahnede (insanlar yakın/orta boyda) 640 yeterli —
+  s@640 ort. 5.2 kişi/kare vs s@1280 5.1; 1280 gereksiz (3.5→8.0 ms/kare).
+- **Motor karşılaştırması** (98 sn'lik 1454 kaydı, kayıt başına):
+
+| motor / tempo | giriş | çıkış |
+|---|---|---|
+| ultralytics (60fps kaynak, stride 3 ≈ 20 fps analiz) | 10 | 18 |
+| nvdec @5 fps | ~12 | ~12 |
+| nvdec @10 fps | ~11 | ~16 |
+
+  5 fps'te hızlı turnike çıkışları kaçıyor (`min_track_frames: 6` → 1.2 sn
+  görünürlük şartı); 10 fps'te sayımlar eski motorla örtüşüyor.
+- **Karar: kamera başına `detect_fps`** (şemada zaten vardı) motora bağlandı —
+  kapı/turnike kameraları DB'de `detect_fps=10`, genel sahneler varsayılan 5.
+  Kapasite etkisi: 10 fps'lik kamera 2 kamera bütçesi harcar.
+- **Hareket filtresi masum:** fps10'da filtre kapalıyken sayımlar değişmedi
+  (21/28 vs 22/27 — run varyansı içinde); filtre açık kalıyor. Eski motorun
+  18 "çıkış"ı da mutlak doğru değil (1.3 sn'de 3 ayrı track ID'yle çıkış —
+  ID kopması şüphesi). **Kesin doğruluk kalibrasyonu canlı testte elle sayılmış
+  referansla yapılmalı.**
+- Görsel doğrulama: `output/abide-b-kapisi_20260627-1454_count.mp4`
+  (eski motor, anotasyonlu) — çizgi yerleşimi ve track'ler görsel olarak doğru.
+
 ## Notlar / bulgular
 
 - **PyPI torch aarch64 wheel'i CUDA 13 ile geliyor** (`2.12.1+cu130`), ayrı index gerekmedi;
