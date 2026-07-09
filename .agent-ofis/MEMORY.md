@@ -83,6 +83,7 @@ Geçmiş runs:
 - [[runs/2026-06-29T18-29-15-e3c1]] — Run — POC iskeleti + 3 modül çalışır (count/plate/face)
 - [[runs/2026-06-29T21-26-23-fc10]] — Run — Web arayüzü: FastAPI + canvas bölge editörü
 - [[runs/2026-07-09T11-15-00-vdai]] — Run — GB10 taşınma sonrası durum incelemesi (salt-okunur)
+- [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
 Sprintler:
 - [[sprints/2026-06-29]] — Sprint — 2026-06-29
 - [[sprints/2026-07-09]] — Sprint — 2026-07-09
@@ -121,6 +122,7 @@ Geçmiş runs:
 - [[runs/2026-06-29T23-05-29-3718]] — Run — Çoklu çizgi sayım + video A/B yan + çizgi isimleri + per-line rakamlar
 - [[runs/2026-07-09T11-15-00-vdai]] — Run — GB10 taşınma sonrası durum incelemesi (salt-okunur)
 - [[runs/2026-07-09T11-40-00-live]] — Run — Test ekranı canlı analiz görüntüsü (kare + artan sayaç birlikte)
+- [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
 Sprintler:
 - [[sprints/2026-07-09]] — Sprint — 2026-07-09
 
@@ -148,8 +150,13 @@ Geçmiş runs:
 - [[runs/2026-06-29T23-05-29-3718]] — Run — Çoklu çizgi sayım + video A/B yan + çizgi isimleri + per-line rakamlar
 - [[runs/2026-07-09T11-15-00-vdai]] — Run — GB10 taşınma sonrası durum incelemesi (salt-okunur)
 - [[runs/2026-07-09T11-40-00-live]] — Run — Test ekranı canlı analiz görüntüsü (kare + artan sayaç birlikte)
+- [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
 Sprintler:
 - [[sprints/2026-07-09]] — Sprint — 2026-07-09
+
+## veri
+Geçmiş runs:
+- [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
 
 ## yüz
 Kararlar:
