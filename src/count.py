@@ -145,14 +145,18 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
 
         if writer is not None or on_frame is not None:
             annotated = r.plot()
+            # Yüksek çözünürlükte (ör. 2560×1440) yazı/çizgi okunur kalsın diye ölçekle
+            k = max(1.0, w / 1280)
             for lc in L:
-                _draw_line(cv2, annotated, lc)
+                _draw_line(cv2, annotated, lc, k)
             # Sol üst: toplam + çizgi başına döküm
             cv2.putText(annotated, f"TOPLAM  giris:{result.in_count}  cikis:{result.out_count}",
-                        (14, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 220, 0), 2)
+                        (14, int(34 * k)), cv2.FONT_HERSHEY_SIMPLEX, 0.7 * k, (0, 220, 0),
+                        max(2, round(2 * k)))
             for i, lc in enumerate(L):
                 cv2.putText(annotated, f"{_ascii(lc['name'])}: {lc['in']} / {lc['out']}",
-                            (14, 28 + 24 * (i + 1)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 0), 1)
+                            (14, int(34 * k + 30 * k * (i + 1))), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.55 * k, (0, 220, 0), max(1, round(1.5 * k)))
             if writer is not None:
                 writer.write(annotated)
             if on_frame is not None:
@@ -166,24 +170,27 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
     return result
 
 
-def _draw_line(cv2, img, lc) -> None:
-    """Çizgiyi A/B yan etiketleri + isim ile çizer (editörle aynı görünüm)."""
+def _draw_line(cv2, img, lc, k: float = 1.0) -> None:
+    """Çizgiyi A/B yan etiketleri + isim ile çizer (editörle aynı görünüm).
+    k: çözünürlük ölçeği — yüksek çözünürlükte kalınlık/yazı okunur kalır."""
     col = (0, 0, 255)  # KIRMIZI (BGR) — yoğun/parlak sahnede en görünür
     ax, ay, bx, by = [int(v) for v in lc["px"]]
-    cv2.line(img, (ax, ay), (bx, by), col, 4)
+    cv2.line(img, (ax, ay), (bx, by), col, max(4, round(4 * k)))
     for x, y in ((ax, ay), (bx, by)):           # uç tutamaçları
-        cv2.circle(img, (x, y), 5, (255, 255, 255), -1)
-        cv2.circle(img, (x, y), 5, col, 2)
+        cv2.circle(img, (x, y), round(5 * k), (255, 255, 255), -1)
+        cv2.circle(img, (x, y), round(5 * k), col, max(2, round(2 * k)))
     mx, my = (ax + bx) / 2.0, (ay + by) / 2.0
     dx, dy = bx - ax, by - ay
     n = math.hypot(dx, dy) or 1.0
     ux, uy = dx / n, dy / n
     nx, ny = -uy, ux
-    off = 26
+    off = 26 * k
     A = (int(mx - nx * off), int(my - ny * off))   # A yanı (negatif taraf)
     B = (int(mx + nx * off), int(my + ny * off))   # B yanı (pozitif taraf = giriş)
     for pt, lbl in ((A, "A"), (B, "B")):
-        cv2.circle(img, pt, 11, col, -1)
-        cv2.putText(img, lbl, (pt[0] - 5, pt[1] + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        cv2.circle(img, pt, round(11 * k), col, -1)
+        cv2.putText(img, lbl, (int(pt[0] - 5 * k), int(pt[1] + 5 * k)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5 * k, (255, 255, 255), max(2, round(2 * k)))
     # çizgi adı — çizginin üstünde
-    cv2.putText(img, _ascii(lc["name"]), (ax + 8, ay - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
+    cv2.putText(img, _ascii(lc["name"]), (int(ax + 8 * k), int(ay - 8 * k)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55 * k, col, max(2, round(2 * k)))

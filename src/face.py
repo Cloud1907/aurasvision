@@ -262,9 +262,10 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
 
             if writer is not None or on_frame is not None:
                 x1, y1, x2, y2 = [int(v) for v in bbox]
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 255), 2)
-                cv2.putText(frame, f"#{best_t.tid} {sex} ~{age}", (x1, max(0, y1 - 8)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+                k = max(1.0, frame.shape[1] / 1280)  # yüksek çözünürlükte okunur kalsın
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 255), max(2, round(2 * k)))
+                cv2.putText(frame, f"#{best_t.tid} {sex} ~{age}", (x1, max(0, int(y1 - 8 * k))),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6 * k, (0, 200, 255), max(2, round(2 * k)))
 
         emit_progress(frame_idx, len(tracks))
 

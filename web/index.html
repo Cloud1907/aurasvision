@@ -450,11 +450,15 @@ async function runTest(){
 /* Canlı analiz paneli: üstte annotated kare, altında akan metrikler — bir kez kurulur */
 function ensureLivePanel(){
   if($("#tlive")||!$("#tres"))return;
-  $("#tres").innerHTML=`<div id="tlive"><div class="card pad" style="margin-bottom:14px;">
-    <div style="font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:12px;">${svg('play',17)} Canlı analiz görüntüsü</div>
-    <div id="liveph" class="skel" style="height:220px;border-radius:var(--r-lg);"></div>
-    <img id="liveframe" alt="" style="width:100%;display:none;border-radius:var(--r-lg);border:1px solid var(--line);background:#000;box-shadow:var(--shadow);">
-  </div><div id="tmetrics"></div></div>`;
+  // Yan yana: görüntü solda (sınırlı boy), sayaçlar sağda — geçişler görüntüyle birlikte okunur
+  $("#tres").innerHTML=`<div id="tlive" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
+    <div class="card pad" style="flex:1.3 1 380px;min-width:320px;">
+      <div style="font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:12px;">${svg('play',17)} Canlı analiz görüntüsü</div>
+      <div id="liveph" class="skel" style="height:220px;border-radius:var(--r-lg);"></div>
+      <img id="liveframe" alt="" style="width:100%;max-height:420px;object-fit:contain;display:none;border-radius:var(--r-lg);border:1px solid var(--line);background:#000;box-shadow:var(--shadow);">
+    </div>
+    <div id="tmetrics" style="flex:1 1 300px;min-width:280px;"></div>
+  </div>`;
 }
 const _tm=()=>$("#tmetrics")||$("#tres");
 function renderLiveCount(live){
