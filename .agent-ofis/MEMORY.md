@@ -73,6 +73,7 @@ Geçmiş runs:
 - [[runs/2026-06-29T22-08-41-f9fe]] — Run — Veri doğruluğu kanıtı + watchlist eşleşme alarmı
 - [[runs/2026-06-29T22-22-54-5d99]] — Run — Backlog tamamı: plaka oylama, UI kamera, arka plan job, canlı yenileme, yüz watchlis
 - [[runs/2026-07-09T11-40-00-live]] — Run — Test ekranı canlı analiz görüntüsü (kare + artan sayaç birlikte)
+- [[runs/2026-07-09T23-50-00-matrix]] — Run — Tam test matrisi + kompakt canlı panel + Abide AVI hasarı tespiti
 
 ## poc
 Kanonik kod: src/cli.py, src/count.py, src/plate.py, src/face.py, src/store.py · [[README.md]] · config.yaml
@@ -124,6 +125,7 @@ Geçmiş runs:
 - [[runs/2026-07-09T11-40-00-live]] — Run — Test ekranı canlı analiz görüntüsü (kare + artan sayaç birlikte)
 - [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
 - [[runs/2026-07-09T23-10-00-lock]] — Run — Bölgeler 'çizgi kaydedilmiyor' kök nedeni: analiz sırasında database is locked
+- [[runs/2026-07-09T23-50-00-matrix]] — Run — Tam test matrisi + kompakt canlı panel + Abide AVI hasarı tespiti
 Sprintler:
 - [[sprints/2026-07-09]] — Sprint — 2026-07-09
 
@@ -157,6 +159,7 @@ Geçmiş runs:
 - [[runs/2026-07-09T11-40-00-live]] — Run — Test ekranı canlı analiz görüntüsü (kare + artan sayaç birlikte)
 - [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
 - [[runs/2026-07-09T23-10-00-lock]] — Run — Bölgeler 'çizgi kaydedilmiyor' kök nedeni: analiz sırasında database is locked
+- [[runs/2026-07-09T23-50-00-matrix]] — Run — Tam test matrisi + kompakt canlı panel + Abide AVI hasarı tespiti
 Sprintler:
 - [[sprints/2026-07-09]] — Sprint — 2026-07-09
 
@@ -164,6 +167,7 @@ Sprintler:
 Geçmiş runs:
 - [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
 - [[runs/2026-07-09T23-10-00-lock]] — Run — Bölgeler 'çizgi kaydedilmiyor' kök nedeni: analiz sırasında database is locked
+- [[runs/2026-07-09T23-50-00-matrix]] — Run — Tam test matrisi + kompakt canlı panel + Abide AVI hasarı tespiti
 
 ## yüz
 Kararlar:
@@ -174,6 +178,7 @@ Geçmiş runs:
 - [[runs/2026-06-29T22-22-54-5d99]] — Run — Backlog tamamı: plaka oylama, UI kamera, arka plan job, canlı yenileme, yüz watchlis
 - [[runs/2026-07-09T11-15-00-vdai]] — Run — GB10 taşınma sonrası durum incelemesi (salt-okunur)
 - [[runs/2026-07-09T11-40-00-live]] — Run — Test ekranı canlı analiz görüntüsü (kare + artan sayaç birlikte)
+- [[runs/2026-07-09T23-50-00-matrix]] — Run — Tam test matrisi + kompakt canlı panel + Abide AVI hasarı tespiti
 
 ## ölçek
 Kararlar:
