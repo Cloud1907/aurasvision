@@ -246,7 +246,11 @@ class SqliteStore(BaseStore):
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+        # isolation_level=None (autocommit): her INSERT kendi kısa kilidiyle biter.
+        # Aksi hâlde analiz bağlantısı ilk olaydan analiz sonuna dek TEK yazma
+        # transaction'ı tutar → eşzamanlı zone/kamera kaydı "database is locked" (500).
+        self.conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False,
+                                    isolation_level=None)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=30000")

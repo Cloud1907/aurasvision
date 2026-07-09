@@ -405,8 +405,14 @@ function draw(){
   if(DRAFT.length){CX.strokeStyle="#fff";CX.lineWidth=2;DRAFT.map(px).forEach((p,i,a)=>{CX.beginPath();CX.arc(p[0],p[1],4,0,7);CX.fillStyle="#fff";CX.fill();if(i){CX.beginPath();CX.moveTo(a[i-1][0],a[i-1][1]);CX.lineTo(p[0],p[1]);CX.stroke();}});}
 }
 async function saveZones(){
-  const r=await api("/zones",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({camera:window._zc,zones:ZONES})});
-  $("#zstatus").textContent=r.ok?`✓ ${r.count} kayıt kaydedildi`:"hata";
+  const st=$("#zstatus");
+  try{
+    const r=await api("/zones",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({camera:window._zc,zones:ZONES})});
+    if(st)st.textContent=r.ok?`✓ ${r.count} kayıt kaydedildi`:"⚠ kaydedilemedi: "+(r.detail||"bilinmeyen hata");
+  }catch(e){
+    // 500 vb. JSON olmayan yanıtta api() fırlatır — kullanıcı sessiz kalmasın
+    if(st)st.textContent="⚠ kaydedilemedi — tekrar deneyin (analiz sürüyorsa bitmesini beklemek gerekebilir)";
+  }
 }
 
 /* Ekran değişince #trun/#tres kaybolur — null-guard'lı yazıcılar (poll sessiz sürer) */
