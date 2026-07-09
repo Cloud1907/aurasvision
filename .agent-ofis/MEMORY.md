@@ -123,12 +123,17 @@ Geçmiş runs:
 - [[runs/2026-07-09T11-15-00-vdai]] — Run — GB10 taşınma sonrası durum incelemesi (salt-okunur)
 - [[runs/2026-07-09T11-40-00-live]] — Run — Test ekranı canlı analiz görüntüsü (kare + artan sayaç birlikte)
 - [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
+- [[runs/2026-07-09T23-10-00-lock]] — Run — Bölgeler 'çizgi kaydedilmiyor' kök nedeni: analiz sırasında database is locked
 Sprintler:
 - [[sprints/2026-07-09]] — Sprint — 2026-07-09
 
 ## sbsa
 Kararlar:
 - [[decisions/0003-gb10-gpu-motoru-savant-yerine-nvdec-pipeline]] — ADR-0003 — GB10 GPU motoru: Savant yerine PyNvVideoCodec+TensorRT pipeline
+
+## sql
+Geçmiş runs:
+- [[runs/2026-07-09T23-10-00-lock]] — Run — Bölgeler 'çizgi kaydedilmiyor' kök nedeni: analiz sırasında database is locked
 
 ## tensorrt
 Kararlar:
@@ -151,12 +156,14 @@ Geçmiş runs:
 - [[runs/2026-07-09T11-15-00-vdai]] — Run — GB10 taşınma sonrası durum incelemesi (salt-okunur)
 - [[runs/2026-07-09T11-40-00-live]] — Run — Test ekranı canlı analiz görüntüsü (kare + artan sayaç birlikte)
 - [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
+- [[runs/2026-07-09T23-10-00-lock]] — Run — Bölgeler 'çizgi kaydedilmiyor' kök nedeni: analiz sırasında database is locked
 Sprintler:
 - [[sprints/2026-07-09]] — Sprint — 2026-07-09
 
 ## veri
 Geçmiş runs:
 - [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
+- [[runs/2026-07-09T23-10-00-lock]] — Run — Bölgeler 'çizgi kaydedilmiyor' kök nedeni: analiz sırasında database is locked
 
 ## yüz
 Kararlar:
