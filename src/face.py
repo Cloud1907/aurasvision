@@ -133,7 +133,8 @@ def _load_face(model_pack: str, det_size: int, device: str):
 
 
 def run_face(source: str, cfg: Config, save_video: bool = False,
-             store=None, camera_id: str = "", watch: list | None = None) -> FaceResult:
+             store=None, camera_id: str = "", watch: list | None = None,
+             on_progress=None, on_frame=None) -> FaceResult:
     import cv2
 
     model_pack = cfg.get("face.model_pack", "buffalo_l")
@@ -170,6 +171,15 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
     next_tid = 1
     age_sum = 0.0
 
+    def emit_progress(frame=None, active=None) -> None:
+        if on_progress is None:
+            return
+        avg_age = (age_sum / res.detections) if res.detections else 0.0
+        on_progress({"frames": res.frames, "frame_idx": frame_idx if frame is None else frame,
+                     "raw": res.raw_detections, "active": len(tracks) if active is None else active,
+                     "detections": res.detections, "male": res.male, "female": res.female,
+                     "avg_age": round(avg_age, 1), "matches": res.matches[-10:]})
+
     def finalize(t: _FaceTrack) -> None:
         nonlocal age_sum
         age = int(statistics.median(t.ages)) if t.ages else None
@@ -186,6 +196,7 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
                                  t.first_ts, t.first_frame, track_id=t.tid,
                                  match_name=t.match_name,
                                  match_score=round(t.match_score, 3) if t.match_name else None)
+        emit_progress(active=len(tracks))
 
     frame_idx = 0
     while True:
@@ -200,14 +211,12 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
         ts = frame_idx / fps
 
         faces = app.get(frame)
-        # Kaybolan track'leri kapat (tek satır DB'ye o anda düşer)
-        alive = []
-        for t in tracks:
-            if frame_idx - t.last_frame > miss_frames:
-                finalize(t)
-            else:
-                alive.append(t)
-        tracks = alive
+        # Kaybolan track'leri kapat (tek satır DB'ye o anda düşer).
+        # Önce tracks daraltılır ki finalize→emit_progress ölmekte olanı "aktif" saymasın.
+        dead = [t for t in tracks if frame_idx - t.last_frame > miss_frames]
+        tracks = [t for t in tracks if frame_idx - t.last_frame <= miss_frames]
+        for t in dead:
+            finalize(t)
 
         for f in faces:
             res.raw_detections += 1
@@ -250,16 +259,21 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
                             res.matches.append({"name": wt["name"], "label": wt.get("label", ""),
                                                 "list_type": wt["list_type"], "score": round(sc, 3)})
 
-            if writer is not None:
+            if writer is not None or on_frame is not None:
                 x1, y1, x2, y2 = [int(v) for v in bbox]
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 255), 2)
                 cv2.putText(frame, f"#{best_t.tid} {sex} ~{age}", (x1, max(0, y1 - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
+        emit_progress(frame_idx, len(tracks))
+
         if writer is not None:
             writer.write(frame)
+        if on_frame is not None:
+            on_frame(frame)
 
-    for t in tracks:   # video bitti — açık track'leri kapat
+    dead, tracks = tracks, []   # video bitti — açık track'leri kapat
+    for t in dead:
         finalize(t)
 
     cap.release()
@@ -267,6 +281,7 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
         writer.release()
     if res.detections:
         res.avg_age = age_sum / res.detections
+    emit_progress(frame_idx, 0)
     if store is not None:
         store.commit()
     return res

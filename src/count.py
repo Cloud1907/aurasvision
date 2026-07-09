@@ -38,7 +38,8 @@ def _ascii(s: str) -> str:
 
 def run_count(source: str, cfg: Config, save_video: bool = False,
               store=None, camera_id: str = "",
-              lines: list[dict] | None = None) -> CountResult:
+              lines: list[dict] | None = None, on_event=None,
+              on_frame=None) -> CountResult:
     """Videoda kişileri sayar.
 
     `lines`: [{"name","pts":[[ax,ay],[bx,by]],"direction"}] normalize koordinat.
@@ -130,13 +131,17 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
                             result.in_count += 1
                         else:
                             result.out_count += 1
-                        result.events.append({"track_id": tid, "direction": direction, "line": lc["name"],
-                                              "frame_idx": real_frame, "ts_seconds": round(ts, 2)})
+                        event = {"track_id": tid, "direction": direction, "line": lc["name"],
+                                 "frame_idx": real_frame, "ts_seconds": round(ts, 2),
+                                 "in": result.in_count, "out": result.out_count}
+                        result.events.append(event)
+                        if on_event is not None:
+                            on_event(event)
                         if store is not None:
                             store.add_count_event(camera_id, tid, direction, lc["name"], ts, real_frame)
                     lc["last"][tid] = s
 
-        if writer is not None:
+        if writer is not None or on_frame is not None:
             annotated = r.plot()
             for lc in L:
                 _draw_line(cv2, annotated, lc)
@@ -146,7 +151,10 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
             for i, lc in enumerate(L):
                 cv2.putText(annotated, f"{_ascii(lc['name'])}: {lc['in']} / {lc['out']}",
                             (14, 28 + 24 * (i + 1)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 0), 1)
-            writer.write(annotated)
+            if writer is not None:
+                writer.write(annotated)
+            if on_frame is not None:
+                on_frame(annotated)
 
     if writer is not None:
         writer.release()

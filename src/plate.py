@@ -100,7 +100,8 @@ def _as_float_conf(conf) -> float | None:
 
 
 def run_plate(source: str, cfg: Config, save_video: bool = False,
-              store=None, camera_id: str = "", on_read=None) -> PlateResult:
+              store=None, camera_id: str = "", on_read=None,
+              on_frame=None) -> PlateResult:
     import cv2
 
     detector = cfg.get("plate.detector", "yolo-v9-t-384-license-plate-end2end")
@@ -152,10 +153,14 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
             if on_read:
                 on_read(plate, conf, frame_idx, round(ts, 2))
 
-        if writer is not None:
+        if writer is not None or on_frame is not None:
             drawn = alpr.draw_predictions(frame)
             # fast-alpr sürümüne göre ndarray veya .image taşıyan nesne dönebilir
-            writer.write(getattr(drawn, "image", drawn))
+            img = getattr(drawn, "image", drawn)
+            if writer is not None:
+                writer.write(img)
+            if on_frame is not None:
+                on_frame(img)
 
     cap.release()
     if writer is not None:

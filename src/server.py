@@ -168,8 +168,11 @@ def api_health():
 
 
 @app.get("/api/sysinfo")
-def api_sysinfo():
-    return {"go2rtc": cfg.get("go2rtc.url", "")}
+def api_sysinfo(request: Request):
+    go2rtc = cfg.get("go2rtc.url", "")
+    if go2rtc.startswith(("http://localhost", "http://127.0.0.1")):
+        go2rtc = f"{request.url.scheme}://{request.url.hostname}:1984"
+    return {"go2rtc": go2rtc}
 
 
 # Snapshot TTL cache — VideoCapture pahalı; aynı kareyi N sn tekrar üretme (perf).
@@ -310,6 +313,36 @@ def _webify_av(src, dst) -> None:
 JOBS: dict[str, dict] = {}
 RUN_LOCK = threading.Lock()   # aynı anda tek analiz (SQLite yazma çakışmasını önler)
 
+# Canlı önizleme: analiz karesi bellekte JPEG olarak tutulur (diske YAZILMAZ — KVKK).
+_LIVE_MIN_INTERVAL = 0.15   # sn — UI ~500ms poll'luyor, daha sık encode israf
+_LIVE_MAX_W = 960
+
+
+def _frame_pusher(job: dict):
+    """Analiz modüllerinin on_frame callback'i: annotated kareyi throttle'layıp
+    job["frame_jpeg"]'e koyar. UI /api/run/{id}/frame ile çeker."""
+    state = {"t": 0.0}
+
+    def push(frame) -> None:
+        # Canlı önizleme hatası analizi ASLA düşürmez (callback modül döngüsünde koşar;
+        # istisna fırlarsa writer finalize edilmeden çıkılır)
+        try:
+            now = time.monotonic()
+            if now - state["t"] < _LIVE_MIN_INTERVAL:
+                return
+            state["t"] = now
+            h, w = frame.shape[:2]
+            if w > _LIVE_MAX_W:
+                frame = cv2.resize(frame, (_LIVE_MAX_W, int(h * _LIVE_MAX_W / w)))
+            ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if ok:
+                job["frame_jpeg"] = buf.tobytes()
+                job["frame_seq"] = job.get("frame_seq", 0) + 1
+        except Exception:
+            pass
+
+    return push
+
 
 def _run_analysis(job_id: str, p: "RunPayload") -> None:
     job = JOBS[job_id]
@@ -321,16 +354,25 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
         RUN_LOCK.acquire()
     source = cam["source"]; stem = Path(source).stem
     s = None; summary: dict = {}; videos: list[str] = []
+    push_frame = _frame_pusher(job)
     try:
         # store açılışı da try içinde: hata olursa kilit finally'de MUTLAKA bırakılır
         s = _store()
         s.clear_analysis()  # her test koşusu temiz başlar (önceki olaylar/uyarılar silinir)
         if p.kind in ("count", "analyze"):
             job.update(stage="Sayım çalışıyor")
+            job["count_live"] = {"in": 0, "out": 0, "events": []}
             from .count import run_count
+            def _on_count_event(ev):
+                live = job.setdefault("count_live", {"in": 0, "out": 0, "events": []})
+                live["in"] = ev.get("in", live.get("in", 0))
+                live["out"] = ev.get("out", live.get("out", 0))
+                live.setdefault("events", []).append(ev)
+                live["events"] = live["events"][-40:]
             s.start_run("count", source)
             res = run_count(source, cfg, save_video=True, store=s, camera_id=p.camera,
-                            lines=_saved_lines(p.camera) or None)
+                            lines=_saved_lines(p.camera) or None, on_event=_on_count_event,
+                            on_frame=push_frame)
             summary["count"] = {"in": res.in_count, "out": res.out_count,
                                 "frames": res.frames, "lines": res.lines}
             videos.append(f"/media/{stem}_count.mp4")
@@ -341,7 +383,8 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
             s.start_run("plate", source)
             res = run_plate(source, cfg, save_video=True, store=s, camera_id=p.camera,
                             on_read=lambda pl, c, f, t: job["live"].append(
-                                {"plate": pl, "conf": round(c, 2) if c else None, "frame": f, "ts": t}))
+                                {"plate": pl, "conf": round(c, 2) if c else None, "frame": f, "ts": t}),
+                            on_frame=push_frame)
             voted = res.voted or [{"plate": x, "count": 1, "conf": None} for x in res.plates]
             plates = [v["plate"] for v in voted]
             matches = s.match_plates(plates)
@@ -352,10 +395,14 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
             videos.append(f"/media/{stem}_plate.mp4")
         if p.kind in ("face", "analyze"):
             job.update(stage="Yüz çalışıyor")
+            job["face_live"] = {"frames": 0, "raw": 0, "active": 0, "detections": 0, "male": 0, "female": 0, "avg_age": 0.0, "matches": []}
             from .face import run_face
+            def _on_face_progress(data):
+                job["face_live"] = data
             watch = s.faces_with_embedding()
             s.start_run("face", source)
-            res = run_face(source, cfg, save_video=True, store=s, camera_id=p.camera, watch=watch)
+            res = run_face(source, cfg, save_video=True, store=s, camera_id=p.camera, watch=watch,
+                           on_progress=_on_face_progress, on_frame=push_frame)
             for m in res.matches:
                 s.add_alert("face", m["name"], m["list_type"], m.get("label") or "", p.camera)
             summary["face"] = {"detections": res.detections, "male": res.male, "female": res.female,
@@ -368,6 +415,8 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
     except Exception as e:  # job hatayı taşır, sunucu çökmez
         job.update(status="error", error=str(e))
     finally:
+        # KVKK veri minimizasyonu: analiz bitince son annotated kare bellekte kalmaz
+        job.pop("frame_jpeg", None)
         if s is not None:
             s.close()
         RUN_LOCK.release()
@@ -388,7 +437,24 @@ def api_run_status(job_id: str):
     j = JOBS.get(job_id)
     if not j:
         raise HTTPException(404, "job bulunamadı")
+    # dict(j): analiz thread'i eşzamanlı anahtar ekler — kopya GIL altında atomik,
+    # kilitisiz iterasyon RuntimeError'ı önlenir. frame_jpeg ham bytes — JSON'a girmez.
+    j = dict(j)
+    j.pop("frame_jpeg", None)
     return {"job_id": job_id, **j}
+
+
+@app.get("/api/run/{job_id}/frame")
+def api_run_frame(job_id: str):
+    """Analiz sürerken son annotated kare (JPEG, yalnız bellek — diske yazılmaz)."""
+    j = JOBS.get(job_id)
+    if not j:
+        raise HTTPException(404, "job bulunamadı")
+    data = j.get("frame_jpeg")
+    if not data:
+        return Response(status_code=204)
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/events")
@@ -405,6 +471,18 @@ def api_alerts(limit: int = 20):
     s = _store()
     try:
         return s.recent_alerts(limit)
+    finally:
+        s.close()
+
+
+@app.get("/api/counts")
+def api_counts():
+    # active: şu an koşan analiz var mı — UI sayaç kutularını yalnız analiz
+    # sürerken gösterir (ekran ilk açılışta eski toplamlarla dolmasın)
+    active = any(j.get("status") == "running" for j in list(JOBS.values()))
+    s = _store()
+    try:
+        return {"active": active, "rows": s.count_totals()}
     finally:
         s.close()
 

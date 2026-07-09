@@ -7,109 +7,113 @@
 <script>try{var t=localStorage.getItem('vai-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 <style>
   :root{
-    --bg:#f5f6f8; --panel:#ffffff; --panel-2:#fafbfc; --hover:#f3f4f7;
-    --ink:#0f172a; --ink-2:#516074; --ink-3:#9aa4b2;
-    --line:#e9ebf0; --line-2:#dde0e7;
-    --accent:#4f46e5; --accent-2:#6366f1; --accent-soft:#ececfb; --accent-ink:#ffffff;
-    --ok:#15803d; --ok-soft:#e7f6ec; --warn:#b45309; --warn-soft:#fbf0d9; --danger:#dc2626; --danger-soft:#fdecec;
-    --rail:#0b1120; --rail-2:#0f1729; --rail-ink:#c7d0de; --rail-ink-2:#6b7689; --rail-active:#1d2740;
-    --shadow:0 1px 2px rgba(15,23,42,.04),0 6px 18px rgba(15,23,42,.06);
-    --shadow-lg:0 10px 30px rgba(15,23,42,.10);
-    --r:12px; --r-lg:16px; --t:.16s cubic-bezier(.4,0,.2,1);
+    --bg:#eef2f7; --panel:#ffffff; --panel-2:#f7f9fc; --hover:#edf1f7;
+    --ink:#111827; --ink-2:#4b596c; --ink-3:#8a96a8;
+    --line:#dfe5ee; --line-2:#cfd8e6;
+    --accent:#2563eb; --accent-2:#0891b2; --accent-soft:#e8f0ff; --accent-ink:#ffffff;
+    --ok:#0f8a4b; --ok-soft:#e5f7ed; --warn:#b7791f; --warn-soft:#fff4d6; --danger:#d92d20; --danger-soft:#ffebe8;
+    --rail:#070b12; --rail-2:#101827; --rail-ink:#d4dce8; --rail-ink-2:#7d8aa0; --rail-active:#172338;
+    --shadow:0 1px 2px rgba(17,24,39,.05),0 10px 28px rgba(17,24,39,.08);
+    --shadow-lg:0 18px 44px rgba(17,24,39,.14);
+    --r:10px; --r-lg:14px; --t:.16s cubic-bezier(.4,0,.2,1);
   }
   html[data-theme=dark]{
-    --bg:#0a0e16; --panel:#121826; --panel-2:#0e131f; --hover:#1a2233;
-    --ink:#e9eef7; --ink-2:#9aa6b8; --ink-3:#5d6878;
-    --line:#1d2533; --line-2:#2a3445;
-    --accent:#6366f1; --accent-2:#818cf8; --accent-soft:#1c2140; --accent-ink:#ffffff;
-    --ok:#4ade80; --ok-soft:#11281b; --warn:#fbbf24; --warn-soft:#2b2310; --danger:#f87171; --danger-soft:#2a1414;
-    --rail:#070b13; --rail-2:#0b1019; --rail-ink:#aeb9ca; --rail-ink-2:#566073; --rail-active:#161f33;
+    --bg:#070b12; --panel:#0e1521; --panel-2:#111b2a; --hover:#172235;
+    --ink:#edf3fb; --ink-2:#a8b4c7; --ink-3:#6f7c91;
+    --line:#1d2a3b; --line-2:#2d3b50;
+    --accent:#38bdf8; --accent-2:#22d3ee; --accent-soft:#102c3d; --accent-ink:#06111c;
+    --ok:#34d399; --ok-soft:#0c2a1d; --warn:#fbbf24; --warn-soft:#2e2410; --danger:#fb7185; --danger-soft:#30151d;
+    --rail:#05070c; --rail-2:#0c1220; --rail-ink:#c6d1df; --rail-ink-2:#657489; --rail-active:#122033;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.4); --shadow-lg:0 14px 40px rgba(0,0,0,.5);
   }
   *{box-sizing:border-box;}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;-webkit-font-smoothing:antialiased;line-height:1.5;}
   ::selection{background:var(--accent-soft);}
   .app{display:flex;min-height:100vh;}
-  /* sidebar */
-  .rail{width:230px;flex-shrink:0;background:var(--rail);color:var(--rail-ink);display:flex;flex-direction:column;padding:18px 14px;position:sticky;top:0;height:100vh;}
-  .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 20px;}
-  .brand .logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;}
-  .brand b{font-size:16px;letter-spacing:-.02em;color:#fff;font-weight:600;}
+  .rail{width:264px;flex-shrink:0;background:linear-gradient(180deg,var(--rail),#080d16 58%,#05070c);color:var(--rail-ink);display:flex;flex-direction:column;padding:22px 16px;position:sticky;top:0;height:100vh;border-right:1px solid rgba(255,255,255,.06);}
+  .brand{display:flex;align-items:center;gap:12px;padding:4px 8px 26px;}
+  .brand .logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;box-shadow:0 12px 28px rgba(37,99,235,.28);}
+  .brand b{font-size:17px;letter-spacing:0;color:#fff;font-weight:700;}
   .brand span{font-size:11px;color:var(--rail-ink-2);display:block;letter-spacing:.04em;}
-  .nav{display:flex;flex-direction:column;gap:3px;flex:1;}
-  .nav .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--rail-ink-2);padding:14px 10px 6px;}
-  .nav a{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:10px;color:var(--rail-ink);cursor:pointer;font-size:14px;transition:background var(--t),color var(--t);position:relative;}
-  .nav a:hover{background:var(--rail-2);color:#fff;}
-  .nav a.on{background:var(--rail-active);color:#fff;}
-  .nav a.on::before{content:"";position:absolute;left:-14px;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--accent-2);}
+  .nav{display:flex;flex-direction:column;gap:4px;flex:1;}
+  .nav .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--rail-ink-2);padding:15px 10px 6px;font-weight:700;}
+  .nav a{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:var(--rail-ink);cursor:pointer;font-size:14px;transition:background var(--t),color var(--t),transform var(--t);position:relative;}
+  .nav a:hover{background:var(--rail-2);color:#fff;transform:translateX(1px);}
+  .nav a.on{background:linear-gradient(90deg,var(--rail-active),rgba(23,35,56,.72));color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);}
+  .nav a.on::before{content:"";position:absolute;left:-16px;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--accent-2);}
   .nav a svg{width:19px;height:19px;flex-shrink:0;opacity:.9;}
-  .rail-foot{border-top:1px solid var(--rail-2);padding-top:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
-  .dot{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--rail-ink-2);}
+  .rail-foot{border-top:1px solid var(--rail-2);padding-top:14px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .dot{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--rail-ink-2);font-weight:700;}
   .dot i{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18);}
-  .icon-btn{width:32px;height:32px;border-radius:9px;border:1px solid var(--rail-2);background:transparent;color:var(--rail-ink);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--t);}
+  .icon-btn{width:34px;height:34px;border-radius:10px;border:1px solid var(--rail-2);background:transparent;color:var(--rail-ink);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--t);}
   .icon-btn:hover{background:var(--rail-2);color:#fff;}
-  /* main */
   .main{flex:1;min-width:0;display:flex;flex-direction:column;}
-  .topbar{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:18px 30px;display:flex;align-items:flex-end;justify-content:space-between;gap:16px;}
-  .topbar h1{font-size:21px;font-weight:600;letter-spacing:-.02em;margin:0;}
+  .topbar{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:22px 34px;display:flex;align-items:flex-end;justify-content:space-between;gap:16px;}
+  .topbar h1{font-size:25px;font-weight:700;letter-spacing:0;margin:0;}
   .topbar .sub{color:var(--ink-2);font-size:13px;margin:2px 0 0;}
-  .content{padding:24px 30px;animation:fade .22s ease;}
+  .content{padding:28px 34px 42px;animation:fade .22s ease;max-width:2200px;width:100%;}
   @keyframes fade{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
-  /* cards */
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow);}
-  .card.pad{padding:18px;}
-  .grid{display:grid;gap:16px;}
-  /* camera tiles */
-  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;}
-  .tile{position:relative;border-radius:var(--r-lg);overflow:hidden;aspect-ratio:16/9;background:var(--panel-2);border:1px solid var(--line);box-shadow:var(--shadow);transition:transform var(--t),box-shadow var(--t);}
-  .tile:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg);}
+  .card.pad{padding:20px;}
+  .grid{display:grid;gap:18px;}
+  .overview{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:14px;margin-bottom:20px;}
+  .stat{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 18px;box-shadow:var(--shadow);min-height:92px;}
+  .stat .k{font-size:12px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;}
+  .stat .v{font-size:28px;line-height:1.1;font-weight:750;margin-top:8px;letter-spacing:0;}
+  .stat .s{font-size:12px;color:var(--ink-2);margin-top:5px;}
+  .section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:2px 0 14px;}
+  .section-head b{font-size:15px;}
+  .taskset{display:inline-flex;gap:6px;flex-wrap:wrap;}
+  .taskpill{font-size:11.5px;font-weight:700;padding:4px 8px;border-radius:999px;background:var(--hover);color:var(--ink-3);}
+  .taskpill.on{background:var(--accent-soft);color:var(--accent);}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:18px;}
+  .tile{position:relative;border-radius:var(--r-lg);overflow:hidden;aspect-ratio:16/9;background:#05070c;border:1px solid var(--line);box-shadow:var(--shadow);transition:transform var(--t),box-shadow var(--t),border-color var(--t);}
+  .tile:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg);border-color:var(--line-2);}
   .tile img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .3s ease;}
   .tile img.loaded{opacity:1;}
   .tile .skel{position:absolute;inset:0;background:linear-gradient(100deg,var(--panel-2) 30%,var(--hover) 50%,var(--panel-2) 70%);background-size:200% 100%;animation:shimmer 1.3s infinite;}
   @keyframes shimmer{from{background-position:200% 0;}to{background-position:-200% 0;}}
-  .tile .grad{position:absolute;left:0;right:0;bottom:0;height:64px;background:linear-gradient(transparent,rgba(0,0,0,.6));pointer-events:none;}
-  .tile .nm{position:absolute;left:12px;bottom:10px;color:#fff;font-weight:500;font-size:14px;text-shadow:0 1px 4px rgba(0,0,0,.5);}
-  .live{position:absolute;right:10px;top:10px;display:inline-flex;align-items:center;gap:6px;background:rgba(7,11,19,.7);color:#fff;font-size:11px;font-weight:500;padding:4px 9px;border-radius:20px;letter-spacing:.03em;}
+  .tile .grad{position:absolute;left:0;right:0;bottom:0;height:92px;background:linear-gradient(transparent,rgba(0,0,0,.76));pointer-events:none;}
+  .tile .nm{position:absolute;left:16px;bottom:14px;color:#fff;font-weight:700;font-size:15px;text-shadow:0 1px 4px rgba(0,0,0,.5);}
+  .countbox{position:absolute;left:14px;top:12px;display:flex;gap:7px;background:rgba(5,9,16,.78);backdrop-filter:blur(8px);color:#fff;font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:20px;z-index:2;border:1px solid rgba(255,255,255,.12);}
+  .countbox span{white-space:nowrap;}
+  .live{position:absolute;right:12px;top:12px;display:inline-flex;align-items:center;gap:6px;background:rgba(5,9,16,.78);backdrop-filter:blur(8px);color:#fff;font-size:11px;font-weight:700;padding:5px 10px;border-radius:20px;letter-spacing:.04em;border:1px solid rgba(255,255,255,.12);}
   .live i{width:6px;height:6px;border-radius:50%;background:#ef4444;animation:pulse 1.4s infinite;}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
-  /* rows / list */
-  .row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line);transition:background var(--t);}
+  .row{display:flex;align-items:center;gap:13px;padding:14px 18px;border-bottom:1px solid var(--line);transition:background var(--t);}
   .row:last-child{border-bottom:0;}
   .row:hover{background:var(--panel-2);}
-  .av{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;}
+  .av{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;}
   .mut{color:var(--ink-2);}.mut-s{color:var(--ink-3);font-size:12.5px;}
-  /* buttons */
-  .btn{border:1px solid var(--line-2);background:var(--panel);color:var(--ink);border-radius:10px;padding:8px 13px;cursor:pointer;font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:7px;transition:all var(--t);}
+  .btn{border:1px solid var(--line-2);background:var(--panel);color:var(--ink);border-radius:10px;padding:9px 14px;cursor:pointer;font-size:13px;font-weight:700;display:inline-flex;align-items:center;gap:7px;transition:all var(--t);}
   .btn:hover{background:var(--hover);border-color:var(--ink-3);}
   .btn:active{transform:scale(.97);}
   .btn svg{width:16px;height:16px;}
-  .btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
-  .btn.pri:hover{background:var(--accent-2);border-color:var(--accent-2);}
+  .btn.pri{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:var(--accent-ink);box-shadow:0 10px 24px color-mix(in srgb,var(--accent) 22%,transparent);}
+  .btn.pri:hover{filter:brightness(1.04);}
   .btn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);}
   .btn.sm{padding:6px 10px;font-size:12.5px;}
   .btn.ico{padding:8px;}
-  /* inputs */
-  input,select{border:1px solid var(--line-2);background:var(--panel);color:var(--ink);border-radius:10px;padding:9px 12px;font-size:13px;transition:border var(--t),box-shadow var(--t);font-family:inherit;}
+  input,select{border:1px solid var(--line-2);background:var(--panel);color:var(--ink);border-radius:10px;padding:10px 12px;font-size:13px;transition:border var(--t),box-shadow var(--t);font-family:inherit;}
   input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
   input::placeholder{color:var(--ink-3);}
-  /* chips */
-  .chip{font-size:11.5px;font-weight:500;padding:3px 10px;border-radius:20px;display:inline-flex;align-items:center;gap:5px;}
-  /* metric */
-  .metric{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r);padding:15px 16px;}
+  .chip{font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:20px;display:inline-flex;align-items:center;gap:5px;}
+  .metric{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:var(--r-lg);padding:18px 20px;box-shadow:var(--shadow);}
   .metric .k{font-size:12.5px;color:var(--ink-2);margin-bottom:6px;}
-  .metric .v{font-size:25px;font-weight:600;letter-spacing:-.02em;}
-  /* table */
+  .metric .v{font-size:28px;font-weight:750;letter-spacing:0;}
   table{width:100%;border-collapse:collapse;}
-  th,td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--line);}
-  th{color:var(--ink-3);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.04em;}
+  th,td{text-align:left;padding:13px 18px;border-bottom:1px solid var(--line);}
+  th{color:var(--ink-3);font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;}
   tr:last-child td{border-bottom:0;}
-  .tools{display:flex;flex-direction:column;gap:12px;width:210px;flex-shrink:0;}
+  .tools{display:flex;flex-direction:column;gap:12px;width:220px;flex-shrink:0;}
   canvas{border-radius:var(--r-lg);border:1px solid var(--line-2);cursor:crosshair;max-width:100%;background:#0b1120;box-shadow:var(--shadow);}
   .seg{display:inline-flex;background:var(--panel-2);border:1px solid var(--line);border-radius:11px;padding:3px;gap:2px;}
-  .seg button{border:0;background:transparent;color:var(--ink-2);padding:7px 13px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:all var(--t);}
+  .seg button{border:0;background:transparent;color:var(--ink-2);padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;transition:all var(--t);}
   .seg button.on{background:var(--panel);color:var(--ink);box-shadow:var(--shadow);}
   .empty{padding:40px;text-align:center;color:var(--ink-3);}
+  @media (max-width:1100px){.app{display:block}.rail{position:relative;width:auto;height:auto}.nav{display:grid;grid-template-columns:repeat(3,1fr)}.rail-foot{margin-top:14px}.overview{grid-template-columns:repeat(2,1fr)}.tiles{grid-template-columns:1fr}.topbar,.content{padding-left:18px;padding-right:18px;}}
+  @media (min-width:1800px){body{font-size:15px}.topbar h1{font-size:29px}.tiles{grid-template-columns:repeat(auto-fit,minmax(520px,1fr));}.content{padding-top:34px}.stat .v{font-size:34px;}}
 </style>
 </head>
 <body>
@@ -149,6 +153,7 @@ document.getElementById('logo').innerHTML=svg('bolt',18);
 const NAV=[["live","Canlı","live"],["cams","Kameralar","cams"],["zones","Bölgeler","zones"],["test","Test","test"],["events","Olaylar","events"],["lists","Listeler","lists"]];
 const TITLES={live:["Canlı görünüm","Tüm kameralar gerçek zamanlı"],cams:["Kameralar","IP / RTSP kaynakları"],zones:["Bölgeler ve çizgiler","Görüntüye çiz · sürükle düzelt · ✕ sil"],test:["Test ve çalıştır","Analizi çalıştır, sonucu ve videoyu gör"],events:["Olaylar","Birleşik akış — sayım · plaka · yüz"],lists:["İzleme listeleri","Kara liste / VIP — eşleşince uyarı"]};
 let CAMS=[],active="live";
+let LIVE_COUNTS={},LIVE_ACTIVE=false;
 const $=s=>document.querySelector(s);
 /* XSS koruması: kullanıcı/OCR kaynaklı her değer innerHTML'e esc() ile girer */
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -171,7 +176,13 @@ function toggleTheme(){const d=document.documentElement;const nx=(d.getAttribute
 function themeBtn(){const dark=document.documentElement.getAttribute('data-theme')==='dark';$("#theme").innerHTML=svg(dark?'sun':'moon',17);}
 
 let SYS={go2rtc:""};
-async function boot(){themeBtn();[CAMS,SYS]=await Promise.all([api("/cameras"),api("/sysinfo").catch(()=>({go2rtc:""}))]);render();}
+async function boot(){themeBtn();[CAMS,SYS]=await Promise.all([api("/cameras"),api("/sysinfo").catch(()=>({go2rtc:""}))]);render();startLiveCounts();}
+/* Sayaç kutuları yalnız bir analiz KOŞARKEN görünür — ekran ilk açılışta eski toplamlarla dolmaz */
+function countBox(id){const c=LIVE_COUNTS[id];if(!LIVE_ACTIVE||!c)return `<div class="countbox" data-countbox="${esc(id)}" style="display:none;"></div>`;return `<div class="countbox" data-countbox="${esc(id)}"><span>${c.in} giriş</span><span>${c.out} çıkış</span></div>`;}
+async function refreshLiveCounts(){try{const res=await api("/counts");LIVE_ACTIVE=!!res.active;const rows=res.rows||[];const next={};rows.forEach(r=>{next[r.camera_id]={in:Number(r.in_count||0),out:Number(r.out_count||0)};});LIVE_COUNTS=next;document.querySelectorAll("[data-countbox]").forEach(el=>{el.outerHTML=countBox(el.dataset.countbox);});const ov=document.querySelector(".overview");if(ov)ov.outerHTML=overviewStats();}catch(e){}}
+function startLiveCounts(){clearInterval(window._countTimer);refreshLiveCounts();window._countTimer=setInterval(refreshLiveCounts,2000);}
+function taskPills(c){const t=c.tasks||{};return `<span class="taskset"><span class="taskpill ${t.count?'on':''}">Sayım</span><span class="taskpill ${t.plate?'on':''}">Plaka</span><span class="taskpill ${t.face?'on':''}">Yüz</span></span>`;}
+function overviewStats(){const activeTasks=CAMS.reduce((n,c)=>n+Object.values(c.tasks||{}).filter(Boolean).length,0);const inTotal=LIVE_ACTIVE?Object.values(LIVE_COUNTS).reduce((n,c)=>n+(c.in||0),0):"—";const outTotal=LIVE_ACTIVE?Object.values(LIVE_COUNTS).reduce((n,c)=>n+(c.out||0),0):"—";const sub=LIVE_ACTIVE?"canlı sayaç":"analiz çalışırken";return `<div class="overview"><div class="stat"><div class="k">Kamera</div><div class="v">${CAMS.length}</div><div class="s">tanımlı kaynak</div></div><div class="stat"><div class="k">Aktif görev</div><div class="v">${activeTasks}</div><div class="s">sayım, plaka, yüz</div></div><div class="stat"><div class="k">Toplam giriş</div><div class="v">${inTotal}</div><div class="s">${sub}</div></div><div class="stat"><div class="k">Toplam çıkış</div><div class="v">${outTotal}</div><div class="s">${sub}</div></div></div>`;}
 function render(){
   $("#nav").innerHTML=`<div class="lbl">İzleme</div>`+NAV.slice(0,4).map(navHtml).join("")+`<div class="lbl">Kayıt</div>`+NAV.slice(4).map(navHtml).join("");
   clearInterval(window._liveTimer);
@@ -189,12 +200,13 @@ const SCREENS={
       ?`<iframe src="${SYS.go2rtc}/stream.html?src=${encodeURIComponent(c.id)}&mode=mse" style="width:100%;height:100%;border:0;" allow="autoplay" loading="lazy"></iframe>`
       :`<div class="skel"></div><img loading="lazy" src="${snap(c.id)}" data-cam="${esc(c.id)}" alt="${esc(c.name)}"
              onload="this.classList.add('loaded');this.previousElementSibling.remove()"/>`;
-    $("#content").innerHTML=`<div class="tiles">${CAMS.map(c=>`
+    $("#content").innerHTML=`${overviewStats()}<div class="section-head"><b>Kamera duvarı</b><span class="mut-s">Yüksek çözünürlüklü canlı izleme</span></div><div class="tiles">${CAMS.map(c=>`
       <div class="tile">
         ${inner(c)}
         <div class="grad"></div>
         <span class="live"><i></i> CANLI</span>
-        <span class="nm">${esc(c.name)}</span>
+        <span class="nm">${esc(c.name)} ${taskPills(c)}</span>
+        ${countBox(c.id)}
       </div>`).join("")}</div>`;
     clearInterval(window._liveTimer);
     if(!SYS.go2rtc)window._liveTimer=setInterval(()=>{document.querySelectorAll('.tile img').forEach(im=>{im.src=snap(im.dataset.cam)+'&t='+Date.now();});},5000);
@@ -210,9 +222,9 @@ const SCREENS={
       return '<span class="chip" style="background:var(--ok-soft);color:var(--ok);"><i style="width:6px;height:6px;border-radius:50%;background:currentColor;"></i> çalışıyor</span>';};
     const taskBtns=c=>{const t=c.tasks||{};return [["count","Sayım"],["plate","Plaka"],["face","Yüz"]].map(([k,l])=>
       `<button class="btn sm ${t[k]?'on':''}" onclick="toggleTask('${esc(c.id)}','${k}')">${l}</button>`).join("");};
-    $("#content").innerHTML=`<div class="card">${CAMS.map(c=>`<div class="row">
+    $("#content").innerHTML=`${overviewStats()}<div class="section-head"><b>Kamera envanteri</b><span class="mut-s">Görevleri kamera bazında açıp kapat</span></div><div class="card">${CAMS.map(c=>`<div class="row">
       <span class="av" style="background:var(--accent-soft);color:var(--accent);">${svg('cams',18)}</span>
-      <div style="flex:1;min-width:0;"><div style="font-weight:500;">${esc(c.name)}</div><div class="mono mut-s">${esc(c.source)}</div></div>
+      <div style="flex:1;min-width:0;"><div style="font-weight:700;">${esc(c.name)}</div><div class="mono mut-s">${esc(c.source)}</div><div style="margin-top:7px;">${taskPills(c)}</div></div>
       <span style="display:inline-flex;gap:5px;">${taskBtns(c)}</span>
       ${stChip(c)}
       <button class="btn sm ico" title="sil" onclick="delCam('${c.id}')">${svg('x',14)}</button>
@@ -252,15 +264,19 @@ const SCREENS={
     await initEditor(camId);
   },
   test(){
-    const camId=window._tc||CAMS[0]?.id;window._tc=camId;
-    const kind=window._tk||"count";window._tk=kind;
+    const preferred=CAMS.find(c=>c.tasks&&(c.tasks.face||c.tasks.count||c.tasks.plate))||CAMS[0]||{};
+    const camId=window._tc||preferred.id;window._tc=camId;
+    const cam=CAMS.find(c=>c.id===camId)||preferred;
+    const enabled=["face","count","plate"].filter(k=>(cam.tasks||{})[k]);
+    // 'analyze' (Hepsi) her zaman seçilebilir — görev listesinde olmadığı için fallback'e düşmesin
+    const kind=(window._tk&&(window._tk==="analyze"||!enabled.length||enabled.includes(window._tk)))?window._tk:(enabled[0]||"face");window._tk=kind;
     const kinds=[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["analyze","Hepsi"]];
     $("#content").innerHTML=`
-      <div style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap;">
-        <select id="tcam" onchange="window._tc=this.value">${CAMS.map(c=>`<option value="${esc(c.id)}" ${c.id===camId?'selected':''}>${esc(c.name)}</option>`).join("")}</select>
+      <div class="card pad" style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap;">
+        <select id="tcam" onchange="window._tc=this.value;window._tk=null;SCREENS.test()">${CAMS.map(c=>`<option value="${esc(c.id)}" ${c.id===camId?'selected':''}>${esc(c.name)}</option>`).join("")}</select>
         <div class="seg">${kinds.map(k=>`<button class="${k[0]===kind?'on':''}" onclick="window._tk='${k[0]}';SCREENS.test()">${k[1]}</button>`).join("")}</div>
         <button class="btn pri" onclick="runTest()">${svg('play',15)} Çalıştır</button>
-        <span class="mut-s" id="trun"></span></div>
+        <span class="mut-s" id="trun" style="margin-left:auto;"></span></div>
       <div id="tres"></div>`;
   },
   async events(){
@@ -393,32 +409,69 @@ async function saveZones(){
   $("#zstatus").textContent=r.ok?`✓ ${r.count} kayıt kaydedildi`:"hata";
 }
 
+/* Ekran değişince #trun/#tres kaybolur — null-guard'lı yazıcılar (poll sessiz sürer) */
+const setRun=h=>{const el=$("#trun");if(el)el.innerHTML=h;};
+const setRes=h=>{const el=$("#tres");if(el)el.innerHTML=h;};
 async function runTest(){
   const camera=window._tc,kind=window._tk;
-  $("#trun").textContent="başlıyor…";
-  $("#tres").innerHTML=`<div class="card pad"><div class="skel" style="height:60px;border-radius:10px;"></div></div>`;
+  setRun("başlıyor…");
+  setRes(`<div class="card pad"><div class="skel" style="height:60px;border-radius:10px;"></div></div>`);
   try{
     const {job_id}=await api("/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({camera,kind})});
-    let st;
-    for(let i=0;i<900;i++){
+    let st,shownSeq=-1;
+    for(let i=0;i<1500;i++){
       st=await api("/run/"+job_id);
       if(st.status==="done"||st.status==="error")break;
-      $("#trun").innerHTML=`<span style="color:var(--accent);">⏳ ${st.stage||"çalışıyor"}…</span>`;
-      if(st.live&&st.live.length)renderLive(st.live);
-      await new Promise(r=>setTimeout(r,500));
+      setRun(`<span style="color:var(--accent);">⏳ ${esc(st.stage||"çalışıyor")}…</span>`);
+      ensureLivePanel();
+      // Canlı annotated kare — yeni kare geldiyse (frame_seq arttıysa) img'i tazele
+      if(st.frame_seq&&st.frame_seq!==shownSeq){shownSeq=st.frame_seq;const f=$("#liveframe");if(f){f.src=`/api/run/${job_id}/frame?seq=${st.frame_seq}${tokq()}`;f.style.display="block";const ph=$("#liveph");if(ph)ph.remove();}}
+      // Metrikler görüntünün YANINDA akar; "analyze"da aktif aşamanın paneli gösterilir
+      const stage=st.stage||"";
+      if(stage.startsWith("Yüz")&&st.face_live)renderLiveFace(st.face_live);
+      else if(stage.startsWith("Plaka")&&st.live)renderLive(st.live);
+      else if(st.count_live)renderLiveCount(st.count_live);
+      else if(st.face_live)renderLiveFace(st.face_live);
+      else if(st.live&&st.live.length)renderLive(st.live);
+      await new Promise(r=>setTimeout(r,300));
     }
-    if(!st||st.status==="error"){$("#trun").textContent="hata: "+(st?st.error:"zaman aşımı");$("#tres").innerHTML="";return;}
+    if(!st||st.status==="error"){setRun("hata: "+esc(st?st.error:"zaman aşımı"));setRes("");return;}
 
-    $("#trun").textContent="✓ bitti";
+    setRun("✓ bitti");
     renderResult(st.summary,st.videos);
-  }catch(e){$("#trun").textContent="hata: "+e;$("#tres").innerHTML="";}
+  }catch(e){setRun("hata: "+esc(e));setRes("");}
+}
+/* Canlı analiz paneli: üstte annotated kare, altında akan metrikler — bir kez kurulur */
+function ensureLivePanel(){
+  if($("#tlive")||!$("#tres"))return;
+  $("#tres").innerHTML=`<div id="tlive"><div class="card pad" style="margin-bottom:14px;">
+    <div style="font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:12px;">${svg('play',17)} Canlı analiz görüntüsü</div>
+    <div id="liveph" class="skel" style="height:220px;border-radius:var(--r-lg);"></div>
+    <img id="liveframe" alt="" style="width:100%;display:none;border-radius:var(--r-lg);border:1px solid var(--line);background:#000;box-shadow:var(--shadow);">
+  </div><div id="tmetrics"></div></div>`;
+}
+const _tm=()=>$("#tmetrics")||$("#tres");
+function renderLiveCount(live){
+  const rows=(live.events||[]).slice(-40).map(ev=>`<div class="row" style="animation:fade .2s ease;">
+    <span class="av" style="background:${ev.direction==='in'?'var(--ok-soft)':'var(--warn-soft)'};color:${ev.direction==='in'?'var(--ok)':'var(--warn)'};">${ev.direction==='in'?'IN':'OUT'}</span>
+    <div style="flex:1;"><div style="font-weight:700;">${esc(ev.line||'Çizgi')} · ${ev.direction==='in'?'giriş':'çıkış'}</div><div class="mono mut-s">track ${ev.track_id} · kare ${ev.frame_idx} · ${ev.ts_seconds} sn</div></div>
+  </div>`).join("");
+  const tgt=_tm();if(!tgt)return;
+  tgt.innerHTML=`<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-bottom:14px;"><div class="metric"><div class="k">Canlı sayım · giriş</div><div class="v">${live.in||0}</div></div><div class="metric"><div class="k">Canlı sayım · çıkış</div><div class="v">${live.out||0}</div></div></div><div class="card"><div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;font-weight:700;">${svg('live',17)} Canlı sayım akışı <span class="chip" style="background:var(--accent-soft);color:var(--accent);">${(live.events||[]).length}</span></div><div id="liverows" style="max-height:340px;overflow:auto;">${rows||'<div class="empty">Geçiş bekleniyor.</div>'}</div></div>`;
+  const lr=$("#liverows");if(lr)lr.scrollTop=lr.scrollHeight;
+}
+function renderLiveFace(live){
+  const matches=(live.matches||[]).map(m=>`<div class="row"><span class="av" style="background:var(--danger-soft);color:var(--danger);">!</span><div style="flex:1;"><div style="font-weight:700;">${esc(m.name)}</div><div class="mut-s">${esc(m.label||'')} · ${esc(m.list_type||'')}</div></div><span class="mono mut-s">${m.score}</span></div>`).join("");
+  const tgt=_tm();if(!tgt)return;
+  tgt.innerHTML=`<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin-bottom:14px;"><div class="metric"><div class="k">Canlı yüz · ham tespit</div><div class="v">${live.raw||0}</div><div class="mut-s">işlenen kare ${live.frames||0}</div></div><div class="metric"><div class="k">Aktif yüz track</div><div class="v">${live.active||0}</div><div class="mut-s">sahnede izlenen</div></div><div class="metric"><div class="k">Net kişi</div><div class="v">${live.detections||0}</div><div class="mut-s">track kapanınca artar</div></div><div class="metric"><div class="k">Demografi</div><div class="v">${live.male||0} / ${live.female||0}</div><div class="mut-s">E / K · yaş ${live.avg_age||0}</div></div></div><div class="card"><div style="padding:12px 16px;border-bottom:1px solid var(--line);font-weight:700;display:flex;align-items:center;gap:8px;">${svg('events',17)} Canlı yüz akışı</div>${matches||'<div class="empty">Yüz izleniyor. Eşleşme veya kapanan track bekleniyor.</div>'}</div>`;
 }
 function renderLive(live){
   const rows=live.slice(-40).map((r,i)=>`<div class="row" style="animation:fade .2s ease;">
     <span class="av" style="background:var(--warn-soft);color:var(--warn);">${svg('cams',16)}</span>
     <div style="flex:1;"><span class="mono" style="font-weight:500;">${esc(r.plate)}</span></div>
     <span class="mut-s">kare ${r.frame} · ${r.ts} sn${r.conf!=null?' · %'+Math.round(r.conf*100):''}</span></div>`).join("");
-  $("#tres").innerHTML=`<div class="card"><div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;font-weight:500;">${svg('cams',17)} Canlı plaka akışı <span class="chip" style="background:var(--accent-soft);color:var(--accent);">${live.length}</span></div><div id="liverows" style="max-height:340px;overflow:auto;">${rows}</div></div>`;
+  const tgt=_tm();if(!tgt)return;
+  tgt.innerHTML=`<div class="card"><div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;font-weight:500;">${svg('cams',17)} Canlı plaka akışı <span class="chip" style="background:var(--accent-soft);color:var(--accent);">${rows?live.length:0}</span></div><div id="liverows" style="max-height:340px;overflow:auto;">${rows||'<div class="empty">Plaka bekleniyor.</div>'}</div></div>`;
   const lr=$("#liverows");if(lr)lr.scrollTop=lr.scrollHeight;
 }
 function renderResult(s,videos){
@@ -431,7 +484,7 @@ function renderResult(s,videos){
     m.push(`<div class="metric" ${al.length?'style="border:1px solid var(--danger);"':''}><div class="k">Plaka · ${s.plate.total} okuma → ${vt.length} araç (oylama)</div><div class="mono" style="margin-top:4px;font-size:13px;line-height:1.9;">${list||'—'}</div>${al.length?`<div class="chip" style="background:var(--danger-soft);color:var(--danger);margin-top:8px;">⚠ ${al.length} kara liste: ${esc(al.map(a=>a.plate).join(", "))}</div>`:''}</div>`);}
   if(s.face){const al=s.face.alerts||[];m.push(`<div class="metric" ${al.length?'style="border:1px solid var(--danger);"':''}><div class="k">Yüz (anonim) · kişi</div><div class="v">${s.face.detections}</div><div class="mut-s">E:${s.face.male} · K:${s.face.female} · ort. yaş ${s.face.avg_age}</div>${al.length?`<div class="chip" style="background:var(--danger-soft);color:var(--danger);margin-top:8px;">⚠ ${al.length} liste eşleşmesi: ${esc(al.map(a=>a.name).join(", "))}</div>`:''}</div>`);}
   const cb="?t="+Date.now()+tokq();  // cache-buster + erişim anahtarı
-  const vids=(videos||[]).map(v=>`<video src="${v}${cb}" controls style="width:100%;border-radius:var(--r-lg);border:1px solid var(--line);margin-top:14px;background:#000;box-shadow:var(--shadow);"></video>`).join("");
+  const vids=(videos||[]).map((v,i)=>`<div class="card pad" style="margin-top:14px;"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;"><div style="font-weight:700;display:flex;align-items:center;gap:8px;">${svg('play',17)} Sonuç videosu ${videos.length>1?i+1:''}</div><a class="btn sm" href="${v}${cb}" target="_blank" rel="noopener">Yeni sekmede aç</a></div><video src="${v}${cb}" controls preload="metadata" style="width:100%;display:block;border-radius:var(--r-lg);border:1px solid var(--line);background:#000;box-shadow:var(--shadow);"></video></div>`).join("");
   // Okunan plakalar — video altında alt alta liste (ANPR kaydı)
   let plateList="";
   if(s.plate){const vt=s.plate.voted||[];const bl=new Set((s.plate.alerts||[]).map(a=>a.plate));
@@ -441,7 +494,7 @@ function renderResult(s,videos){
         <div style="flex:1;"><span class="mono" style="font-size:15px;font-weight:500;">${esc(v.plate)}</span> <span class="mut-s">×${v.count}</span></div>
         ${black?'<span class="chip" style="background:var(--danger-soft);color:var(--danger);">kara liste</span>':''}
         <span class="mut-s">${v.conf!=null?'%'+Math.round(v.conf*100):''}</span></div>`}).join(""):'<div class="empty">Plaka okunmadı.</div>')+`</div>`;}
-  $("#tres").innerHTML=`<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">${m.join("")}</div>${vids}${plateList}`;
+  setRes(`<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">${m.join("")}</div>${vids}${plateList}`);
 }
 async function addCam(){const name=$("#cam-name").value.trim(),source=$("#cam-src").value.trim();if(!name||!source)return;await api("/cameras",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,source})});CAMS=await api("/cameras");SCREENS.cams();}
 async function toggleTask(cid,key){

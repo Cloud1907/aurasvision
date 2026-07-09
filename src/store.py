@@ -174,6 +174,12 @@ class BaseStore:
         return self._all("SELECT kind, ref, list_type, label, camera_id, time FROM alerts"
                          " ORDER BY time DESC LIMIT ?", (limit,))
 
+    def count_totals(self) -> list[dict[str, Any]]:
+        return self._all("SELECT camera_id, "
+                         "SUM(CASE WHEN direction='in' THEN 1 ELSE 0 END) AS in_count, "
+                         "SUM(CASE WHEN direction='out' THEN 1 ELSE 0 END) AS out_count "
+                         "FROM count_events GROUP BY camera_id")
+
     def clear_analysis(self) -> None:
         """Önceki analiz çıktılarını siler. KORUNUR: cameras, zones, izleme listeleri."""
         for t in ("count_events", "plate_events", "face_events", "alerts", "runs"):
