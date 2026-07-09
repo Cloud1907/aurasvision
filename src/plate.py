@@ -124,8 +124,9 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        # Yalnız işlenen kareler yazılır (vid_stride) → gerçek süre için efektif fps
         writer = cv2.VideoWriter(str(out_dir / (Path(source).stem + "_plate.mp4")),
-                                 fourcc, fps, (w, h))
+                                 fourcc, fps / max(vid_stride, 1), (w, h))
 
     res = PlateResult()
     frame_idx = 0

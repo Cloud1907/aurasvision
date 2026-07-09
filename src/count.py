@@ -90,7 +90,9 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
         out_dir = Path(cfg.get("paths.output_dir", "output"))
         out_dir.mkdir(parents=True, exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(str(out_dir / (Path(source).stem + "_count.mp4")), fourcc, fps, (w, h))
+        # Yalnız işlenen kareler yazılır (vid_stride) → gerçek süre için efektif fps
+        writer = cv2.VideoWriter(str(out_dir / (Path(source).stem + "_count.mp4")), fourcc,
+                                 fps / max(vid_stride, 1), (w, h))
 
     yolo = load_yolo(model, device, instance_key=camera_id)
     result = CountResult(fps=fps)
