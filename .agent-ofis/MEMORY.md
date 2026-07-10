@@ -1,7 +1,7 @@
 ---
 title: "AurasVision — Görüntü Analitiği Platformu — Hafıza İndeksi"
 type: memory-index
-updated: 2026-07-09
+updated: 2026-07-10
 generated_by: ofis-memory
 ---
 
