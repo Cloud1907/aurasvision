@@ -360,22 +360,28 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
         s = _store()
         s.clear_analysis()  # her test koşusu temiz başlar (önceki olaylar/uyarılar silinir)
         if p.kind in ("count", "analyze"):
-            job.update(stage="Sayım çalışıyor")
-            job["count_live"] = {"in": 0, "out": 0, "events": []}
-            from .count import run_count
-            def _on_count_event(ev):
-                live = job.setdefault("count_live", {"in": 0, "out": 0, "events": []})
-                live["in"] = ev.get("in", live.get("in", 0))
-                live["out"] = ev.get("out", live.get("out", 0))
-                live.setdefault("events", []).append(ev)
-                live["events"] = live["events"][-40:]
-            s.start_run("count", source)
-            res = run_count(source, cfg, save_video=True, store=s, camera_id=p.camera,
-                            lines=_saved_lines(p.camera) or None, on_event=_on_count_event,
-                            on_frame=push_frame)
-            summary["count"] = {"in": res.in_count, "out": res.out_count,
-                                "frames": res.frames, "lines": res.lines}
-            videos.append(f"/media/{stem}_count.mp4")
+            saved = _saved_lines(p.camera)
+            if not saved:
+                # Varsayılan orta çizgiyle sessizce saymak yanıltıcı — sayım atlanır,
+                # UI kullanıcıyı Bölgeler ekranına yönlendirir
+                summary["count"] = {"no_line": True}
+            else:
+                job.update(stage="Sayım çalışıyor")
+                job["count_live"] = {"in": 0, "out": 0, "events": []}
+                from .count import run_count
+                def _on_count_event(ev):
+                    live = job.setdefault("count_live", {"in": 0, "out": 0, "events": []})
+                    live["in"] = ev.get("in", live.get("in", 0))
+                    live["out"] = ev.get("out", live.get("out", 0))
+                    live.setdefault("events", []).append(ev)
+                    live["events"] = live["events"][-40:]
+                s.start_run("count", source)
+                res = run_count(source, cfg, save_video=True, store=s, camera_id=p.camera,
+                                lines=saved, on_event=_on_count_event,
+                                on_frame=push_frame)
+                summary["count"] = {"in": res.in_count, "out": res.out_count,
+                                    "frames": res.frames, "lines": res.lines}
+                videos.append(f"/media/{stem}_count.mp4")
         if p.kind in ("plate", "analyze"):
             job.update(stage="Plaka çalışıyor")
             job["live"] = []   # okundukça canlı eklenir (UI aşağı akıtır)

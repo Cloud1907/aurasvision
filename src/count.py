@@ -149,14 +149,13 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
             k = max(1.0, w / 1280)
             for lc in L:
                 _draw_line(cv2, annotated, lc, k)
-            # Sol üst: toplam + çizgi başına döküm
-            cv2.putText(annotated, f"TOPLAM  giris:{result.in_count}  cikis:{result.out_count}",
-                        (14, int(34 * k)), cv2.FONT_HERSHEY_SIMPLEX, 0.7 * k, (0, 220, 0),
-                        max(2, round(2 * k)))
-            for i, lc in enumerate(L):
-                cv2.putText(annotated, f"{_ascii(lc['name'])}: {lc['in']} / {lc['out']}",
-                            (14, int(34 * k + 30 * k * (i + 1))), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.55 * k, (0, 220, 0), max(1, round(1.5 * k)))
+            # Sol üst: toplam + çizgi başına döküm — koyu zemin + beyaz yazı (her sahnede okunur)
+            y = int(44 * k)
+            y += _badge(cv2, annotated, f"TOPLAM  giris:{result.in_count}  cikis:{result.out_count}",
+                        14, y, 0.7 * k, max(2, round(2 * k)))
+            for lc in L:
+                y += _badge(cv2, annotated, f"{_ascii(lc['name'])}: {lc['in']} / {lc['out']}",
+                            14, y, 0.55 * k, max(1, round(1.5 * k)))
             if writer is not None:
                 writer.write(annotated)
             if on_frame is not None:
@@ -168,6 +167,15 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
         store.commit()
     result.lines = [{"name": lc["name"], "in": lc["in"], "out": lc["out"]} for lc in L]
     return result
+
+
+def _badge(cv2, img, text: str, x: int, y: int, scale: float, thick: int) -> int:
+    """Koyu zemin üzerine beyaz yazı basar; kaplanan yüksekliği (satır aralığı) döndürür."""
+    (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+    pad = max(4, int(th * 0.45))
+    cv2.rectangle(img, (x - pad, y - th - pad), (x + tw + pad, y + base + pad), (32, 28, 24), -1)
+    cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thick)
+    return th + base + 2 * pad + int(th * 0.3)
 
 
 def _draw_line(cv2, img, lc, k: float = 1.0) -> None:

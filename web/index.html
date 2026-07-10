@@ -486,7 +486,8 @@ function renderLive(live){
 }
 function renderResult(s,videos){
   const m=[];
-  if(s.count){const ls=s.count.lines||[];
+  if(s.count&&s.count.no_line){m.push(`<div class="metric" style="border:1px solid var(--warn);"><div class="k">Sayım · atlandı</div><div style="margin-top:6px;font-weight:500;">⚠ Bu kamerada kayıtlı sayım çizgisi yok</div><div class="mut-s" style="margin-top:6px;">Bölgeler ekranından çizgiyi çizip <b>Kaydet</b>'e basın, sonra sayımı tekrar çalıştırın.</div></div>`);}
+  else if(s.count){const ls=s.count.lines||[];
     const perline=ls.length?`<div class="mut-s" style="margin-top:8px;line-height:1.9;">${ls.map(l=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-right:6px;"></span>${esc(l.name)}: <b>${l.in}</b> giriş / <b>${l.out}</b> çıkış`).join("<br>")}</div>`:'';
     m.push(`<div class="metric"><div class="k">Sayım · A→B giriş / B→A çıkış${ls.length>1?' · '+ls.length+' çizgi':''}</div><div class="v">${s.count.in} <span class="mut" style="font-size:15px;">giriş</span> · ${s.count.out} <span class="mut" style="font-size:15px;">çıkış</span></div><div class="mut-s">${s.count.frames} kare</div>${perline}</div>`);}
   if(s.plate){const al=s.plate.alerts||[],vt=s.plate.voted||[];
