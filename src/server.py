@@ -312,6 +312,10 @@ def _webify_av(src, dst) -> None:
 
 JOBS: dict[str, dict] = {}
 RUN_LOCK = threading.Lock()   # aynı anda tek analiz (SQLite yazma çakışmasını önler)
+# Status geçişlerini atomikleştirir: endpoint'in "cancelling" check-and-set'i ile analiz
+# thread'inin terminal yazımı (done/error/cancelled) yarışırsa done'un üzerine
+# cancelling yazılıp job sonsuza dek dönerdi. Kilit YALNIZ status geçişini sarar.
+JOBS_STATE_LOCK = threading.Lock()
 
 # Canlı önizleme: analiz karesi bellekte JPEG olarak tutulur (diske YAZILMAZ — KVKK).
 _LIVE_MIN_INTERVAL = 0.15   # sn — UI ~500ms poll'luyor, daha sık encode israf
@@ -348,7 +352,9 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
     job = JOBS[job_id]
     cam = _camera(p.camera)
     if not cam:
-        job.update(status="error", error="Kamera bulunamadı"); return
+        with JOBS_STATE_LOCK:
+            job.update(status="error", error="Kamera bulunamadı")
+        return
     if not RUN_LOCK.acquire(blocking=False):
         job.update(stage="sırada bekliyor (başka analiz çalışıyor)")
         RUN_LOCK.acquire()
@@ -356,6 +362,11 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
     s = None; summary: dict = {}; videos: list[str] = []
     push_frame = _frame_pusher(job)
     try:
+        # Kuyrukta beklerken iptal edildiyse hiç başlama (kilit finally'de bırakılır)
+        if job["cancel"].is_set():
+            with JOBS_STATE_LOCK:
+                job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
+            return
         # store açılışı da try içinde: hata olursa kilit finally'de MUTLAKA bırakılır
         s = _store()
         s.clear_analysis()  # her test koşusu temiz başlar (önceki olaylar/uyarılar silinir)
@@ -378,10 +389,16 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
                 s.start_run("count", source)
                 res = run_count(source, cfg, save_video=True, store=s, camera_id=p.camera,
                                 lines=saved, on_event=_on_count_event,
-                                on_frame=push_frame)
+                                on_frame=push_frame,
+                                should_stop=job["cancel"].is_set)
                 summary["count"] = {"in": res.in_count, "out": res.out_count,
                                     "frames": res.frames, "lines": res.lines}
                 videos.append(f"/media/{stem}_count.mp4")
+        # İptal edildiyse kalan modüller VE _webify atlanır (yarım videoya dönüşüm israf)
+        if job["cancel"].is_set():
+            with JOBS_STATE_LOCK:
+                job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
+            return
         if p.kind in ("plate", "analyze"):
             job.update(stage="Plaka çalışıyor")
             job["live"] = []   # okundukça canlı eklenir (UI aşağı akıtır)
@@ -390,7 +407,8 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
             res = run_plate(source, cfg, save_video=True, store=s, camera_id=p.camera,
                             on_read=lambda pl, c, f, t: job["live"].append(
                                 {"plate": pl, "conf": round(c, 2) if c else None, "frame": f, "ts": t}),
-                            on_frame=push_frame)
+                            on_frame=push_frame,
+                            should_stop=job["cancel"].is_set)
             voted = res.voted or [{"plate": x, "count": 1, "conf": None} for x in res.plates]
             plates = [v["plate"] for v in voted]
             matches = s.match_plates(plates)
@@ -399,6 +417,10 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
             summary["plate"] = {"plates": plates, "total": res.total_reads,
                                 "voted": voted, "alerts": matches}
             videos.append(f"/media/{stem}_plate.mp4")
+        if job["cancel"].is_set():
+            with JOBS_STATE_LOCK:
+                job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
+            return
         if p.kind in ("face", "analyze"):
             job.update(stage="Yüz çalışıyor")
             job["face_live"] = {"frames": 0, "raw": 0, "active": 0, "detections": 0, "male": 0, "female": 0, "avg_age": 0.0, "matches": []}
@@ -408,18 +430,25 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
             watch = s.faces_with_embedding()
             s.start_run("face", source)
             res = run_face(source, cfg, save_video=True, store=s, camera_id=p.camera, watch=watch,
-                           on_progress=_on_face_progress, on_frame=push_frame)
+                           on_progress=_on_face_progress, on_frame=push_frame,
+                           should_stop=job["cancel"].is_set)
             for m in res.matches:
                 s.add_alert("face", m["name"], m["list_type"], m.get("label") or "", p.camera)
             summary["face"] = {"detections": res.detections, "male": res.male, "female": res.female,
                                "avg_age": round(res.avg_age, 1), "alerts": res.matches}
             videos.append(f"/media/{stem}_face.mp4")
+        if job["cancel"].is_set():
+            with JOBS_STATE_LOCK:
+                job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
+            return
         job.update(stage="Video hazırlanıyor")
         for v in videos:
             _webify(v)
-        job.update(status="done", stage="bitti", summary=summary, videos=videos)
+        with JOBS_STATE_LOCK:
+            job.update(status="done", stage="bitti", summary=summary, videos=videos)
     except Exception as e:  # job hatayı taşır, sunucu çökmez
-        job.update(status="error", error=str(e))
+        with JOBS_STATE_LOCK:
+            job.update(status="error", error=str(e))
     finally:
         # KVKK veri minimizasyonu: analiz bitince son annotated kare bellekte kalmaz
         job.pop("frame_jpeg", None)
@@ -430,10 +459,21 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
 
 @app.post("/api/run")
 def api_run(p: RunPayload):
+    # Yeni koşu eski koşuyu bekletmez: çalışan tüm job'lar iptale çekilir
+    # (nihai "cancelled" durumunu analiz thread'i yazar). Check-and-set kilit
+    # altında: thread'in az önce yazdığı terminal durum ezilmez.
+    with JOBS_STATE_LOCK:
+        for j in list(JOBS.values()):
+            if j.get("status") == "running":
+                ev = j.get("cancel")
+                if ev is not None:
+                    ev.set()
+                j["status"] = "cancelling"
     job_id = uuid.uuid4().hex[:12]
     while len(JOBS) > 50:   # eski job kayıtları birikmesin
         JOBS.pop(next(iter(JOBS)))
-    JOBS[job_id] = {"status": "running", "stage": "başlıyor", "summary": {}, "videos": []}
+    JOBS[job_id] = {"status": "running", "stage": "başlıyor", "summary": {}, "videos": [],
+                    "cancel": threading.Event()}
     threading.Thread(target=_run_analysis, args=(job_id, p), daemon=True).start()
     return {"job_id": job_id}
 
@@ -444,10 +484,28 @@ def api_run_status(job_id: str):
     if not j:
         raise HTTPException(404, "job bulunamadı")
     # dict(j): analiz thread'i eşzamanlı anahtar ekler — kopya GIL altında atomik,
-    # kilitisiz iterasyon RuntimeError'ı önlenir. frame_jpeg ham bytes — JSON'a girmez.
+    # kilitisiz iterasyon RuntimeError'ı önlenir. frame_jpeg ham bytes, cancel bir
+    # threading.Event — ikisi de JSON'a girmez.
     j = dict(j)
     j.pop("frame_jpeg", None)
+    j.pop("cancel", None)
     return {"job_id": job_id, **j}
+
+
+@app.delete("/api/run/{job_id}")
+def api_run_cancel(job_id: str):
+    """Koşan analizi iptal eder; nihai 'cancelled' durumunu analiz thread'i yazar."""
+    j = JOBS.get(job_id)
+    if not j:
+        raise HTTPException(404, "job bulunamadı")
+    ev = j.get("cancel")
+    if ev is not None:
+        ev.set()
+    # Check-and-set kilit altında: thread'in terminal yazımının üzerine yazılmaz
+    with JOBS_STATE_LOCK:
+        if j.get("status") == "running":
+            j["status"] = "cancelling"
+    return {"ok": True}
 
 
 @app.get("/api/run/{job_id}/frame")
@@ -484,8 +542,9 @@ def api_alerts(limit: int = 20):
 @app.get("/api/counts")
 def api_counts():
     # active: şu an koşan analiz var mı — UI sayaç kutularını yalnız analiz
-    # sürerken gösterir (ekran ilk açılışta eski toplamlarla dolmasın)
-    active = any(j.get("status") == "running" for j in list(JOBS.values()))
+    # sürerken gösterir (ekran ilk açılışta eski toplamlarla dolmasın).
+    # "cancelling" de aktif sayılır: iptal isteği işlenene dek analiz hâlâ koşuyor.
+    active = any(j.get("status") in ("running", "cancelling") for j in list(JOBS.values()))
     s = _store()
     try:
         return {"active": active, "rows": s.count_totals()}

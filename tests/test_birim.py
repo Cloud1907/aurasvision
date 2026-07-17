@@ -14,7 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.bus import BusStore
 from src.config import Config
 from src.count import _ascii, _side
-from src.face import _affinity, _iou
+from src.face import (_affinity, _best_reid, _compact_gallery, _dedup_tracks,
+                      _FaceTrack, _iou)
 from src.plate import _as_float_conf, _lev, _vote
 from src.server import _slug
 from src.store import DEFAULT_TASKS, SqliteStore, merged_cameras
@@ -97,6 +98,111 @@ class TestYuzTakip:
         a = (100, 100, 140, 140)
         b = (400, 400, 440, 440)
         assert _affinity(a, b) == 0.0
+
+
+# ── Yüz: embedding ile kimlik diriltme (re-id) ─────────────────────
+class TestYuzReid:
+    ESIK = 0.40   # config face.reid_threshold varsayılanı
+
+    def _track(self, tid: int, emb) -> _FaceTrack:
+        t = _FaceTrack(tid, (0.0, 0.0, 10.0, 10.0), 1, 0.0)
+        t.emb = emb
+        return t
+
+    def test_esik_ustu_en_yakin_track_doner(self):
+        """Yeni tespitin embedding'i gallery'deki aynı kişiye eşik üstü benziyorsa
+        o track dirilmeli (yeni kişi sayılmamalı)."""
+        ayni_kisi = self._track(1, [1.0, 0.0, 0.0])
+        baska_kisi = self._track(2, [0.0, 1.0, 0.0])
+        hit = _best_reid([0.95, 0.05, 0.0], [baska_kisi, ayni_kisi], self.ESIK)
+        assert hit is ayni_kisi
+
+    def test_esik_alti_none(self):
+        """Benzerlik eşik altındaysa eşleşme yok → yeni track açılır."""
+        g = [self._track(1, [1.0, 0.0, 0.0])]
+        assert _best_reid([0.0, 1.0, 0.0], g, self.ESIK) is None
+        # Embedding'i olmayan tespit / boş gallery de güvenle None döner
+        assert _best_reid(None, g, self.ESIK) is None
+        assert _best_reid([1.0, 0.0, 0.0], [], self.ESIK) is None
+
+
+# ── Yüz: finalize öncesi embedding-dedup ───────────────────────────
+class TestYuzDedup:
+    ESIK = 0.40   # config face.reid_threshold varsayılanı
+
+    def _track(self, tid: int, emb, n_frames: int = 10,
+               ages=None, sexes=None, emb_score: float = 0.9) -> _FaceTrack:
+        t = _FaceTrack(tid, (0.0, 0.0, 10.0, 10.0), tid, float(tid))
+        t.emb = emb
+        t.emb_score = emb_score if emb is not None else 0.0
+        t.n_frames = n_frames
+        t.ages = list(ages or [])
+        t.sexes = list(sexes or [])
+        return t
+
+    def test_esik_ustu_birlesir(self):
+        """Aynı kişinin iki track'i tek kümeye inmeli; temsilci n_frames büyük olan,
+        demografi/kare sayısı birikmeli."""
+        uzun = self._track(1, [1.0, 0.0, 0.0], n_frames=50, ages=[30], sexes=["M"])
+        kisa = self._track(2, [0.95, 0.05, 0.0], n_frames=5, ages=[32], sexes=["M"])
+        out = _dedup_tracks([kisa, uzun], self.ESIK)
+        assert len(out) == 1
+        c = out[0]
+        assert c is uzun                      # büyük track küme temsilcisi
+        assert c.n_frames == 55
+        assert c.ages == [30, 32] and c.sexes == ["M", "M"]
+        assert c.first_frame == 1 and c.first_ts == 1.0   # min alınır
+
+    def test_esik_alti_birlesmez(self):
+        a = self._track(1, [1.0, 0.0, 0.0])
+        b = self._track(2, [0.0, 1.0, 0.0])
+        assert len(_dedup_tracks([a, b], self.ESIK)) == 2
+
+    def test_embsiz_aday_ayri_kume_kalir(self):
+        """Embedding'i olmayan aday birleştirilemez — kendi kümesi olur."""
+        a = self._track(1, [1.0, 0.0, 0.0], n_frames=50)
+        b = self._track(2, None, n_frames=5)
+        out = _dedup_tracks([a, b], self.ESIK)
+        assert len(out) == 2 and b in out
+
+
+# ── Yüz: gallery bellek sınırı (kompaktla + emekliye ayır) ─────────
+class TestGalleryKompakt:
+    ESIK = 0.40
+
+    def _track(self, tid: int, emb, n_frames: int = 10) -> _FaceTrack:
+        t = _FaceTrack(tid, (0.0, 0.0, 10.0, 10.0), tid, float(tid))
+        t.emb = emb
+        t.emb_score = 0.9 if emb is not None else 0.0
+        t.n_frames = n_frames
+        return t
+
+    def test_sinir_altinda_dokunulmaz(self):
+        g = [self._track(1, [1.0, 0.0, 0.0]), self._track(2, [0.0, 1.0, 0.0])]
+        retired: list = []
+        out = _compact_gallery(g, retired, 2, self.ESIK)
+        assert out is g and retired == []
+
+    def test_dedup_sinira_indirirse_emekli_yok(self):
+        """Aynı kişinin iki girdisi birleşince sınır sağlanır → retired boş kalır."""
+        g = [self._track(1, [1.0, 0.0, 0.0], 50),
+             self._track(2, [0.95, 0.05, 0.0], 5),     # 1 ile aynı kişi
+             self._track(3, [0.0, 1.0, 0.0], 20)]
+        retired: list = []
+        out = _compact_gallery(g, retired, 2, self.ESIK)
+        assert len(out) == 2 and retired == []
+        assert sum(t.n_frames for t in out) == 75   # 50+5 birleşti, 20 ayrı
+
+    def test_fazlalik_en_dusuk_n_frames_emekliye(self):
+        """Dedup yetmezse en az görülen track retired'a gider — final sayımda kalır."""
+        g = [self._track(1, [1.0, 0.0, 0.0], 50),
+             self._track(2, [0.0, 1.0, 0.0], 20),
+             self._track(3, [0.0, 0.0, 1.0], 5)]        # üçü farklı kişi
+        retired: list = []
+        out = _compact_gallery(g, retired, 2, self.ESIK)
+        assert len(out) == 2
+        assert len(retired) == 1 and retired[0].tid == 3   # en düşük n_frames
+        assert {t.tid for t in out} == {1, 2}
 
 
 # ── Sunucu yardımcıları ────────────────────────────────────────────

@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .config import Config
 from .detect import load_yolo
@@ -39,7 +39,8 @@ def _ascii(s: str) -> str:
 def run_count(source: str, cfg: Config, save_video: bool = False,
               store=None, camera_id: str = "",
               lines: list[dict] | None = None, on_event=None,
-              on_frame=None) -> CountResult:
+              on_frame=None,
+              should_stop: Callable[[], bool] | None = None) -> CountResult:
     """Videoda kişileri sayar.
 
     `lines`: [{"name","pts":[[ax,ay],[bx,by]],"direction"}] normalize koordinat.
@@ -102,6 +103,9 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
     for r in yolo.track(source=source, stream=True, persist=True, tracker=tracker,
                         classes=classes, conf=conf, iou=iou, imgsz=imgsz,
                         vid_stride=vid_stride, device=device, verbose=False):
+        # İptal istendi → temiz çık (writer.release döngü sonrasında koşar)
+        if should_stop is not None and should_stop():
+            break
         frame_idx += 1
         result.frames = frame_idx
         real_frame = frame_idx * vid_stride   # kaynaktaki gerçek kare numarası (yaklaşık)

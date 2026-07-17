@@ -95,4 +95,14 @@ face:
   # Anonim demografi varsayılan; isimli tanıma KVKK kapısına bağlı (forbidden).
   identify: false
   match_threshold: 0.5   # cosine benzerlik eşiği (kalibre et)
+  reid_threshold: 0.40   # ArcFace cosine — aynı kişi eşiği: hem canlı re-ID (kapanan
+                         # track'in yeni tespitle diriltilmesi) hem finalize öncesi
+                         # dedup geçişi bu eşiği kullanır (gözetim açısı/ışık için
+                         # 0.5'ten gevşek; Kasa Önü videosuyla kalibre edildi)
+  min_track_frames: 3    # bundan az karede görülen VE izleme eşleşmesi olmayan track
+                         # hayalet tespittir — sayılmaz, DB'ye yazılmaz
+  gallery_max: 128       # kapanmış kimlik (re-ID gallery) üst sınırı — uzun kayıt/RTSP'de
+                         # bellek ve tarama maliyeti sınırlı kalsın; aşılınca önce dedup ile
+                         # kompaktlanır, yine aşarsa en az görülenler canlı taramadan emekliye
+                         # ayrılır (final sayıma yine girerler)
   track_timeout_seconds: 2.0   # nvdec: yüz bu kadar sn görünmezse track kapanır (tek olay yazılır)

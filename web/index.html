@@ -145,6 +145,7 @@ const IC={
   plus:'<path d="M12 5v14M5 12h14"/>',
   x:'<path d="M6 6l12 12M18 6L6 18"/>',
   play:'<path d="M7 5v14l11-7z" fill="currentColor" stroke="none"/>',
+  stop:'<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/>',
   bolt:'<path d="M13 2L4 14h7l-1 8 9-12h-7z" fill="currentColor" stroke="none"/>',
 };
 const svg=(n,s=19)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${IC[n]||''}</svg>`;
@@ -276,6 +277,7 @@ const SCREENS={
         <select id="tcam" onchange="window._tc=this.value;window._tk=null;SCREENS.test()">${CAMS.map(c=>`<option value="${esc(c.id)}" ${c.id===camId?'selected':''}>${esc(c.name)}</option>`).join("")}</select>
         <div class="seg">${kinds.map(k=>`<button class="${k[0]===kind?'on':''}" onclick="window._tk='${k[0]}';SCREENS.test()">${k[1]}</button>`).join("")}</div>
         <button class="btn pri" onclick="runTest()">${svg('play',15)} Çalıştır</button>
+        <button class="btn" id="btnStop" onclick="stopTest()" style="${currentJobId?'':'display:none;'}">${svg('stop',15)} Durdur</button>
         <span class="mut-s" id="trun" style="margin-left:auto;"></span></div>
       <div id="tres"></div>`;
   },
@@ -418,16 +420,35 @@ async function saveZones(){
 /* Ekran değişince #trun/#tres kaybolur — null-guard'lı yazıcılar (poll sessiz sürer) */
 const setRun=h=>{const el=$("#trun");if(el)el.innerHTML=h;};
 const setRes=h=>{const el=$("#tres");if(el)el.innerHTML=h;};
+/* Koşan job takibi: Durdur butonu + üst üste Çalıştır'da eski poll'un sessiz çıkışı için.
+   Sunucu yeni /api/run'da eski job'ı zaten preempt eder — UI ayrıca iptal çağırmaz. */
+let currentJobId=null,stopReqJob=null;
+const setStopBtn=on=>{const b=$("#btnStop");if(b){b.style.display=on?"":"none";b.disabled=false;}};
+async function stopTest(){
+  if(!currentJobId)return;
+  stopReqJob=currentJobId; // iptal sebebi ayrımı: kullanıcı durdurdu vs yeni test preempt etti
+  const b=$("#btnStop");if(b)b.disabled=true;
+  try{await api("/run/"+currentJobId,{method:"DELETE"});}catch(e){/* idempotent — sonucu poll işler */}
+}
+/* Nötr bilgi bandı (error kırmızısı DEĞİL) — durdurulan/iptal edilen test için */
+const cancelBand=msg=>`<div class="card pad" style="display:flex;align-items:center;gap:12px;">
+  <span class="av" style="background:var(--warn-soft);color:var(--warn);">${svg('stop',16)}</span>
+  <div><div style="font-weight:700;">${esc(msg)}</div><div class="mut-s">Analiz sonlandırıldı — istediğinizde yeni bir test başlatabilirsiniz.</div></div></div>`;
 async function runTest(){
   const camera=window._tc,kind=window._tk;
+  // Stale-loop koruması: her yeni çalıştırma sayacı artırır; eski poll döngüleri bayatlar ve sessizce çıkar
+  window._runSeq=(window._runSeq||0)+1;const myRun=window._runSeq;
   setRun("başlıyor…");
   setRes(`<div class="card pad"><div class="skel" style="height:60px;border-radius:10px;"></div></div>`);
   try{
     const {job_id}=await api("/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({camera,kind})});
+    if(window._runSeq!==myRun)return; // bayat: yeni test başladı, panele dokunma
+    currentJobId=job_id;setStopBtn(true);
     let st,shownSeq=-1;
     for(let i=0;i<1500;i++){
       st=await api("/run/"+job_id);
-      if(st.status==="done"||st.status==="error")break;
+      if(window._runSeq!==myRun)return; // bayat döngü (fetch sonrası) — sessiz çık
+      if(st.status==="done"||st.status==="error"||st.status==="cancelled"||st.cancelled)break; // "cancelling" geçicidir, beklemeye devam
       setRun(`<span style="color:var(--accent);">⏳ ${esc(st.stage||"çalışıyor")}…</span>`);
       ensureLivePanel();
       // Canlı annotated kare — yeni kare geldiyse (frame_seq arttıysa) img'i tazele
@@ -440,12 +461,25 @@ async function runTest(){
       else if(st.face_live)renderLiveFace(st.face_live);
       else if(st.live&&st.live.length)renderLive(st.live);
       await new Promise(r=>setTimeout(r,300));
+      if(window._runSeq!==myRun)return; // bayat döngü (bekleme sonrası) — sessiz çık
+    }
+    if(window._runSeq!==myRun)return; // bayat döngü — sessiz çık
+    currentJobId=null;setStopBtn(false); // bu job bitti — Durdur gizlenir
+    if(st&&(st.status==="cancelled"||st.cancelled)){
+      const byUser=stopReqJob===job_id;stopReqJob=null;
+      setRun(`<span class="mut-s">${esc(st.stage||"iptal edildi")}</span>`);
+      setRes(cancelBand(byUser?"Test durduruldu":"Test iptal edildi — yeni test başlatıldı"));
+      return;
     }
     if(!st||st.status==="error"){setRun("hata: "+esc(st?st.error:"zaman aşımı"));setRes("");return;}
 
     setRun("✓ bitti");
     renderResult(st.summary,st.videos);
-  }catch(e){setRun("hata: "+esc(e));setRes("");}
+  }catch(e){
+    if(window._runSeq!==myRun)return; // bayat döngünün hatası güncel job'ı gölgelemesin
+    currentJobId=null;setStopBtn(false);
+    setRun("hata: "+esc(e));setRes("");
+  }
 }
 /* Canlı analiz paneli: üstte annotated kare, altında akan metrikler — bir kez kurulur */
 function ensureLivePanel(){

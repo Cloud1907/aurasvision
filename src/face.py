@@ -13,6 +13,7 @@ import functools
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from .config import Config
 from .device import select_device
@@ -69,7 +70,8 @@ class _FaceTrack:
     """Kareler arası aynı yüzü birleştiren hafif track durumu."""
 
     __slots__ = ("tid", "bbox", "last_frame", "first_frame", "first_ts",
-                 "ages", "sexes", "conf", "match_name", "match_score", "match_meta")
+                 "ages", "sexes", "conf", "match_name", "match_score", "match_meta",
+                 "emb", "emb_score", "n_frames")
 
     def __init__(self, tid: int, bbox, frame_idx: int, ts: float):
         self.tid = tid
@@ -83,6 +85,91 @@ class _FaceTrack:
         self.match_name: str | None = None
         self.match_score = 0.0
         self.match_meta: dict = {}
+        self.emb = None            # en kaliteli karenin ArcFace embedding'i (re-id için)
+        self.emb_score = 0.0       # o embedding'in det_score'u (daha iyisi gelirse değişir)
+        self.n_frames = 0          # track'in görüldüğü işlenen kare sayısı (hayalet filtresi)
+
+
+def _best_reid(emb, gallery: list[_FaceTrack], thr: float) -> _FaceTrack | None:
+    """Kapanmış kimlikler (gallery) içinde embedding'e en yakın track'i döndürür.
+
+    En iyi cosine skoru `thr` eşiğinin altındaysa None (yeni kişi). Konumsal
+    takipçi yüzü kaçırıp track kapansa da aynı kişi yeni kişi sayılmaz.
+    """
+    if emb is None:
+        return None
+    best: _FaceTrack | None = None
+    best_sc = thr
+    for t in gallery:
+        if t.emb is None:
+            continue
+        sc = _cosine(emb, t.emb)
+        if sc >= best_sc:
+            best, best_sc = t, sc
+    return best
+
+
+def _dedup_tracks(cands: list[_FaceTrack], thr: float) -> list[_FaceTrack]:
+    """Finalize öncesi kimlik birleştirme: aynı kişinin track'lerini tek kümeye indirir.
+
+    Canlı re-id'nin yakalayamadığı vakaları kapatır: aynı anda AÇIK olan iki track
+    gallery'de hiç karşılaşmaz ve re-id kararı tek karelik (düşük kaliteli)
+    embedding'le verilir; burada ise track'lerin EN KALİTELİ embedding'leri
+    karşılaştırılır.
+
+    Greedy: adaylar n_frames'e göre büyükten küçüğe gezilir; her aday, kabul
+    edilmiş kümelerin temsilci embedding'iyle (kümenin en yüksek emb_score'lusu)
+    cosine karşılaştırılır. En iyi skor ≥ thr → o kümeye birleşir; değilse
+    (veya embedding'i yoksa) kendi kümesi olur. Dönen liste: küme temsilcileri
+    (birleşenlerin demografisi temsilcide birikmiş halde).
+    """
+    clusters: list[_FaceTrack] = []
+    for t in sorted(cands, key=lambda x: -x.n_frames):
+        best: _FaceTrack | None = None
+        best_sc = thr
+        if t.emb is not None:
+            for c in clusters:
+                if c.emb is None:
+                    continue
+                sc = _cosine(t.emb, c.emb)
+                if sc >= best_sc:
+                    best, best_sc = c, sc
+        if best is None:
+            clusters.append(t)
+            continue
+        # Birleştir: demografi birikir, en güçlü eşleşme/embedding kümeyi temsil eder
+        best.ages.extend(t.ages)
+        best.sexes.extend(t.sexes)
+        best.conf = max(best.conf, t.conf)
+        best.n_frames += t.n_frames
+        best.first_frame = min(best.first_frame, t.first_frame)
+        best.first_ts = min(best.first_ts, t.first_ts)
+        if t.match_score > best.match_score:
+            best.match_name = t.match_name
+            best.match_score = t.match_score
+            best.match_meta = t.match_meta
+        if t.emb_score > best.emb_score:
+            best.emb, best.emb_score = t.emb, t.emb_score
+    return clusters
+
+
+def _compact_gallery(gallery: list[_FaceTrack], retired: list[_FaceTrack],
+                     gallery_max: int, thr: float) -> list[_FaceTrack]:
+    """Gallery bellek sınırı (uzun kayıt/RTSP): sınır aşılırsa yeni gallery döndürür.
+
+    Önce dedup ile kompaktlanır (aynı kişinin girdileri birleşir); hâlâ sınır
+    üstündeyse en düşük n_frames'li fazlalık `retired` listesine taşınır —
+    retired final sayımda dedup'a girer (sayım kaybolmaz) ama canlı re-ID
+    taramasından çıkar (her tespitte taranan liste sabit boyda kalır).
+    """
+    if len(gallery) <= gallery_max:
+        return gallery
+    gallery = _dedup_tracks(gallery, thr)
+    if len(gallery) > gallery_max:
+        gallery.sort(key=lambda t: -t.n_frames)
+        retired.extend(gallery[gallery_max:])
+        gallery = gallery[:gallery_max]
+    return gallery
 
 
 def embed_largest_face(source: str, cfg: Config, samples: int = 12) -> list | None:
@@ -134,7 +221,8 @@ def _load_face(model_pack: str, det_size: int, device: str):
 
 def run_face(source: str, cfg: Config, save_video: bool = False,
              store=None, camera_id: str = "", watch: list | None = None,
-             on_progress=None, on_frame=None) -> FaceResult:
+             on_progress=None, on_frame=None,
+             should_stop: Callable[[], bool] | None = None) -> FaceResult:
     import cv2
 
     model_pack = cfg.get("face.model_pack", "buffalo_l")
@@ -143,6 +231,9 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
     device = select_device(cfg.get("device", "auto"))
     thr = cfg.get("face.match_threshold", 0.5)
     aff_thr = cfg.get("face.track_affinity", 0.1)
+    reid_thr = cfg.get("face.reid_threshold", 0.40)
+    min_track_frames = cfg.get("face.min_track_frames", 3)
+    gallery_max = cfg.get("face.gallery_max", 128)
     camera_id = camera_id or Path(source).stem
     watch = watch or []
     seen_match: set[str] = set()
@@ -169,6 +260,8 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
 
     res = FaceResult()
     tracks: list[_FaceTrack] = []
+    gallery: list[_FaceTrack] = []   # kapanmış kimlikler — re-id ile diriltilebilir
+    retired: list[_FaceTrack] = []   # gallery sınırından emekliler — yalnız final sayıma girer
     next_tid = 1
     age_sum = 0.0
 
@@ -176,9 +269,12 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
         if on_progress is None:
             return
         avg_age = (age_sum / res.detections) if res.detections else 0.0
+        # Canlı "benzersiz kişi": kapananlar + yeterince uzun yaşayan açık/kapanmış track'ler
+        live_det = res.detections + sum(
+            1 for t in (*tracks, *gallery, *retired) if t.n_frames >= min_track_frames)
         on_progress({"frames": res.frames, "frame_idx": frame_idx if frame is None else frame,
                      "raw": res.raw_detections, "active": len(tracks) if active is None else active,
-                     "detections": res.detections, "male": res.male, "female": res.female,
+                     "detections": live_det, "male": res.male, "female": res.female,
                      "avg_age": round(avg_age, 1), "matches": res.matches[-10:]})
 
     def finalize(t: _FaceTrack) -> None:
@@ -201,6 +297,9 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
 
     frame_idx = 0
     while True:
+        # İptal istendi → temiz çık (writer.release/finalize döngü sonrasında koşar)
+        if should_stop is not None and should_stop():
+            break
         ok, frame = cap.read()
         if not ok:
             break
@@ -212,12 +311,15 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
         ts = frame_idx / fps
 
         faces = app.get(frame)
-        # Kaybolan track'leri kapat (tek satır DB'ye o anda düşer).
-        # Önce tracks daraltılır ki finalize→emit_progress ölmekte olanı "aktif" saymasın.
-        dead = [t for t in tracks if frame_idx - t.last_frame > miss_frames]
+        # Kaybolan track'ler finalize EDİLMEZ — gallery'ye taşınır (kapanmış kimlik):
+        # kısa süre kaçırılan yüz embedding ile diriltilir, aynı kişi iki kez sayılmaz.
+        # Hayaletler (kısa yaşamış VE eşleşmesiz) gallery'ye hiç alınmaz — video-sonu
+        # eleme kuralının erken uygulanması (bellek + tarama maliyeti düşer).
+        gone = [t for t in tracks if frame_idx - t.last_frame > miss_frames]
         tracks = [t for t in tracks if frame_idx - t.last_frame <= miss_frames]
-        for t in dead:
-            finalize(t)
+        gallery.extend(t for t in gone
+                       if t.n_frames >= min_track_frames or t.match_name is not None)
+        gallery = _compact_gallery(gallery, retired, gallery_max, reid_thr)
 
         for f in faces:
             res.raw_detections += 1
@@ -225,28 +327,39 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
             age = int(getattr(f, "age", 0) or 0)
             sex = getattr(f, "sex", None)  # 'M' | 'F'
             score = float(getattr(f, "det_score", 0.0) or 0.0)
+            emb = getattr(f, "normed_embedding", None)
 
-            # Benzerlikle (IoU + merkez) mevcut track'e bağla; yoksa yeni track
+            # Benzerlikle (IoU + merkez) mevcut track'e bağla; yoksa önce re-id dene
             best_t, best_aff = None, aff_thr
             for t in tracks:
                 v = _affinity(bbox, t.bbox)
                 if v > best_aff:
                     best_t, best_aff = t, v
             if best_t is None:
-                best_t = _FaceTrack(next_tid, bbox, frame_idx, ts)
-                next_tid += 1
-                tracks.append(best_t)
+                # Konumsal eşleşme yok → kapanmış kimliklerde embedding ara (re-id)
+                revived = _best_reid(emb, gallery, reid_thr)
+                if revived is not None:
+                    gallery.remove(revived)
+                    tracks.append(revived)
+                    best_t = revived
+                else:
+                    best_t = _FaceTrack(next_tid, bbox, frame_idx, ts)
+                    next_tid += 1
+                    tracks.append(best_t)
             best_t.bbox = bbox
             best_t.last_frame = frame_idx
+            best_t.n_frames += 1
             if age:
                 best_t.ages.append(age)
             if sex in ("M", "F"):
                 best_t.sexes.append(sex)
             best_t.conf = max(best_t.conf, score)
+            # Re-id için en kaliteli (en yüksek det_score) karenin embedding'i tutulur
+            if emb is not None and score > best_t.emb_score:
+                best_t.emb, best_t.emb_score = emb, score
 
             # İzleme listesi eşleşmesi (embedding cosine) — track'e işlenir
             if watch:
-                emb = getattr(f, "normed_embedding", None)
                 if emb is not None:
                     for wt in watch:
                         sc = _cosine(emb, wt["embedding"])
@@ -274,8 +387,15 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
         if on_frame is not None:
             on_frame(frame)
 
-    dead, tracks = tracks, []   # video bitti — açık track'leri kapat
-    for t in dead:
+    # Video bitti (veya iptal) — açık track'ler + kapanmış/emekli kimlikler birlikte
+    # kapanır. Kısa yaşamış VE izleme eşleşmesi olmayan track'ler hayalet tespittir:
+    # sayılmaz, DB'ye yazılmaz. Kalanlar finalize öncesi embedding-dedup'tan geçer
+    # (aynı kişinin birleşmemiş track'leri tek kişiye iner → tek DB satırı).
+    dead = [*tracks, *gallery, *retired]
+    tracks, gallery, retired = [], [], []
+    cands = [t for t in dead
+             if t.n_frames >= min_track_frames or t.match_name is not None]
+    for t in _dedup_tracks(cands, reid_thr):
         finalize(t)
 
     cap.release()

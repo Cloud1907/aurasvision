@@ -8,7 +8,7 @@ from __future__ import annotations
 import functools
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .config import Config
 
@@ -101,7 +101,8 @@ def _as_float_conf(conf) -> float | None:
 
 def run_plate(source: str, cfg: Config, save_video: bool = False,
               store=None, camera_id: str = "", on_read=None,
-              on_frame=None) -> PlateResult:
+              on_frame=None,
+              should_stop: Callable[[], bool] | None = None) -> PlateResult:
     import cv2
 
     detector = cfg.get("plate.detector", "yolo-v9-t-384-license-plate-end2end")
@@ -131,6 +132,9 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     res = PlateResult()
     frame_idx = 0
     while True:
+        # İptal istendi → temiz çık (writer.release/oylama döngü sonrasında koşar)
+        if should_stop is not None and should_stop():
+            break
         ok, frame = cap.read()
         if not ok:
             break
