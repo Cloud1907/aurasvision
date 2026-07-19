@@ -95,10 +95,35 @@ face:
   # Anonim demografi varsayılan; isimli tanıma KVKK kapısına bağlı (forbidden).
   identify: false
   match_threshold: 0.5   # cosine benzerlik eşiği (kalibre et)
-  reid_threshold: 0.40   # ArcFace cosine — aynı kişi eşiği: hem canlı re-ID (kapanan
+  reid_threshold: 0.30   # ArcFace cosine — aynı kişi eşiği: hem canlı re-ID (kapanan
                          # track'in yeni tespitle diriltilmesi) hem finalize öncesi
-                         # dedup geçişi bu eşiği kullanır (gözetim açısı/ışık için
-                         # 0.5'ten gevşek; Kasa Önü videosuyla kalibre edildi)
+                         # dedup geçişi bu eşiği kullanır. Eş-zamanlılık vetosu sayesinde
+                         # gevşek tutulabilir (aynı karede görünen track'ler asla birleşmez).
+                         # Kasa Önü pairwise matrisiyle kalibre (scripts/face_calib.py):
+                         # ayrık farklı-kişi max 0.259 → 0.30 eşiği ≥0.03 marj bırakır
+  det_min_score: 0.60    # tespit skor tabanı: altındaki tespitler track'lere HİÇ girmez
+                         # (raw_detections teşhis için yine sayar). Abide giriş kameraları
+                         # kalibrasyonu: doku tespitlerinin p25'i ~0.58, gerçek yüzlerin
+                         # p25'i ≥0.71 → 0.60 doku kuyruğunu keser, gerçek yüzü kaçırmaz
+  # Doku filtreleri (finalize'da, izleme eşleşmesi olmayan track'lere; ikisi tamamlayıcı):
+  min_track_move: 0.05   # DONMUŞ doku: track merkez gezintisi (max eksen aralığı) son yüz
+                         # boyutunun bu oranından KÜÇÜKSE doku sayılır — sayılmaz, DB'ye
+                         # yazılmaz. Kalibrasyon: portre (sabit durup konuşan) 1.14-1.38,
+                         # en kısa gerçek parça (Kasa, 3 kare) 0.02 — bu yüzden taban
+                         # bilinçli düşük; esas doku temizliğini adım filtresi yapar
+  calm_step: 0.05        # adım eşiği: ardışık iki tespit arası merkez kayması yüz boyutunun
+                         # bu oranının altındaysa 'sakin' adımdır (gerçek yüzün nefes/kafa/
+                         # yürüyüş adımı sakindir; dokuda tespit taştan taşa sıçrar)
+  min_calm_frac: 0.30    # SEKEN doku: sakin adım oranı bunun altındaysa doku sayılır.
+                         # Kalibrasyon (scripts/face_calib.py sakin sütunu): gerçek yüz
+                         # track'leri 0.48-1.00 (portre 0.85+, yürüyüş ≥0.53, Kasa ≥0.71,
+                         # abide'deki tek net yüz 0.70); abide doku track'leri 0.00-0.15
+                         # → 0.30 eşiği iki banda da ≥2x marj bırakır
+  reid_top_k: 3          # track başına saklanan embedding sayısı (en yüksek det_score'lu
+                         # K kare) — benzerlik kümeler arası MAX cosine; tek temsilcinin
+                         # poz/ışık kaçırmasını azaltır
+  cooccur_frames: 2      # eş-zamanlılık vetosu: iki track bundan fazla AYNI işlenmiş
+                         # karede tespit edildiyse iki ayrı insandır — asla birleşmez
   min_track_frames: 3    # bundan az karede görülen VE izleme eşleşmesi olmayan track
                          # hayalet tespittir — sayılmaz, DB'ye yazılmaz
   gallery_max: 128       # kapanmış kimlik (re-ID gallery) üst sınırı — uzun kayıt/RTSP'de

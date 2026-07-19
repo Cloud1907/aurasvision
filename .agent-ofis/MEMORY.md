@@ -1,7 +1,7 @@
 ---
 title: "AurasVision — Görüntü Analitiği Platformu — Hafıza İndeksi"
 type: memory-index
-updated: 2026-07-16
+updated: 2026-07-19
 generated_by: ofis-memory
 ---
 
@@ -100,8 +100,11 @@ Kararlar:
 - [[decisions/0001-yigin-ve-mimari]] — ADR-0001 — Açık kaynak yığın & senaryo-bazlı dağıtım mimarisi
 Geçmiş runs:
 - [[runs/2026-07-16T20-58-21-8a42]] — Run — Test iptal mekanizması + yüz re-ID (46→13) + yeni yüz test videoları
+- [[runs/2026-07-18-calib]] — Run — Yüz sayımı kalibrasyonu: multi-embedding + eş-kare vetosu, Kasa 12→6
+- [[runs/2026-07-19-matris]] — Run — Mükemmele-yakın sayım: 7 kameralık matris + doku filtreleri
 Sprintler:
 - [[sprints/2026-07-16]] — Sprint — 2026-07-16
+- [[sprints/2026-07-18]] — Sprint — 2026-07-18
 
 ## retail
 Kararlar:
@@ -133,6 +136,7 @@ Geçmiş runs:
 - [[runs/2026-07-09T23-10-00-lock]] — Run — Bölgeler 'çizgi kaydedilmiyor' kök nedeni: analiz sırasında database is locked
 - [[runs/2026-07-09T23-50-00-matrix]] — Run — Tam test matrisi + kompakt canlı panel + Abide AVI hasarı tespiti
 - [[runs/2026-07-16T20-52-00-c4e1]] — Run — Test iptal mekanizması: preempt + Durdur butonu + DELETE /api/run
+- [[runs/2026-07-19-matris]] — Run — Mükemmele-yakın sayım: 7 kameralık matris + doku filtreleri
 Sprintler:
 - [[sprints/2026-07-09]] — Sprint — 2026-07-09
 
@@ -178,6 +182,7 @@ Geçmiş runs:
 - [[runs/2026-07-09T14-30-00-fix]] — Run — Kayıp Abide kameraları geri eklendi + video hız düzeltmesi
 - [[runs/2026-07-09T23-10-00-lock]] — Run — Bölgeler 'çizgi kaydedilmiyor' kök nedeni: analiz sırasında database is locked
 - [[runs/2026-07-09T23-50-00-matrix]] — Run — Tam test matrisi + kompakt canlı panel + Abide AVI hasarı tespiti
+- [[runs/2026-07-19-matris]] — Run — Mükemmele-yakın sayım: 7 kameralık matris + doku filtreleri
 
 ## yüz
 Kararlar:
@@ -190,8 +195,11 @@ Geçmiş runs:
 - [[runs/2026-07-09T11-40-00-live]] — Run — Test ekranı canlı analiz görüntüsü (kare + artan sayaç birlikte)
 - [[runs/2026-07-09T23-50-00-matrix]] — Run — Tam test matrisi + kompakt canlı panel + Abide AVI hasarı tespiti
 - [[runs/2026-07-16T20-58-21-8a42]] — Run — Test iptal mekanizması + yüz re-ID (46→13) + yeni yüz test videoları
+- [[runs/2026-07-18-calib]] — Run — Yüz sayımı kalibrasyonu: multi-embedding + eş-kare vetosu, Kasa 12→6
+- [[runs/2026-07-19-matris]] — Run — Mükemmele-yakın sayım: 7 kameralık matris + doku filtreleri
 Sprintler:
 - [[sprints/2026-07-16]] — Sprint — 2026-07-16
+- [[sprints/2026-07-18]] — Sprint — 2026-07-18
 
 ## ölçek
 Kararlar:
