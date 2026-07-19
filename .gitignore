@@ -24,3 +24,11 @@ output/
 
 # go2rtc (API üretir; üretimde RTSP kimlik bilgisi içerir — repoya girmez)
 go2rtc/
+
+# QA koşu artefaktları (raporlar CI artifact'ı olur, repoya girmez)
+node_modules/
+test-results/
+playwright-report/
+allure-results/
+allure-report/
+.schemathesis/

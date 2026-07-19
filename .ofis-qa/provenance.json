@@ -1,0 +1,76 @@
+{
+  "catalog_version": "0.2.0",
+  "cli_version": "0.2.0",
+  "project": "videoai",
+  "stack": {
+    "backend": "python",
+    "backend_version": "3.11",
+    "frontend": "vanilla",
+    "database": "sqlite",
+    "test_framework": "pytest",
+    "ml_stack": "Ultralytics YOLO + ByteTrack, InsightFace (ArcFace), fast-alpr, onnxruntime, OpenCV, PyTorch (MPS)"
+  },
+  "capabilities": {
+    "backend_runtime": "python",
+    "mobile_target": false,
+    "kmp": false
+  },
+  "installed": [
+    {
+      "layer": "web",
+      "variant": "default",
+      "template_version": "0.2.0",
+      "dir": "web/default",
+      "pins": {
+        "@playwright/test": "1.61.1",
+        "allure-playwright": "3.4.1"
+      },
+      "files": [
+        ".github/workflows/qa-web-e2e.yml",
+        "QA-README.md",
+        "e2e/smoke.spec.ts",
+        "playwright.config.ts"
+      ]
+    },
+    {
+      "layer": "api",
+      "variant": "schemathesis",
+      "template_version": "0.2.0",
+      "dir": "api/schemathesis",
+      "pins": {
+        "schemathesis": "4"
+      },
+      "files": [
+        ".github/workflows/qa-api-contract.yml",
+        "QA-API-README.md",
+        "schemathesis.toml"
+      ]
+    },
+    {
+      "layer": "backend_integration",
+      "variant": "python",
+      "template_version": "0.2.0",
+      "dir": "backend_integration/python",
+      "pins": {
+        "testcontainers": "4.8.0",
+        "image": "postgres:16-alpine"
+      },
+      "files": [
+        "QA-INTEGRATION-README.md",
+        "test_integration_smoke.py"
+      ]
+    }
+  ],
+  "generated_files": [
+    ".github/workflows/qa-api-contract.yml",
+    ".github/workflows/qa-web-e2e.yml",
+    "QA-API-README.md",
+    "QA-INTEGRATION-README.md",
+    "QA-README.md",
+    "e2e/smoke.spec.ts",
+    "playwright.config.ts",
+    "schemathesis.toml",
+    "test_integration_smoke.py"
+  ],
+  "generated_at": "2026-07-19T16:59:24+00:00"
+}

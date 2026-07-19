@@ -1,0 +1,28 @@
+{
+  "name": "aurasvision",
+  "version": "1.0.0",
+  "description": "Açık kaynak görüntü işleme: **kişi sayma**, **plaka okuma (ALPR)**, **yüz tespit + anonim demografi**. Tek videoda hepsi. Geliştirme: MacBook M4 (MPS). Üretim hedefi: Jetson / NVIDIA edge.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Cloud1907/aurasvision.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Cloud1907/aurasvision/issues"
+  },
+  "homepage": "https://github.com/Cloud1907/aurasvision#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "allure-playwright": "^3.10.2"
+  }
+}

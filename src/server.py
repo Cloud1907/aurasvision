@@ -522,7 +522,8 @@ def api_run_frame(job_id: str):
 
 
 @app.get("/api/events")
-def api_events(limit: int = 50):
+def api_events(limit: int = Query(50, ge=1, le=500)):
+    # sınırsız int SQLite'ı taşırıp 500 döndürüyordu (Schemathesis bulgusu) — 422'ye bağlanır
     s = _store()
     try:
         return s.recent_events(limit)
@@ -531,7 +532,7 @@ def api_events(limit: int = 50):
 
 
 @app.get("/api/alerts")
-def api_alerts(limit: int = 20):
+def api_alerts(limit: int = Query(20, ge=1, le=500)):
     s = _store()
     try:
         return s.recent_alerts(limit)
