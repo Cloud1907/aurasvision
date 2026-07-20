@@ -3,7 +3,10 @@
 Açık kaynak görüntü işleme: **kişi sayma**, **plaka okuma (ALPR)**, **yüz tespit + anonim demografi**.
 Tek videoda hepsi. Geliştirme: MacBook M4 (MPS). Üretim hedefi: Jetson / NVIDIA edge.
 
-## Kurulum
+> 🏢 **Müşteri sahasına kurulum:** adım adım kılavuz için [docs/KURULUM.md](docs/KURULUM.md)
+> (donanım, modeller, .env/token, Docker altyapısı, systemd, kamera kalibrasyonu, KVKK).
+
+## Kurulum (geliştirme)
 
 ```bash
 python3.11 -m venv .venv

@@ -1,0 +1,18 @@
+# AurasVision worker — 7/24 sürekli kamera analizi (REDIS_URL zorunlu)
+[Unit]
+Description=AurasVision analysis worker
+After=network-online.target docker.service aurasvision-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/aurasvision
+EnvironmentFile=-/opt/aurasvision/.env
+ExecStart=/opt/aurasvision/.venv/bin/python -m src.worker
+Restart=always
+RestartSec=10
+User=aurasvision
+Group=aurasvision
+
+[Install]
+WantedBy=multi-user.target

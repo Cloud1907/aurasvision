@@ -1,0 +1,21 @@
+# AurasVision web sunucusu + API (FastAPI/uvicorn)
+# Kurulum: sudo cp deploy/aurasvision-server.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now aurasvision-server
+[Unit]
+Description=AurasVision server (web UI + API)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/aurasvision
+EnvironmentFile=-/opt/aurasvision/.env
+ExecStart=/opt/aurasvision/.venv/bin/python -m src.server
+Restart=always
+RestartSec=5
+# GPU süreçleri için bellek kilidi/limitleri client donanımına göre ayarlanabilir
+User=aurasvision
+Group=aurasvision
+
+[Install]
+WantedBy=multi-user.target

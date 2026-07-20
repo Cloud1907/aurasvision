@@ -1,0 +1,18 @@
+# AurasVision ingestor — Redis Streams'ten olayları DB'ye yazar (REDIS_URL zorunlu)
+[Unit]
+Description=AurasVision event ingestor (Redis -> DB)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/aurasvision
+EnvironmentFile=-/opt/aurasvision/.env
+ExecStart=/opt/aurasvision/.venv/bin/python -m src.ingestor
+Restart=always
+RestartSec=10
+User=aurasvision
+Group=aurasvision
+
+[Install]
+WantedBy=multi-user.target
