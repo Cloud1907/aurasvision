@@ -158,15 +158,24 @@ let LIVE_COUNTS={},LIVE_ACTIVE=false;
 const $=s=>document.querySelector(s);
 /* XSS koruması: kullanıcı/OCR kaynaklı her değer innerHTML'e esc() ile girer */
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-/* Erişim anahtarı (AURAS_TOKEN): 401 gelirse bir kez sorulur, localStorage'da tutulur */
+/* Erişim anahtarı (AURAS_TOKEN): 401 gelirse bir kez sorulur, localStorage'da tutulur.
+   ?token=... ile de verilebilir (tek tık giriş) — kaydedilir ve adres çubuğundan silinir. */
 let TOKEN=localStorage.getItem('vai-token')||'';
+try{
+  const _u=new URL(location.href),_qt=_u.searchParams.get('token');
+  if(_qt){
+    TOKEN=_qt.trim();localStorage.setItem('vai-token',TOKEN);
+    _u.searchParams.delete('token');
+    history.replaceState(null,'',_u.pathname+(_u.searchParams.toString()?'?'+_u.searchParams.toString():'')+_u.hash);
+  }
+}catch(e){}
 const tokq=()=>TOKEN?'&token='+encodeURIComponent(TOKEN):'';
 async function api(p,o={}){
   o.headers=Object.assign({},o.headers||{},TOKEN?{Authorization:'Bearer '+TOKEN}:{});
   const r=await fetch("/api"+p,o);
   if(r.status===401){
     const t=prompt("Erişim anahtarı (AURAS_TOKEN):");
-    if(t){TOKEN=t;localStorage.setItem('vai-token',t);return api(p,o);}
+    if(t&&t.trim()){TOKEN=t.trim();localStorage.setItem('vai-token',TOKEN);return api(p,o);}
     throw new Error("yetkisiz");
   }
   return r.json();
