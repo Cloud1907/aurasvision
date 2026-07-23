@@ -163,6 +163,25 @@ Hedefteki küçük açık kaynak tarafı (ffmpeg döngü boşluğu, ~4.9 fps efe
 (id: `abide-b-1411`, `abide-b-1454`); turnike sırasına paralel çapraz "Turnike"
 çizgisi tanımlandı (`[[0.08,0.52],[0.98,0.35]]`, AtoB = kameraya doğru geçiş).
 
+### Zaman çizgisi düzeltmesi (2026-07-23) — "video hızlı oynuyor" kök nedeni
+
+Dahua AVI'ları konteynerde **60 fps sabit** beyan ediyor ama NVR kare düşürerek
+kaydetmiş; karelerdeki OSD saatiyle ölçülen gerçek tempo:
+
+| kayıt | OSD aralığı | gerçek süre | okunabilir kare | gerçek fps | konteyner iddiası |
+|---|---|---|---|---|---|
+| 1411 | 14:14:12 → 14:18:06 | 234 sn | 5355 | **22.89** | 60 → 2.6× hızlı |
+| 1454 | 14:57:11 → 15:00:06 | 175 sn | 2427 | **13.87** | 60 → 4.3× hızlı |
+
+Yani ham AVI her oynatıcıda (test ekranı dahil) gerçek hayattan kat kat hızlı
+akar ve `ts_seconds` değerleri gerçek saniye olmaz. Düzeltme: kareler PyAV ile
+gerçek fps'e yeniden zamanlanıp temiz H.264'e alındı
+(`data/videos/abide-b-*-gercek.mp4`; hasarlı kuyruk da atıldı), kameraların
+kaynağı bu dosyalara çevrildi. Doğrulama: test çıktısı 809 kare @4.62 fps =
+**175 sn = OSD gerçek süresi**; go2rtc canlı akışı da gerçek tempoda.
+Ders: NVR export'u alınan her kayıtta konteyner fps'ine güvenme — OSD saati
+veya dosya adı aralığıyla gerçek süreyi doğrula.
+
 - **Tespit kalitesi:** bu sahnede (insanlar yakın/orta boyda) 640 yeterli —
   s@640 ort. 5.2 kişi/kare vs s@1280 5.1; 1280 gereksiz (3.5→8.0 ms/kare).
 - **Motor karşılaştırması** (98 sn'lik 1454 kaydı, kayıt başına):
