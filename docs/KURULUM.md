@@ -84,7 +84,10 @@ docker compose up -d db redis go2rtc
 - `db` — Postgres 16 + TimescaleDB (host portu **5433**), şema `db/schema.sql`'den otomatik yüklenir.
   Üretimde `POSTGRES_PASSWORD`'ü compose'da değiştir ve `.env`'deki `DATABASE_URL`'i eşle.
 - `redis` — olay veri yolu (worker → ingestor).
-- `go2rtc` — canlı izleme fan-out'u (WebRTC, port 1984). `go2rtc/go2rtc.yaml`'ı elle düzenleme; sunucu kamera listesinden otomatik üretir.
+- `go2rtc` — canlı izleme fan-out'u. `go2rtc/go2rtc.yaml`'ı elle düzenleme; sunucu kamera listesinden otomatik üretir.
+  API'si (1984) **yalnız localhost'a** bağlanır: kimlik doğrulaması yoktur ve tarayıcı ona doğrudan
+  bağlanmaz — canlı görüntü uygulama sunucusundaki token korumalı `/api/stream` ucundan vekillenir.
+  Operatörlerin ağa açması gereken tek port uygulamanın kendisidir (8000).
 
 ## 5. İlk çalıştırma (elle duman testi)
 
@@ -148,6 +151,22 @@ Her kamera farklı açı/ışık/zemin demektir. Kurulum günü, kamera başına
   ancak client'ın açık rıza/aydınlatma süreciyle açılır. Kare/video KVKK gereği minimum tutulur:
   canlı önizleme yalnız bellekte, analiz videoları `output/`'ta — saklama süresini client
   politikasına bağla ve eski çıktıları temizleyen bir cron ekle.
+- **Kanıt görüntüsü (`evidence`, config):** olayın denetlenebilir karşılığı. Bu, "ham görüntü
+  saklanmaz" ilkesinden BİLİNÇLİ bir sapmadır; aydınlatma metninde yer almalı. Tür bazında:
+
+  | Tür | Varsayılan | Ne saklanır | Gerekçe |
+  |-----|-----------|-------------|---------|
+  | `plate` | **açık** | plaka kırpması + bağlam karesi | plaka zaten metin olarak işleniyor; kanıt ALPR'ın asli işlevi ve yanlış okumanın tek denetim yolu |
+  | `intrusion` | **açık** | alarm anının karesi | alarmın doğru olup olmadığı ancak görüntüyle teyit edilir |
+  | `face` | **kapalı** | — | biyometrik veri; yalnız 512d embedding saklanır, görüntü saklanmaz |
+
+  Dosyalar `output/evidence/<tarih>/` altında tutulur ve `evidence.keep_days` (varsayılan **30 gün**)
+  sonunda **otomatik silinir** — ayrıca cron gerekmez. Client daha kısa süre isterse bu değeri düşür;
+  kanıt hiç istenmiyorsa `evidence.enabled: false` yap (özellik tamamen kapanır).
+  Kanıt görüntülerine erişim `AURAS_TOKEN` ile korunur (`/media/evidence/...`).
+- **Üçüncü taraf akış kaynakları (`stream.http_headers`):** bazı CDN/HLS kaynakları Referer gibi
+  başlık ister. Bu ayarı yalnız **erişim hakkına sahip olduğun** kaynaklar için kullan; başkasının
+  akışını korumasını aşarak kullanmak sözleşme ve mevzuat riski yaratır.
 - Postgres yedeği: `pg_dump` cron'u kur (SQLite kullanılıyorsa dosya yedeği — ama üretimde SQLite kullanma).
 
 ## 9. Güncelleme
