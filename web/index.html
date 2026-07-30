@@ -1347,16 +1347,16 @@ function openCamForm(cam){
     <div class="modalgovde">
     ${duzenle?"":`<div class="step on" id="st1"><span class="no">1</span>
       <div class="bas">Kamerayı bul</div>
-      <div class="aciklama">ONVIF açıksa <b>IP ile sorgula</b> en güvenilir yoldur — adresleri kameranın kendisi bildirir, tahmin yapılmaz. Adresi biliyorsanız bu adımı atlayıp aşağıya yapıştırın.</div>
+      <div class="aciklama">En güvenilir yol <b>Kameraya bağlan</b>: adresleri kameranın kendisi bildirir, tahmin yapılmaz. Adresi zaten biliyorsanız bu adımı atlayıp aşağıya yapıştırın. Adresi biliyorsanız bu adımı atlayıp aşağıya yapıştırın.</div>
       <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:9px;">
         <input id="f-ip" placeholder="Kamera IP (ör. 192.168.1.10)" style="flex:1;min-width:160px;"/>
         <input id="f-user" placeholder="kullanıcı" style="width:120px;"/>
         <input id="f-pass" type="password" placeholder="şifre" style="width:120px;"/>
-        <select id="f-brand" title="RTSP yolu denemesinde daralt"><option value="">Marka: hepsi</option></select></div>
+        <select id="f-brand" title="Bilinen adres denemesini bu markayla sınırla"><option value="">Marka: hepsi</option></select></div>
       <div style="display:flex;gap:9px;flex-wrap:wrap;">
-        <button class="btn" id="f-onvif">${svg('cams',15)} IP ile sorgula</button>
-        <button class="btn" id="f-scan">${svg('live',15)} Ağı tara</button>
-        <button class="btn" id="f-paths">${svg('bolt',15)} RTSP yolunu dene</button></div>
+        <button class="btn" id="f-onvif">${svg('cams',15)} Kameraya bağlan</button>
+        <button class="btn" id="f-scan">${svg('live',15)} Ağdaki kameraları bul</button>
+        <button class="btn" id="f-paths">${svg('bolt',15)} Bilinen adresleri dene</button></div>
       <div id="f-disc"></div></div>`}
     <div class="step ${duzenle?'on':''}" id="st2"><span class="no">${duzenle?1:2}</span>
       <div class="bas">Adresi doğrula</div>
@@ -1417,15 +1417,15 @@ function openCamForm(cam){
 
     m.querySelector("#f-scan").onclick=async ev=>{
       const b=ev.currentTarget;b.disabled=true;b.style.opacity=".6";
-      bekle("Yerel ağ taranıyor (yalnız bu ağ; internete istek gitmez)…");
+      bekle("Yerel ağ taranıyor — yalnız bu ağdaki cihazlar sorgulanır, internete istek gitmez…");
       try{
         const r=await api("/discover?timeout=5");
-        if(!r.count){hata("Ağda ONVIF duyurusu yapan kamera yok. Kameranın ONVIF'i kapalı olabilir — IP ile sorgulamayı veya RTSP yolu denemeyi kullanın.");return;}
+        if(!r.count){hata("Ağda kendini duyuran kamera bulunamadı. Kameranın ONVIF ayarı kapalı olabilir — IP adresini yazıp <b>Kameraya bağlan</b>, o da olmazsa <b>Bilinen adresleri dene</b> seçeneğini kullanın.");return;}
         disc.innerHTML=`<div class="card" style="margin-top:12px;">${r.devices.map(d=>`<div class="row">
           <span class="av" style="background:var(--accent-soft);color:var(--accent);">${svg('cams',16)}</span>
           <div style="flex:1;"><b class="mono">${esc(d.ip)}</b>${d.ekli?' <span class="chip" style="background:var(--hover);color:var(--ink-3);">zaten ekli</span>':''}
             <div class="mut-s mono" style="font-size:11px;">${esc((d.scopes||[]).join(" ").slice(0,90))}</div></div>
-          <button class="btn sm" onclick="document.querySelector('#f-ip').value='${esc(d.ip)}';document.querySelector('#f-onvif').click();">Bu kamerayı sorgula</button>
+          <button class="btn sm" onclick="document.querySelector('#f-ip').value='${esc(d.ip)}';document.querySelector('#f-onvif').click();">Bu kameraya bağlan</button>
         </div>`).join("")}</div>`;
       }catch(e){hata(String(e));}
       finally{b.disabled=false;b.style.opacity="";}
@@ -1435,17 +1435,17 @@ function openCamForm(cam){
       const ip=m.querySelector("#f-ip").value.trim();
       if(!ip){toast("Önce kamera IP'sini girin","warn");return;}
       const b=ev.currentTarget;b.disabled=true;b.style.opacity=".6";
-      bekle("Kameranın ONVIF profilleri okunuyor…");
+      bekle("Kameraya bağlanılıyor, yayın adresleri okunuyor…");
       try{
         const r=await api("/discover/onvif",{method:"POST",headers:{"Content-Type":"application/json"},
           body:JSON.stringify({ip,username:m.querySelector("#f-user").value,password:m.querySelector("#f-pass").value})});
         if(!r.ok){hata(r.error||"bilinmeyen hata");return;}
         disc.innerHTML=`<div class="card" style="margin-top:12px;">
-          <div style="padding:10px 14px;border-bottom:1px solid var(--line);font-weight:700;color:var(--ok);">✓ ${r.profiller.length} akış profili bulundu</div>
+          <div style="padding:10px 14px;border-bottom:1px solid var(--line);font-weight:700;color:var(--ok);">✓ Kamera ${r.profiller.length} görüntü akışı bildirdi</div>
           ${r.profiller.map(p=>`<div class="row"><div style="flex:1;"><b>${esc(p.ad)}</b>
             <div class="mut-s mono" style="font-size:11px;">${esc(p.cozunurluk)}</div></div>
             <button class="btn sm" onclick="document.querySelector('#f-src').value=${JSON.stringify(p.url).replace(/"/g,'&quot;')};toast('Adres forma yazıldı')">Ana akış yap</button></div>`).join("")}
-          <div class="row" style="background:var(--panel-2);"><div style="flex:1;" class="mut-s">En yüksek çözünürlük ana akış, en düşüğü substream olarak ayarlanır</div>
+          <div class="row" style="background:var(--panel-2);"><div style="flex:1;" class="mut-s">En yüksek çözünürlük ana görüntü, en düşüğü kamera duvarı için ayarlanır</div>
             <button class="btn sm pri" id="f-auto">Otomatik ayarla</button></div></div>`;
         m.querySelector("#f-auto").onclick=()=>sec(r.ana,r.alt,`Kamera ${ip.split(".").pop()}`);
       }catch(e){hata(String(e));}
@@ -1456,14 +1456,14 @@ function openCamForm(cam){
       const ip=m.querySelector("#f-ip").value.trim();
       if(!ip){toast("Önce kamera IP'sini girin","warn");return;}
       const b=ev.currentTarget;b.disabled=true;b.style.opacity=".6";
-      bekle("Bilinen RTSP yolları deneniyor — her yol için bağlantı kurulur, bu biraz sürebilir…");
+      bekle("Bu markaların bilinen kamera adresleri sırayla deneniyor — her biri için bağlantı kurulur, biraz sürebilir…");
       try{
         const r=await api("/discover/paths",{method:"POST",headers:{"Content-Type":"application/json"},
           body:JSON.stringify({ip,username:m.querySelector("#f-user").value,password:m.querySelector("#f-pass").value,
                                brand:m.querySelector("#f-brand").value})});
-        if(!r.count){hata("Denenen yolların hiçbiri açılmadı. Kullanıcı/şifre doğru mu, kamera RTSP'ye izin veriyor mu?");return;}
+        if(!r.count){hata("Denenen adreslerin hiçbiri açılmadı. Kullanıcı adı ve şifre doğru mu? Kamerada canlı yayın (RTSP) kapalı olabilir.");return;}
         disc.innerHTML=`<div class="card" style="margin-top:12px;">
-          <div style="padding:10px 14px;border-bottom:1px solid var(--line);font-weight:700;color:var(--ok);">✓ ${r.count} çalışan akış (denenip doğrulandı)</div>
+          <div style="padding:10px 14px;border-bottom:1px solid var(--line);font-weight:700;color:var(--ok);">✓ ${r.count} çalışan kamera adresi bulundu</div>
           ${r.found.map(f=>`<div class="row"><div style="flex:1;min-width:0;"><b>${esc(f.marka)}</b> <span class="mut-s">${esc(f.tip)}</span>
             <div class="mut-s mono" style="font-size:11px;">${esc(f.cozunurluk)} · ${esc(f.codec)} · ${esc(f.url)}</div></div>
             <button class="btn sm" onclick="document.querySelector('#f-src').value=${JSON.stringify(f._url).replace(/"/g,'&quot;')};toast('Adres forma yazıldı')">Kullan</button></div>`).join("")}</div>`;

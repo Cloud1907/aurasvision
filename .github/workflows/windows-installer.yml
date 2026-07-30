@@ -1,0 +1,54 @@
+name: Windows kurulum dosyası
+
+# main'e her gönderimde kurulum .exe'si yeniden üretilir ve "surum-son" sürümüne
+# yüklenir. Amaç: exe'nin koddan geri kalmaması — elle üretim unutulabilir,
+# unutulunca müşteriye eski sürüm gider.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  kurulum-uret:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: NSIS kur
+        run: sudo apt-get update -qq && sudo apt-get install -y nsis
+
+      - name: Sürüm etiketi (commit'ten)
+        id: surum
+        run: echo "kisa=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Kurulum dosyasını üret
+        working-directory: windows
+        run: makensis -V2 installer.nsi
+
+      - name: Boyut ve tür doğrulaması
+        working-directory: windows
+        run: |
+          test -f AurasVision-Kurulum.exe || { echo "exe üretilmedi"; exit 1; }
+          file AurasVision-Kurulum.exe | grep -q "PE32" || { echo "geçerli Windows dosyası değil"; exit 1; }
+          echo "boyut: $(du -h AurasVision-Kurulum.exe | cut -f1)"
+
+      - name: Sürüm olarak yayınla
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: surum-son
+          name: "AurasVision — son kurulum (${{ steps.surum.outputs.kisa }})"
+          body: |
+            Windows kurulum dosyası. Bu sürüm `main` dalındaki
+            `${{ steps.surum.outputs.kisa }}` commit'inden üretilmiştir.
+
+            **Kurulum:** dosyayı indirin ve çift tıklayın. Python, Docker Desktop
+            ve bağımlılıklar eksikse kurulum sırasında indirilir — **internet gerekir**.
+
+            Not: dosya imzasız olduğu için Windows SmartScreen ilk çalıştırmada
+            uyarı gösterir; "Daha fazla bilgi → Yine de çalıştır" ile geçilir.
+          files: windows/AurasVision-Kurulum.exe
+          prerelease: false
