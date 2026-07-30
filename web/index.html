@@ -380,7 +380,27 @@ async function refreshLiveCounts(){try{const res=await api("/counts");LIVE_ACTIV
 if(active==="live"){const ov=document.querySelector(".overview");if(ov)ov.outerHTML=overviewStats();}}catch(e){}}
 function startLiveCounts(){clearInterval(window._countTimer);refreshLiveCounts();window._countTimer=setInterval(refreshLiveCounts,2000);}
 function taskPills(c){const t=c.tasks||{};return `<span class="taskset"><span class="taskpill ${t.count?'on':''}">Sayım</span><span class="taskpill ${t.plate?'on':''}">Plaka</span><span class="taskpill ${t.face?'on':''}">Yüz</span></span>`;}
-function overviewStats(){const activeTasks=CAMS.reduce((n,c)=>n+Object.values(c.tasks||{}).filter(Boolean).length,0);const inTotal=LIVE_ACTIVE?Object.values(LIVE_COUNTS).reduce((n,c)=>n+(c.in||0),0):"—";const outTotal=LIVE_ACTIVE?Object.values(LIVE_COUNTS).reduce((n,c)=>n+(c.out||0),0):"—";const sub=LIVE_ACTIVE?"canlı sayaç":"analiz çalışırken";return `<div class="overview"><div class="stat"><div class="k">Kamera</div><div class="v">${CAMS.length}</div><div class="s">tanımlı kaynak</div></div><div class="stat"><div class="k">Aktif görev</div><div class="v">${activeTasks}</div><div class="s">sayım, plaka, yüz</div></div><div class="stat"><div class="k">Toplam giriş</div><div class="v">${inTotal}</div><div class="s">${sub}</div></div><div class="stat"><div class="k">Toplam çıkış</div><div class="v">${outTotal}</div><div class="s">${sub}</div></div></div>`;}
+/* Canlı ekran özeti — eskiden "Toplam giriş: —" gibi anlamsız kutular vardı:
+   hangi kamera, hangi görev, veri neden yok belli değildi. Artık her sayı
+   HANGİ kameralara ait olduğunu söyler ve boşsa nedenini yazar. */
+function overviewStats(){
+  const gorev=k=>CAMS.filter(c=>(c.tasks||{})[k]);
+  const say=gorev("count"),pl=gorev("plate"),yz=gorev("face");
+  const canli=Object.keys(LIVE_COUNTS).length;
+  const giris=LIVE_ACTIVE?Object.values(LIVE_COUNTS).reduce((n,c)=>n+(c.in||0),0):null;
+  const cikis=LIVE_ACTIVE?Object.values(LIVE_COUNTS).reduce((n,c)=>n+(c.out||0),0):null;
+  const adlar=l=>l.length?l.map(c=>esc(c.name)).join(", "):"tanımlı değil";
+  const kutu=(k,v,s,renk)=>`<div class="stat"><div class="k">${k}</div>
+    <div class="v"${renk?` style="color:${renk};"`:""}>${v}</div><div class="s">${s}</div></div>`;
+  return `<div class="overview" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));">
+    ${kutu("Kamera",CAMS.length,`${CAMS.length} kaynak tanımlı`)}
+    ${kutu("Sayım görevi",say.length,adlar(say),say.length?"var(--accent)":"")}
+    ${kutu("Plaka görevi",pl.length,adlar(pl),pl.length?"var(--warn)":"")}
+    ${kutu("Yüz görevi",yz.length,adlar(yz),yz.length?"var(--ok)":"")}
+    ${giris===null
+      ? kutu("Canlı sayaç","—",workerCalisiyor()===false?"analiz worker'ı çalışmıyor":"sayım görevi olan kamera bekleniyor")
+      : kutu("Canlı sayaç",`${giris} / ${cikis}`,`giriş / çıkış · ${canli} kamera`,"var(--accent)")}</div>`;
+}
 function render(){
   $("#nav").innerHTML=`<div class="lbl">İzleme</div>`+NAV.slice(0,4).map(navHtml).join("")+`<div class="lbl">Kayıt</div>`+NAV.slice(4).map(navHtml).join("");
   clearInterval(window._liveTimer);clearInterval(window._tileTimer);
@@ -649,16 +669,33 @@ const SCREENS={
     // 'analyze' (Hepsi) her zaman seçilebilir — görev listesinde olmadığı için fallback'e düşmesin
     const kind=(window._tk&&(window._tk==="analyze"||!enabled.length||enabled.includes(window._tk)))?window._tk:(enabled[0]||"face");window._tk=kind;
     const kinds=[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["analyze","Hepsi"]];
+    // Bu kamerada ne tanımlı — kullanıcı çalıştırmadan önce ne olacağını bilmeli
+    const acik=["count","plate","face"].filter(k=>(cam.tasks||{})[k]);
+    const etiket={count:"Sayım",plate:"Plaka",face:"Yüz"};
+    $("#tact").innerHTML=`<button class="btn pri" onclick="runTest()">${svg('play',15)} Analizi çalıştır</button>`;
     $("#content").innerHTML=`
-      <div class="card pad" style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap;">
-        <select id="tcam" onchange="window._tc=this.value;window._tk=null;SCREENS.test()">${CAMS.map(c=>`<option value="${esc(c.id)}" ${c.id===camId?'selected':''}>${esc(c.name)}</option>`).join("")}</select>
-        <div class="seg">${kinds.map(k=>`<button class="${k[0]===kind?'on':''}" onclick="window._tk='${k[0]}';SCREENS.test()">${k[1]}</button>`).join("")}</div>
-        <button class="btn pri" onclick="runTest()">${svg('play',15)} Çalıştır</button>
-        <button class="btn" id="btnStop" onclick="stopTest()" style="${currentJobId?'':'display:none;'}">${svg('stop',15)} Durdur</button>
-        <label class="mut-s" title="Kapatılırsa analiz GPU hızında koşar (dosya gerçek zamandan ~25x hızlı biter); açıkken kamera hızında oynar" style="display:inline-flex;align-items:center;gap:7px;cursor:pointer;">
-          <input type="checkbox" id="t-rt" ${window._trt===false?'':'checked'} onchange="window._trt=this.checked" style="width:auto;"> Gerçek zamanlı</label>
-        <span class="mut-s" id="trun" style="margin-left:auto;"></span></div>
-      <div id="tres"></div>`;
+      <div class="card pad" style="margin-bottom:18px;">
+        <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-end;">
+          <div class="field" style="margin:0;min-width:220px;flex:1;">
+            <label for="tcam">Kamera</label>
+            <select id="tcam" style="width:100%;" onchange="window._tc=this.value;window._tk=null;SCREENS.test()">${CAMS.map(c=>`<option value="${esc(c.id)}" ${c.id===camId?'selected':''}>${esc(c.name)}</option>`).join("")}</select>
+            <div class="hint mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(maskUrl(cam.source||""))}</div></div>
+          <div class="field" style="margin:0;">
+            <label>Ne çalıştırılsın</label>
+            <div class="seg">${kinds.map(k=>`<button class="${k[0]===kind?'on':''}" onclick="window._tk='${k[0]}';SCREENS.test()">${k[1]}</button>`).join("")}</div></div>
+          <div class="field" style="margin:0;">
+            <label>Tempo</label>
+            <label class="mut-s" title="Kapalıyken analiz GPU hızında koşar — 50 sn'lik video ~2 sn'de biter" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;height:38px;">
+              <input type="checkbox" id="t-rt" ${window._trt===false?'':'checked'} onchange="window._trt=this.checked" style="width:auto;"> Kamera hızında oynat</label></div>
+          <div class="field" style="margin:0;">
+            <label>&nbsp;</label>
+            <button class="btn" id="btnStop" onclick="stopTest()" style="${currentJobId?'':'display:none;'}">${svg('stop',15)} Durdur</button>
+            <span class="mut-s" id="trun"></span></div></div>
+        <div class="mut-s" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:18px;flex-wrap:wrap;">
+          <span>Sürekli izlemeden bağımsız <b>tek seferlik</b> analizdir — sonucu burada görürsünüz, worker'a ihtiyaç yoktur.</span>
+          <span style="margin-left:auto;">Bu kamerada açık görev: ${acik.length?acik.map(k=>`<span class="chip" style="background:var(--accent-soft);color:var(--accent);">${etiket[k]}</span>`).join(" "):'<span class="chip" style="background:var(--hover);color:var(--ink-3);">yok</span>'}</span></div></div>
+      <div id="tres"><div class="card"><div class="empty">Analiz çalıştırılmadı.<br>
+        <span class="mut-s">Sağ üstteki <b>Analizi çalıştır</b> ile başlatın — canlı görüntü ve sayaçlar burada akar.</span></div></div></div>`;
   },
   async rec(){
     const camId=window._rc||CAMS[0]?.id;window._rc=camId;

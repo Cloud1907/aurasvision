@@ -1,0 +1,29 @@
+# AurasVision kayıt servisi — 7/24 sürekli video kaydı (NVR çekirdeği)
+#
+# Neden ayrı birim: kayıt ile analiz birbirini beklememeli. Worker çökse bile
+# kayıt sürmeli — kayıt kaybı geri alınamaz, analiz kaybı geri alınabilir.
+#
+# KVKK/mevzuat: kamera kaydı saklama süresi sektöre göre 15-45 gün zorunludur.
+# Bu servis kapalıysa yasal yükümlülük karşılanmaz — izlemeye alın (§10).
+[Unit]
+Description=AurasVision continuous recorder (NVR)
+After=network-online.target docker.service aurasvision-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/aurasvision
+EnvironmentFile=-/opt/aurasvision/.env
+ExecStart=/opt/aurasvision/.venv/bin/python -m src.recorder
+# SIGINT: açık segmentin düzgün kapanması için (SIGKILL bozuk mp4 bırakır)
+KillSignal=SIGINT
+TimeoutStopSec=30
+Restart=always
+RestartSec=10
+User=aurasvision
+Group=aurasvision
+# Kayıt diski dolarsa süreç ölmesin; retention devreye girer
+OOMPolicy=continue
+
+[Install]
+WantedBy=multi-user.target

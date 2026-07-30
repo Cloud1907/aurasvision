@@ -115,10 +115,16 @@ systemctl status aurasvision-server     # active (running) görmelisin
 (`REDIS_URL` şart):
 
 ```bash
-sudo cp deploy/aurasvision-worker.service deploy/aurasvision-ingestor.service /etc/systemd/system/
+sudo cp deploy/aurasvision-worker.service deploy/aurasvision-ingestor.service \
+        deploy/aurasvision-recorder.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now aurasvision-worker aurasvision-ingestor
+sudo systemctl enable --now aurasvision-worker aurasvision-ingestor aurasvision-recorder
 ```
+
+> **Kayıt servisi (`aurasvision-recorder`) opsiyonel değildir.** Kamera kaydı saklama
+> süresi mevzuat gereği zorunludur (§8); bu servis çalışmıyorsa yükümlülük karşılanmaz.
+> Kurulumdan sonra `systemctl is-active aurasvision-recorder` ile doğrula ve izlemeye al.
+> Kayıt yolu `output/rec/`, saklama süresi `config.yaml` → `record.keep_days`.
 
 > Unit dosyaları `/opt/aurasvision` yolunu varsayar; farklı yere kurduysan `WorkingDirectory`
 > ve `ExecStart` yollarını düzelt. Kod güncellemesinden sonra **daima**
@@ -175,7 +181,7 @@ Her kamera farklı açı/ışık/zemin demektir. Kurulum günü, kamera başına
 cd /opt/aurasvision && git pull
 .venv/bin/pip install -r requirements.txt      # bağımlılık değiştiyse
 .venv/bin/python -m pytest -q                  # yeşil olmadan restart etme
-sudo systemctl restart aurasvision-server aurasvision-worker aurasvision-ingestor
+sudo systemctl restart aurasvision-server aurasvision-worker aurasvision-ingestor aurasvision-recorder
 ```
 
 ## 10. Sorun giderme (sahada yaşananlardan)
