@@ -44,6 +44,33 @@ def _saved_intrusions(store, camera_id: str) -> list[dict]:
             if z["kind"] == "intrusion" and len(z["points"] or []) >= 3]
 
 
+def _nvdec_kullanilabilir() -> str:
+    """GPU hattı gerçekten çalışır mı — çalışmıyorsa NEDENİNİ döndürür ("" = çalışır).
+
+    Import başarılı olması yetmez: kart yok, sürücü uyumsuz veya CUDA görünmüyor
+    olabilir. Bunu ÖNCEDEN anlamak, çalışma anında çökmekten iyidir; sahada
+    "worker açık ama olay üretmiyor" en pahalı hata tipidir.
+    """
+    try:
+        import torch
+    except Exception as e:
+        return f"torch yok: {e}"
+    try:
+        if not torch.cuda.is_available():
+            return "CUDA görünmüyor (GPU yok veya sürücü eksik)"
+    except Exception as e:
+        return f"CUDA sorgusu başarısız: {e}"
+    try:
+        import PyNvVideoCodec  # noqa: F401
+    except Exception as e:
+        return f"PyNvVideoCodec yok ({e.__class__.__name__}) — bu platformda desteklenmiyor olabilir"
+    try:
+        import tensorrt  # noqa: F401
+    except Exception as e:
+        return f"tensorrt yok ({e.__class__.__name__})"
+    return ""
+
+
 def _run_camera(cam: dict, cfg, bus) -> None:
     cid = cam["id"]
     source = cam["source"]
@@ -130,16 +157,24 @@ def main() -> None:
         # PyNvVideoCodec/TensorRT her platformda YOK (ör. Windows wheel'i belirsiz);
         # import patlarsa sessizce ölmek yerine ultralytics motoruna düşülür —
         # yavaş ama çalışır. Sessiz çökme sahada "worker açık ama olay yok" demek.
-        try:
-            from .gpu_engine import run_gpu_worker
-        except Exception as e:
-            print(f"[worker] nvdec motoru yüklenemedi ({e.__class__.__name__}: {e}) — "
-                  f"ultralytics motoruna düşülüyor. Kalıcı çözüm: config.yaml → "
+        sebep = _nvdec_kullanilabilir()
+        if sebep:
+            print(f"[worker] nvdec motoru kullanılamıyor ({sebep}) — ultralytics "
+                  f"motoruna düşülüyor. Kalıcı çözüm: config.yaml → "
                   f"worker.engine: ultralytics", flush=True)
         else:
-            print(f"[worker] motor=nvdec, {len(cams)} kamera: {', '.join(c['id'] for c in cams)}")
-            run_gpu_worker(cams, cfg, bus)
-            return
+            try:
+                from .gpu_engine import run_gpu_worker
+                print(f"[worker] motor=nvdec, {len(cams)} kamera: "
+                      f"{', '.join(c['id'] for c in cams)}")
+                run_gpu_worker(cams, cfg, bus)
+                return
+            except Exception as e:
+                # Çalışma anında patlarsa (sürücü uyumsuzluğu, engine dosyası başka
+                # karta ait, VRAM yetmedi) worker ÖLMEZ — yavaş motorla devam eder.
+                print(f"[worker] nvdec motoru çalışırken hata verdi "
+                      f"({e.__class__.__name__}: {e}) — ultralytics motoruna "
+                      f"düşülüyor", flush=True)
 
     print(f"[worker] {len(cams)} kamera: {', '.join(c['id'] for c in cams)}")
     threads = [threading.Thread(target=_run_camera, args=(c, cfg, bus), daemon=True)
