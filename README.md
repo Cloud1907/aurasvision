@@ -3,10 +3,45 @@
 Açık kaynak görüntü işleme: **kişi sayma**, **plaka okuma (ALPR)**, **yüz tespit + anonim demografi**.
 Tek videoda hepsi. Geliştirme: MacBook M4 (MPS). Üretim hedefi: Jetson / NVIDIA edge.
 
-> 🏢 **Müşteri sahasına kurulum:** adım adım kılavuz için [docs/KURULUM.md](docs/KURULUM.md)
-> (donanım, modeller, .env/token, Docker altyapısı, systemd, kamera kalibrasyonu, KVKK).
+## Kurulum
 
-## Kurulum (geliştirme)
+Tek komut: bağımlılıklar, `.env` (rastgele erişim anahtarı), Docker altyapısı,
+duman testi ve servisler.
+
+```bash
+git clone https://github.com/Cloud1907/aurasvision.git /opt/aurasvision
+cd /opt/aurasvision
+./setup.sh --systemd
+```
+
+Betik bitince **panel adresini ve erişim anahtarını** yazdırır. Anahtarı kaydet —
+panele ilk girişte sorulur.
+
+| Seçenek | Ne yapar |
+|---|---|
+| _(yok)_ | Kurar ve test eder, servisleştirmez (geliştirme) |
+| `--systemd` | Servisleri de kurup başlatır — **sahada bunu kullan** |
+| `--no-docker` | db/redis/go2rtc başka makinedeyse altyapıyı atlar |
+| `--check` | Hiçbir şey kurmaz, mevcut kurulumu denetler |
+
+Betik **tekrar çalıştırılabilir**: var olanı bozmaz, eksik olanı tamamlar.
+`.env` varsa dokunmaz (anahtar yeniden üretilseydi tüm istemciler düşerdi).
+
+**Ön koşullar:** Python 3.11+, Docker + compose eklentisi. GPU'lu makinede
+NVIDIA sürücüsü. Betik eksikleri baştan söyler.
+
+### Kurulumdan sonra: ilk kamera
+
+Panel → **Kameralar → Kamera ekle** → IP, kullanıcı ve şifreyi gir →
+**IP ile sorgula**. ONVIF açıksa kameranın kendi bildirdiği ana akış ve
+substream gelir. Olmazsa **Ağı tara** veya **RTSP yolunu dene** (10 marka için
+bilinen yollar denenir, yalnız gerçekten açılanlar listelenir).
+Kaydetmeden önce **Bağlantıyı test et** — çözünürlük, fps ve canlı kare görmelisin.
+
+> 🏢 **Ayrıntılı saha kılavuzu:** [docs/KURULUM.md](docs/KURULUM.md) — donanım seçimi,
+> modeller, kamera kalibrasyonu, kayıt saklama süresi ve KVKK yükümlülükleri.
+
+### Elle kurulum (betiği kullanmadan)
 
 ```bash
 python3.11 -m venv .venv
