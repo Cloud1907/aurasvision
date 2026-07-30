@@ -563,27 +563,69 @@ def api_status():
     olc("Olay yolu", _redis)
     olc("Canlı akış", _go2rtc)
 
-    # Worker: 15 sn'den taze heartbeat = işliyor
+    # Worker sağlığı: heartbeat TAZE olması yetmez — kare de ÜRETİYOR olmalı.
+    # Ölü bir kamerayı işlemeye çalışan worker canlı heartbeat atar ama 0 fps
+    # üretir; eski sürümde bu "sağlıklı" görünüyordu. Sahada en pahalı yanılgı bu.
     s = _store()
     try:
         simdi = datetime.now(timezone.utc)
-        taze = 0
+        taze, ureten, durgun = 0, 0, []
         for h in s.latest_health():
             t = str(h.get("time") or "")
             try:
                 d = datetime.fromisoformat(t.replace(" ", "T"))
                 if d.tzinfo is None:
                     d = d.replace(tzinfo=timezone.utc)
-                if (simdi - d).total_seconds() < 15:
-                    taze += 1
+                if (simdi - d).total_seconds() >= 15:
+                    continue
             except ValueError:
-                pass
+                continue
+            taze += 1
+            if float(h.get("fps") or 0) > 0.1:
+                ureten += 1
+            else:
+                durgun.append(str(h.get("camera_id") or "?"))
         kamera = len(_cameras())
     finally:
         s.close()
-    bilesenler.append({"ad": "Analiz worker", "ok": taze > 0,
-                       "detay": f"{taze}/{kamera} kamera işleniyor" if taze else "çalışmıyor",
-                       "ms": 0})
+
+    if not taze:
+        detay, ok = "çalışmıyor — sürekli analiz yok", False
+    elif ureten == 0:
+        detay, ok = (f"{taze} kamera bağlı ama KARE ÜRETMİYOR "
+                     f"({', '.join(durgun[:3])}) — kaynak erişilemiyor olabilir"), False
+    elif durgun:
+        detay, ok = (f"{ureten}/{taze} kamera işleniyor · durgun: "
+                     f"{', '.join(durgun[:3])}"), False
+    else:
+        detay, ok = f"{ureten}/{kamera} kamera işleniyor", True
+    bilesenler.append({"ad": "Analiz worker", "ok": ok, "detay": detay, "ms": 0})
+
+    # Kayıt servisi ayrı bileşen: mevzuat gereği çalışıyor olmalı, sessizce
+    # durması yükümlülüğün karşılanmaması demektir.
+    if cfg.get("record.enabled", True):
+        s = _store()
+        try:
+            son = s.recordings_stats()
+        finally:
+            s.close()
+        yeni = 0
+        for r in son:
+            try:
+                d = datetime.fromisoformat(str(r.get("newest") or "").replace(" ", "T"))
+                if d.tzinfo is None:
+                    d = d.replace(tzinfo=timezone.utc)
+                if (datetime.now(timezone.utc) - d).total_seconds() < 300:
+                    yeni += 1
+            except ValueError:
+                continue
+        toplam_gb = sum(int(r.get("bytes") or 0) for r in son) / (1024 ** 3)
+        bilesenler.append({
+            "ad": "Kayıt servisi", "ok": yeni > 0,
+            "detay": (f"{yeni} kamera kaydediliyor · arşiv {toplam_gb:.1f} GB"
+                      if yeni else "son 5 dakikada yeni kayıt YOK"),
+            "ms": 0})
+
     return {"ok": all(b["ok"] for b in bilesenler), "bilesenler": bilesenler}
 
 
