@@ -87,7 +87,8 @@ CREATE TABLE IF NOT EXISTS plate_events (
     conf        REAL,
     reads       SMALLINT,                    -- oylamaya giren kare sayısı
     ts_seconds  REAL,
-    frame_idx   INTEGER
+    frame_idx   INTEGER,
+    snapshot    TEXT                         -- kanıt görüntüsü yolu (evidence.keep_days sonra silinir)
 );
 
 CREATE TABLE IF NOT EXISTS face_events (
@@ -112,8 +113,20 @@ CREATE TABLE IF NOT EXISTS alerts (
     list_type   TEXT,
     label       TEXT,
     acked_by    TEXT,
-    acked_at    TIMESTAMPTZ
+    acked_at    TIMESTAMPTZ,
+    snapshot    TEXT                         -- alarm anının kanıt karesi (evidence modülü)
 );
+
+CREATE TABLE IF NOT EXISTS recordings (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    camera_id   TEXT NOT NULL,
+    path        TEXT NOT NULL UNIQUE,        -- record kökine göreli
+    start_time  TIMESTAMPTZ NOT NULL,
+    end_time    TIMESTAMPTZ NOT NULL,
+    duration    REAL NOT NULL,               -- ffprobe ile ÖLÇÜLMÜŞ (nominal değil)
+    size_bytes  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_rec_cam_time ON recordings (camera_id, start_time DESC);
 
 CREATE TABLE IF NOT EXISTS camera_health (
     time        TIMESTAMPTZ NOT NULL DEFAULT now(),

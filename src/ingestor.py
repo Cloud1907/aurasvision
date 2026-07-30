@@ -21,6 +21,9 @@ def main() -> None:
     if bus is None:
         raise SystemExit("REDIS_URL (veya config redis.url) gerekli")
     store = open_store(cfg)
+    # Tek kareden ibaret okuma alarm tetiklemesin: gerçek geçişte oylama penceresi
+    # birden çok okuma üretir; count'u eşiğin altındaki eşleşme alarm olmaz (olay yine yazılır)
+    alert_min_reads = int(cfg.get("plate.alert_min_reads", 2))
     print("[ingest] dinleniyor — stream: events", flush=True)
 
     def handle(type_: str, camera_id: str, p: dict) -> None:
@@ -32,9 +35,10 @@ def main() -> None:
             store.add_plate_event(camera_id, p["plate"], p.get("conf"), p.get("reads", 1),
                                   p.get("ts_seconds", 0.0), p.get("frame_idx", 0),
                                   track_id=p.get("track_id"))
-            for m in store.match_plates([p["plate"]]):
-                store.add_alert("plate", m["plate"], m["list_type"],
-                                m.get("label") or "", camera_id)
+            if int(p.get("reads") or 1) >= alert_min_reads:
+                for m in store.match_plates([p["plate"]]):
+                    store.add_alert("plate", m["plate"], m["list_type"],
+                                    m.get("label") or "", camera_id)
         elif type_ == "face":
             store.add_face_event(camera_id, p.get("age"), p.get("gender"), p.get("conf"),
                                  p.get("ts_seconds", 0.0), p.get("frame_idx", 0),
@@ -44,6 +48,10 @@ def main() -> None:
             if p.get("match_name"):
                 store.add_alert("face", p["match_name"], p.get("list_type") or "watch",
                                 "", camera_id)
+        elif type_ == "alert":
+            # Worker'da doğan alarm (ihlal alanı) — DB yazımı burada
+            store.add_alert(p.get("kind", "intrusion"), p.get("ref", ""),
+                            p.get("list_type", ""), p.get("label", ""), camera_id)
         elif type_ == "health":
             store.add_camera_health(camera_id, p.get("fps"), p.get("dropped"),
                                     p.get("status", "ok"))

@@ -29,3 +29,7 @@ redis>=5.0
 # --- GPU pipeline motoru (worker.engine: nvdec — GB10/CUDA makineler, ADR-0003) ---
 # pynvvideocodec>=2.1   # NVDEC decode (aarch64 wheel PyPI'da mevcut)
 # av>=15.0              # GIL-dostu demux (PyNvVideoCodec demuxer'ı canlı akışta GIL tutuyor)
+
+# --- Kamera keşfi (ONVIF) ---
+onvif-zeep-async>=3.1     # kameranın kendi bildirdiği akış adresleri (ana + substream)
+wsdiscovery>=2.0          # yerel ağda ONVIF cihaz keşfi (WS-Discovery multicast)

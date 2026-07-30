@@ -17,7 +17,29 @@
 sudo apt update && sudo apt install -y python3.11 python3.11-venv git docker.io docker-compose-v2
 ```
 
-## 1. Kod
+## 1. Hızlı kurulum (önerilen)
+
+Adımların tamamını otomatik yapan betik:
+
+```bash
+git clone https://github.com/Cloud1907/aurasvision.git /opt/aurasvision
+cd /opt/aurasvision
+./setup.sh --systemd        # venv + bağımlılık + .env + docker + test + servisler
+```
+
+Betik **tekrar çalıştırılabilir**: var olanı bozmaz, eksik olanı tamamlar.
+`.env` varsa dokunmaz — erişim anahtarı yeniden üretilseydi tüm istemciler düşerdi.
+Sonunda panel adresini ve anahtarı yazdırır.
+
+| Seçenek | Ne yapar |
+|---|---|
+| `--systemd` | Servisleri kurar ve başlatır (kalıcı çalışma) |
+| `--no-docker` | db/redis/go2rtc başka makinedeyse altyapıyı atlar |
+| `--check` | Hiçbir şey kurmaz, mevcut kurulumu denetler |
+
+Aşağıdaki bölümler betiğin yaptıklarını elle yapmak veya sorun gidermek içindir.
+
+## 2. Kod (elle kurulum)
 
 ```bash
 sudo mkdir -p /opt/aurasvision && sudo chown $USER /opt/aurasvision
@@ -37,7 +59,7 @@ GPU makinede (GB10/DGX Spark, aarch64 SBSA) onnxruntime'ı GPU sürümüyle değ
 .venv/bin/pip install tensorrt            # detect.model: *.engine kullanılacaksa
 ```
 
-## 2. Modeller (git'te YOK — ayrı taşınır)
+## 3. Modeller (git'te YOK — ayrı taşınır)
 
 Model ağırlıkları bilinçli olarak repoya girmez (`.gitignore` + manifest yasağı):
 
@@ -49,7 +71,7 @@ Model ağırlıkları bilinçli olarak repoya girmez (`.gitignore` + manifest ya
 - InsightFace `buffalo_l` paketi ilk çalıştırmada `~/.insightface/` altına kendisi iner (internet gerekir; kapalı ağda klasörü elle taşı).
 - GPU yoksa `config.yaml` → `detect.model: yolo11n.pt` yap.
 
-## 3. Yapılandırma (kod değil, iki dosya)
+## 4. Yapılandırma (kod değil, iki dosya)
 
 ### 3a. `.env` — gizli bilgiler (repoya asla girmez)
 
@@ -75,7 +97,7 @@ cp .env.example .env && nano .env
 - Demo video kameralarını sil.
 - Eşikler (`detect.conf`, `face.*`, `count.*`) kalibrasyon adımından sonra dokunulur (adım 7).
 
-## 4. Altyapı servisleri (Docker)
+## 5. Altyapı servisleri (Docker)
 
 ```bash
 docker compose up -d db redis go2rtc
@@ -84,9 +106,12 @@ docker compose up -d db redis go2rtc
 - `db` — Postgres 16 + TimescaleDB (host portu **5433**), şema `db/schema.sql`'den otomatik yüklenir.
   Üretimde `POSTGRES_PASSWORD`'ü compose'da değiştir ve `.env`'deki `DATABASE_URL`'i eşle.
 - `redis` — olay veri yolu (worker → ingestor).
-- `go2rtc` — canlı izleme fan-out'u (WebRTC, port 1984). `go2rtc/go2rtc.yaml`'ı elle düzenleme; sunucu kamera listesinden otomatik üretir.
+- `go2rtc` — canlı izleme fan-out'u. `go2rtc/go2rtc.yaml`'ı elle düzenleme; sunucu kamera listesinden otomatik üretir.
+  API'si (1984) **yalnız localhost'a** bağlanır: kimlik doğrulaması yoktur ve tarayıcı ona doğrudan
+  bağlanmaz — canlı görüntü uygulama sunucusundaki token korumalı `/api/stream` ucundan vekillenir.
+  Operatörlerin ağa açması gereken tek port uygulamanın kendisidir (8000).
 
-## 5. İlk çalıştırma (elle duman testi)
+## 6. İlk çalıştırma (elle duman testi)
 
 ```bash
 cd /opt/aurasvision
@@ -97,7 +122,7 @@ set -a; source .env; set +a
 Tarayıcıdan aç → token'ı gir → **Test ve çalıştır** → kamera seç → **Çalıştır**.
 Canlı annotated görüntü + sayaçlar akıyorsa çekirdek çalışıyor demektir. Ctrl-C ile kapat, servisleştirmeye geç.
 
-## 6. Servisleştirme (systemd — kalıcı çalışma)
+## 7. Servisleştirme (systemd — kalıcı çalışma)
 
 Hazır unit dosyaları `deploy/` altında:
 
@@ -112,16 +137,22 @@ systemctl status aurasvision-server     # active (running) görmelisin
 (`REDIS_URL` şart):
 
 ```bash
-sudo cp deploy/aurasvision-worker.service deploy/aurasvision-ingestor.service /etc/systemd/system/
+sudo cp deploy/aurasvision-worker.service deploy/aurasvision-ingestor.service \
+        deploy/aurasvision-recorder.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now aurasvision-worker aurasvision-ingestor
+sudo systemctl enable --now aurasvision-worker aurasvision-ingestor aurasvision-recorder
 ```
+
+> **Kayıt servisi (`aurasvision-recorder`) opsiyonel değildir.** Kamera kaydı saklama
+> süresi mevzuat gereği zorunludur (§8); bu servis çalışmıyorsa yükümlülük karşılanmaz.
+> Kurulumdan sonra `systemctl is-active aurasvision-recorder` ile doğrula ve izlemeye al.
+> Kayıt yolu `output/rec/`, saklama süresi `config.yaml` → `record.keep_days`.
 
 > Unit dosyaları `/opt/aurasvision` yolunu varsayar; farklı yere kurduysan `WorkingDirectory`
 > ve `ExecStart` yollarını düzelt. Kod güncellemesinden sonra **daima**
 > `sudo systemctl restart aurasvision-server` — eski süreç eski kodu koşturur (klasik tuzak).
 
-## 7. Kamera başına kalibrasyon (KRİTİK — atlama)
+## 8. Kamera başına kalibrasyon (KRİTİK — atlama)
 
 Her kamera farklı açı/ışık/zemin demektir. Kurulum günü, kamera başına:
 
@@ -138,7 +169,7 @@ Her kamera farklı açı/ışık/zemin demektir. Kurulum günü, kamera başına
    config yorumlarında).
 3. Kalabalık/uzak sahnede `detect.imgsz: 1280` (GPU maliyeti ~4x — yorumdaki ölçüme bak).
 
-## 8. Güvenlik + KVKK (client sözleşmesi öncesi zorunlu)
+## 9. Güvenlik + KVKK (client sözleşmesi öncesi zorunlu)
 
 - `AURAS_TOKEN` set edilmeden paneli ağa açma.
 - Dış ağdan erişim gerekiyorsa doğrudan port açma — reverse proxy + TLS koy (Caddy örneği):
@@ -148,18 +179,34 @@ Her kamera farklı açı/ışık/zemin demektir. Kurulum günü, kamera başına
   ancak client'ın açık rıza/aydınlatma süreciyle açılır. Kare/video KVKK gereği minimum tutulur:
   canlı önizleme yalnız bellekte, analiz videoları `output/`'ta — saklama süresini client
   politikasına bağla ve eski çıktıları temizleyen bir cron ekle.
+- **Kanıt görüntüsü (`evidence`, config):** olayın denetlenebilir karşılığı. Bu, "ham görüntü
+  saklanmaz" ilkesinden BİLİNÇLİ bir sapmadır; aydınlatma metninde yer almalı. Tür bazında:
+
+  | Tür | Varsayılan | Ne saklanır | Gerekçe |
+  |-----|-----------|-------------|---------|
+  | `plate` | **açık** | plaka kırpması + bağlam karesi | plaka zaten metin olarak işleniyor; kanıt ALPR'ın asli işlevi ve yanlış okumanın tek denetim yolu |
+  | `intrusion` | **açık** | alarm anının karesi | alarmın doğru olup olmadığı ancak görüntüyle teyit edilir |
+  | `face` | **kapalı** | — | biyometrik veri; yalnız 512d embedding saklanır, görüntü saklanmaz |
+
+  Dosyalar `output/evidence/<tarih>/` altında tutulur ve `evidence.keep_days` (varsayılan **30 gün**)
+  sonunda **otomatik silinir** — ayrıca cron gerekmez. Client daha kısa süre isterse bu değeri düşür;
+  kanıt hiç istenmiyorsa `evidence.enabled: false` yap (özellik tamamen kapanır).
+  Kanıt görüntülerine erişim `AURAS_TOKEN` ile korunur (`/media/evidence/...`).
+- **Üçüncü taraf akış kaynakları (`stream.http_headers`):** bazı CDN/HLS kaynakları Referer gibi
+  başlık ister. Bu ayarı yalnız **erişim hakkına sahip olduğun** kaynaklar için kullan; başkasının
+  akışını korumasını aşarak kullanmak sözleşme ve mevzuat riski yaratır.
 - Postgres yedeği: `pg_dump` cron'u kur (SQLite kullanılıyorsa dosya yedeği — ama üretimde SQLite kullanma).
 
-## 9. Güncelleme
+## 10. Güncelleme
 
 ```bash
 cd /opt/aurasvision && git pull
 .venv/bin/pip install -r requirements.txt      # bağımlılık değiştiyse
 .venv/bin/python -m pytest -q                  # yeşil olmadan restart etme
-sudo systemctl restart aurasvision-server aurasvision-worker aurasvision-ingestor
+sudo systemctl restart aurasvision-server aurasvision-worker aurasvision-ingestor aurasvision-recorder
 ```
 
-## 10. Sorun giderme (sahada yaşananlardan)
+## 11. Sorun giderme (sahada yaşananlardan)
 
 | Belirti | Sebep / çözüm |
 |---|---|

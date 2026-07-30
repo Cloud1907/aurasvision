@@ -48,6 +48,8 @@ def merged_cameras(cfg, store: "BaseStore") -> list[dict[str, Any]]:
                 by_id[c["id"]]["tasks"] = c["tasks"]
             if c.get("detect_fps"):
                 by_id[c["id"]]["detect_fps"] = c["detect_fps"]
+            if c.get("url_sub"):
+                by_id[c["id"]]["url_sub"] = c["url_sub"]
         else:
             if not c.get("tasks"):
                 c["tasks"] = dict(DEFAULT_TASKS)
@@ -82,10 +84,12 @@ class BaseStore:
                 (camera_id, track_id, direction, zone, round(ts_seconds, 2), frame_idx))
 
     def add_plate_event(self, camera_id: str, plate: str, conf: float | None, reads: int,
-                        ts_seconds: float, frame_idx: int, track_id: int | None = None) -> None:
-        self._x("INSERT INTO plate_events (camera_id, plate, conf, reads, ts_seconds, frame_idx, track_id)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (camera_id, plate, conf, reads, round(ts_seconds, 2), frame_idx, track_id))
+                        ts_seconds: float, frame_idx: int, track_id: int | None = None,
+                        snapshot: str = "") -> None:
+        self._x("INSERT INTO plate_events (camera_id, plate, conf, reads, ts_seconds, frame_idx,"
+                " track_id, snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (camera_id, plate, conf, reads, round(ts_seconds, 2), frame_idx, track_id,
+                 snapshot or None))
 
     def add_face_event(self, camera_id: str, age: int | None, gender: str | None, conf: float | None,
                        ts_seconds: float, frame_idx: int, track_id: int | None = None,
@@ -164,15 +168,73 @@ class BaseStore:
         self._x("DELETE FROM cameras WHERE id=?", (cid,))
         self.commit()
 
+    # --- Kayıtlar (NVR segmentleri) ---
+    def add_recording(self, camera_id: str, path: str, start, end,
+                      duration: float, size_bytes: int) -> None:
+        """Kapanmış segmenti kaydeder. duration ÖLÇÜLMÜŞ değerdir (nominal değil)."""
+        self._x("INSERT INTO recordings (camera_id, path, start_time, end_time,"
+                " duration, size_bytes) VALUES (?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (path) DO NOTHING",
+                (camera_id, path, start, end, round(duration, 3), size_bytes))
+
+    def list_recordings(self, camera_id: str = "", start=None, end=None,
+                        limit: int = 2000) -> list[dict[str, Any]]:
+        sql = "SELECT camera_id, path, start_time, end_time, duration, size_bytes FROM recordings WHERE 1=1"
+        par: list[Any] = []
+        if camera_id:
+            sql += " AND camera_id=?"; par.append(camera_id)
+        if start is not None:
+            sql += " AND end_time >= ?"; par.append(start)
+        if end is not None:
+            sql += " AND start_time <= ?"; par.append(end)
+        sql += " ORDER BY start_time LIMIT ?"; par.append(limit)
+        rows = self._all(sql, tuple(par))
+        for r in rows:
+            r["start_time"] = str(r["start_time"]); r["end_time"] = str(r["end_time"])
+        return rows
+
+    def recordings_before(self, ts, limit: int = 500) -> list[dict[str, Any]]:
+        return self._all("SELECT path, size_bytes FROM recordings WHERE end_time < ?"
+                         " ORDER BY start_time LIMIT ?", (ts, limit))
+
+    def recordings_oldest(self, limit: int = 500) -> list[dict[str, Any]]:
+        return self._all("SELECT path, size_bytes FROM recordings"
+                         " ORDER BY start_time LIMIT ?", (limit,))
+
+    def recordings_size(self) -> int:
+        r = self._all("SELECT COALESCE(SUM(size_bytes),0) AS t FROM recordings")
+        return int(r[0]["t"]) if r else 0
+
+    def recordings_stats(self) -> list[dict[str, Any]]:
+        """Kamera başına: segment sayısı, toplam boyut, en eski/yeni kayıt."""
+        return self._all("SELECT camera_id, COUNT(*) AS segments,"
+                         " COALESCE(SUM(size_bytes),0) AS bytes,"
+                         " MIN(start_time) AS oldest, MAX(end_time) AS newest"
+                         " FROM recordings GROUP BY camera_id")
+
+    def delete_recording(self, path: str) -> None:
+        self._x("DELETE FROM recordings WHERE path=?", (path,))
+
     # --- Uyarılar ---
-    def add_alert(self, kind: str, ref: str, list_type: str, label: str, camera_id: str) -> None:
-        self._x("INSERT INTO alerts (kind, ref, list_type, label, camera_id)"
-                " VALUES (?, ?, ?, ?, ?)", (kind, ref, list_type, label, camera_id))
+    def add_alert(self, kind: str, ref: str, list_type: str, label: str, camera_id: str,
+                  snapshot: str = "") -> None:
+        self._x("INSERT INTO alerts (kind, ref, list_type, label, camera_id, snapshot)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (kind, ref, list_type, label, camera_id, snapshot or None))
         self.commit()
 
-    def recent_alerts(self, limit: int = 20) -> list[dict[str, Any]]:
-        return self._all("SELECT kind, ref, list_type, label, camera_id, time FROM alerts"
-                         " ORDER BY time DESC LIMIT ?", (limit,))
+    def recent_alerts(self, limit: int = 20, pending_only: bool = False) -> list[dict[str, Any]]:
+        kosul = " WHERE acked_at IS NULL" if pending_only else ""
+        return self._all("SELECT id, kind, ref, list_type, label, camera_id, time,"
+                         " acked_by, acked_at, snapshot FROM alerts"
+                         f"{kosul} ORDER BY time DESC LIMIT ?", (limit,))
+
+    def ack_alert(self, alert_id: int, by: str = "operatör") -> bool:
+        """Uyarıyı kabul eder (kim/ne zaman). Zaten kabul edilmişse dokunmaz."""
+        cur = self._x("UPDATE alerts SET acked_by=?, acked_at=CURRENT_TIMESTAMP"
+                      " WHERE id=? AND acked_at IS NULL", (by, alert_id))
+        self.commit()
+        return bool(getattr(cur, "rowcount", 0))
 
     def count_totals(self) -> list[dict[str, Any]]:
         return self._all("SELECT camera_id, "
@@ -186,7 +248,9 @@ class BaseStore:
             self._x(f"DELETE FROM {t}")
         self.commit()
 
-    def recent_events(self, limit: int = 50) -> list[dict[str, Any]]:
+    def recent_events(self, limit: int = 50, tur: str = "",
+                      kamera: str = "") -> list[dict[str, Any]]:
+        """Birleşik olay akışı. tur: count|plate|face (boş = hepsi)."""
         raise NotImplementedError
 
     def commit(self) -> None:
@@ -204,7 +268,13 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at TEXT NOT NULL DEFAULT (datetime('now')), meta TEXT);
 CREATE TABLE IF NOT EXISTS cameras (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL,
+    url_sub TEXT,   -- düşük çözünürlüklü substream (kamera duvarı); boşsa ana akış
     tasks TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS recordings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id TEXT NOT NULL,
+    path TEXT NOT NULL UNIQUE, start_time TEXT NOT NULL, end_time TEXT NOT NULL,
+    duration REAL NOT NULL, size_bytes INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_rec_cam_time ON recordings (camera_id, start_time);
 CREATE TABLE IF NOT EXISTS camera_health (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL DEFAULT (datetime('now')),
     camera_id TEXT NOT NULL, fps REAL, dropped INTEGER, status TEXT);
@@ -225,7 +295,7 @@ CREATE TABLE IF NOT EXISTS count_events (
     class TEXT DEFAULT 'person', ts_seconds REAL, frame_idx INTEGER);
 CREATE TABLE IF NOT EXISTS plate_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL DEFAULT (datetime('now')),
-    camera_id TEXT NOT NULL, track_id INTEGER, plate TEXT NOT NULL, conf REAL,
+    camera_id TEXT NOT NULL, track_id INTEGER, plate TEXT NOT NULL, conf REAL, snapshot TEXT,
     reads INTEGER, ts_seconds REAL, frame_idx INTEGER);
 CREATE TABLE IF NOT EXISTS face_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL DEFAULT (datetime('now')),
@@ -234,7 +304,7 @@ CREATE TABLE IF NOT EXISTS face_events (
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL DEFAULT (datetime('now')),
     camera_id TEXT, kind TEXT NOT NULL, ref TEXT NOT NULL, list_type TEXT, label TEXT,
-    acked_by TEXT, acked_at TEXT);
+    acked_by TEXT, acked_at TEXT, snapshot TEXT);
 """
 
 
@@ -255,10 +325,13 @@ class SqliteStore(BaseStore):
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=30000")
         self.conn.executescript(_SQLITE_SCHEMA)
-        try:   # hafif migration: eski DB'lerde cameras.tasks yoksa ekle
-            self.conn.execute("ALTER TABLE cameras ADD COLUMN tasks TEXT")
-        except sqlite3.OperationalError:
-            pass
+        for tablo, sutun, tip in (("cameras", "tasks", "TEXT"), ("cameras", "url_sub", "TEXT"),
+                                  ("plate_events", "snapshot", "TEXT"),
+                                  ("alerts", "snapshot", "TEXT")):
+            try:   # hafif migration: eski DB'lerde eksik sütunları ekle
+                self.conn.execute(f"ALTER TABLE {tablo} ADD COLUMN {sutun} {tip}")
+            except sqlite3.OperationalError:
+                pass
         self.conn.commit()
 
     def _x(self, sql: str, params: tuple = ()) -> Any:
@@ -300,15 +373,16 @@ class SqliteStore(BaseStore):
         return rows
 
     def list_cameras_db(self) -> list[dict[str, Any]]:
-        rows = self._all("SELECT id, name, source, tasks FROM cameras ORDER BY created_at")
+        rows = self._all("SELECT id, name, source, url_sub, tasks FROM cameras ORDER BY created_at")
         for r in rows:
             r["tasks"] = json.loads(r["tasks"]) if r.get("tasks") else None
         return rows
 
-    def add_camera(self, cid, name, source) -> None:
-        self._x("INSERT INTO cameras (id, name, source) VALUES (?, ?, ?)"
-                " ON CONFLICT(id) DO UPDATE SET name=excluded.name, source=excluded.source",
-                (cid, name, source))
+    def add_camera(self, cid, name, source, url_sub: str = "") -> None:
+        self._x("INSERT INTO cameras (id, name, source, url_sub) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(id) DO UPDATE SET name=excluded.name, source=excluded.source,"
+                " url_sub=excluded.url_sub",
+                (cid, name, source, url_sub or None))
         self.commit()
 
     def set_camera_tasks(self, cid, tasks) -> None:
@@ -321,21 +395,24 @@ class SqliteStore(BaseStore):
             "SELECT camera_id, time, status, fps FROM camera_health"
             " WHERE id IN (SELECT MAX(id) FROM camera_health GROUP BY camera_id)")
 
-    def recent_events(self, limit: int = 50) -> list[dict[str, Any]]:
+    def recent_events(self, limit: int = 50, tur: str = "",
+                      kamera: str = "") -> list[dict[str, Any]]:
         q = """
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
-                 TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx
+                 TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
+                 NULL AS snapshot
             FROM count_events
           UNION ALL
-          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx FROM plate_events
+          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot FROM plate_events
           UNION ALL
           SELECT time, 'face', camera_id,
-                 COALESCE(gender,'?')||' ~'||COALESCE(age,0), ts_seconds, frame_idx
+                 COALESCE(gender,'?')||' ~'||COALESCE(age,0), ts_seconds, frame_idx, NULL
             FROM face_events
-        ) ORDER BY time DESC, ts_seconds DESC LIMIT ?
+        ) WHERE (?='' OR type=?) AND (?='' OR camera_id=?)
+        ORDER BY time DESC, ts_seconds DESC LIMIT ?
         """
-        return self._all(q, (limit,))
+        return self._all(q, (tur, tur, kamera, kamera, limit))
 
     def commit(self) -> None:
         self.conn.commit()
@@ -365,6 +442,18 @@ class PgStore(BaseStore):
         exists = self.conn.execute(
             "SELECT 1 FROM information_schema.tables WHERE table_name='cameras'").fetchone()
         if exists:
+            # Hafif migration: kurulu DB'lerde sonradan eklenen sütunlar
+            for tablo, sutun in (("plate_events", "snapshot"), ("alerts", "snapshot")):
+                self.conn.execute(
+                    f"ALTER TABLE {tablo} ADD COLUMN IF NOT EXISTS {sutun} TEXT")
+            self.conn.execute("""CREATE TABLE IF NOT EXISTS recordings (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, camera_id TEXT NOT NULL,
+                path TEXT NOT NULL UNIQUE, start_time TIMESTAMPTZ NOT NULL,
+                end_time TIMESTAMPTZ NOT NULL, duration REAL NOT NULL,
+                size_bytes BIGINT NOT NULL)""")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS ix_rec_cam_time"
+                              " ON recordings (camera_id, start_time DESC)")
+            self.conn.commit()
             return
         schema_path = _ROOT / "db" / "schema.sql"
         if not schema_path.exists():
@@ -421,16 +510,17 @@ class PgStore(BaseStore):
         return rows
 
     def list_cameras_db(self) -> list[dict[str, Any]]:
-        rows = self._all("SELECT id, name, source, tasks::text AS tasks, detect_fps"
+        rows = self._all("SELECT id, name, source, url_sub, tasks::text AS tasks, detect_fps"
                          " FROM cameras ORDER BY created_at")
         for r in rows:
             r["tasks"] = json.loads(r["tasks"]) if r.get("tasks") else None
         return rows
 
-    def add_camera(self, cid, name, source) -> None:
-        self._x("INSERT INTO cameras (id, name, source) VALUES (?, ?, ?)"
-                " ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, source=EXCLUDED.source",
-                (cid, name, source))
+    def add_camera(self, cid, name, source, url_sub: str = "") -> None:
+        self._x("INSERT INTO cameras (id, name, source, url_sub) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, source=EXCLUDED.source,"
+                " url_sub=EXCLUDED.url_sub",
+                (cid, name, source, url_sub or None))
 
     def set_camera_tasks(self, cid, tasks) -> None:
         self._x("UPDATE cameras SET tasks=?::jsonb WHERE id=?", (json.dumps(tasks), cid))
@@ -443,29 +533,35 @@ class PgStore(BaseStore):
             r["time"] = str(r["time"])
         return rows
 
-    def recent_events(self, limit: int = 50) -> list[dict[str, Any]]:
+    def recent_events(self, limit: int = 50, tur: str = "",
+                      kamera: str = "") -> list[dict[str, Any]]:
         q = """
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
-                 TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx
+                 TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
+                 NULL AS snapshot
             FROM count_events
           UNION ALL
-          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx FROM plate_events
+          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot FROM plate_events
           UNION ALL
           SELECT time, 'face', camera_id,
-                 COALESCE(gender, chr(63))||' ~'||COALESCE(age::text,'0'), ts_seconds, frame_idx
+                 COALESCE(gender, chr(63))||' ~'||COALESCE(age::text,'0'), ts_seconds, frame_idx,
+                 NULL
             FROM face_events
-        ) ev ORDER BY time DESC, ts_seconds DESC NULLS LAST LIMIT ?
+        ) ev WHERE (?='' OR type=?) AND (?='' OR camera_id=?)
+        ORDER BY time DESC, ts_seconds DESC NULLS LAST LIMIT ?
         """
-        rows = self._all(q, (limit,))
+        rows = self._all(q, (tur, tur, kamera, kamera, limit))
         for r in rows:
             r["time"] = str(r["time"])
         return rows
 
-    def recent_alerts(self, limit: int = 20) -> list[dict[str, Any]]:
-        rows = super().recent_alerts(limit)
+    def recent_alerts(self, limit: int = 20, pending_only: bool = False) -> list[dict[str, Any]]:
+        rows = super().recent_alerts(limit, pending_only)
         for r in rows:
             r["time"] = str(r["time"])
+            if r.get("acked_at"):
+                r["acked_at"] = str(r["acked_at"])
         return rows
 
     def close(self) -> None:

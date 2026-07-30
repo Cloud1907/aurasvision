@@ -93,6 +93,7 @@ Redis Streams + PostgreSQL/TimescaleDB/pgvector), tablo şeması ve faz planı:
 - **Cihaz:** M4'te YOLO MPS'te akıcı; fast-alpr & InsightFace onnxruntime-CPU (POC için yeterli). Üretimde NVIDIA + TensorRT/DeepStream.
 - **Plaka OCR doğruluğu:** aynı araç farklı karelerde farklı okunabilir → çok-kareli oylama + TR plaka fine-tune (yapılacak).
 - **KVKK:** yüz varsayılanı **anonim** (kimlik yok). İsimli tanıma açık rıza/aydınlatma kapısına bağlı — bkz `.agent-ofis/docs/kvkk-notlari.md`.
+- **Kanıt görüntüsü:** plaka ve ihlal olayları kanıt karesiyle saklanır (`evidence` config), yüz için KAPALI; dosyalar `evidence.keep_days` (30 gün) sonunda otomatik silinir. Ayrıntı: [docs/KURULUM.md §8](docs/KURULUM.md).
 - **Donanım/dağıtım:** senaryo-bazlı tablo `.agent-ofis/docs/donanim-mimari.md`.
 
 ## Demo videolar

@@ -83,11 +83,56 @@ count:
     x2: 0.5
     y2: 1.0
 
+record:
+  # Sürekli kayıt (NVR). Ayrı servis: python -m src.recorder
+  # Transcode YOK (-c copy) — GPU inference'a ayrılır; kayıt yalnız paketi diske yazar.
+  enabled: true
+  dir: rec                 # output/ altında
+  segment_seconds: 60      # NOMİNAL; gerçek süre anahtar kareye göre değişir, DB'ye ölçülen yazılır
+  # KVKK/mevzuat: sektöre göre 30-45 gün istenir (ofis 15-20, kuyumcu/banka/akaryakıt 45).
+  # Müşteri politikasına göre ayarla — fazlası da hukuki risk, azı da.
+  keep_days: 15
+  max_size_gb: 0           # 0 = kota yok. Doluluk riski varsa mutlaka ver (gün değil BOYUT güvenilir)
+
+stream:
+  # Bazı HLS/CDN kaynakları ve IP kameralar ek HTTP başlığı ister (Referer, User-Agent,
+  # bazen Authorization). Boş bırakılırsa hiçbir başlık gönderilmez.
+  # Not: kaynağın kullanım şartlarını kontrol edin — başlık zorunluysa erişim izniniz
+  # olduğundan emin olun.
+  http_headers: "Referer: https://www.canlimobeseizle.com/"
+
+evidence:
+  # Olay kanıt görüntüsü — "34ABC123 okundu" iddiasının denetlenebilir karşılığı.
+  # KVKK: tür bazında açılır, süresi dolunca OTOMATİK silinir (veri minimizasyonu).
+  enabled: true
+  plate: true       # plaka kırpması + bağlam karesi (ALPR'ın asli işlevi)
+  intrusion: true   # alarm anının karesi (güvenlik amacının kendisi)
+  face: false       # biyometrik veri — varsayılan KAPALI, yalnız embedding saklanır
+  keep_days: 30     # bu süreden eski kanıt klasörleri silinir (0 = silme)
+
+intrusion:
+  # İhlal alanı (Bölgeler ekranında "⚠ İhlal alanı" ile çizilir), sayım hattında
+  # değerlendirilir → o kamerada "Sayım" görevi açık olmalı.
+  dwell_seconds: 1.0       # alana giren nesne alarm için bu kadar KALMALI
+                           # (sınıra değip geçen yanlış alarm üretmesin)
+  cooldown_seconds: 30.0   # aynı track aynı alanda tekrar alarm üretene dek geçecek süre
+
 plate:
   # fast-alpr varsayılan modelleri (TR için ileride fine-tune)
   detector: yolo-v9-t-384-license-plate-end2end
+  # OCR alternatifleri (fast-plate-ocr 1.x ile gelir, indirme otomatik):
+  #   european-plates-mobile-vit-v2-model  (TR plakalar Avrupa formatı)
+  #   cct-s-v2-global-model                (yeni nesil, kütüphane benchmark'ında daha isabetli)
+  # Karar ölçümle verilir: scripts/plate_eval.py ile saha görüntüsünde A/B yap.
   ocr: global-plates-mobile-vit-v2-model
   min_conf: 0.4
+  # Format doğrulama: tr = İL(01-81)+HARF(1-3)+RAKAM(2-4); pozisyon-bilinçli
+  # O↔0/I↔1/B↔8 düzeltmesi yapar, formata oturmayan okumayı REDDEDER.
+  # TR dışı saha veya serbest test için: none
+  format: tr
+  # Kara/VIP liste alarmı için asgari okuma sayısı (oylama penceresinde).
+  # Gerçek geçiş birden çok kare okutur; tek karelik eşleşme alarm olmaz.
+  alert_min_reads: 2
 
 face:
   model_pack: buffalo_l  # InsightFace: tespit + ArcFace + yaş/cinsiyet

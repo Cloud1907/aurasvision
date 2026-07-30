@@ -39,7 +39,10 @@ services:
     image: alexxit/go2rtc               # multi-arch (arm64 dahil)
     container_name: auras-go2rtc
     ports:
-      - "1984:1984"                     # web UI + API
+      # YALNIZ localhost: go2rtc API'si kimlik doğrulamasızdır ve tarayıcı ona artık
+      # DOĞRUDAN bağlanmaz — canlı akış uygulama sunucusundan (token'lı /api/stream)
+      # vekillenir. Uygulama sunucusu başka makinedeyse burayı açıp erişimi kısıtla.
+      - "127.0.0.1:1984:1984"           # web UI + API (yerel — vekil üzerinden kullanılır)
       - "8554:8554"                     # RTSP relay
       - "8555:8555/tcp"                 # WebRTC
       - "8555:8555/udp"

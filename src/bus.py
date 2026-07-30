@@ -60,6 +60,11 @@ class BusStore:
                  "ts_seconds": round(ts_seconds, 2), "frame_idx": frame_idx,
                  "track_id": track_id, "match_name": match_name, "match_score": match_score})
 
+    def add_alert(self, kind, ref, list_type, label, camera_id) -> None:
+        # İhlal alanı alarmı worker'da doğar; DB yazımı ingestor'ın işi (ADR-0002)
+        publish(self.r, "alert", camera_id,
+                {"kind": kind, "ref": ref, "list_type": list_type, "label": label})
+
     def commit(self) -> None:
         pass
 
