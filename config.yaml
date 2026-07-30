@@ -91,6 +91,10 @@ record:
   segment_seconds: 60      # NOMİNAL; gerçek süre anahtar kareye göre değişir, DB'ye ölçülen yazılır
   # KVKK/mevzuat: sektöre göre 30-45 gün istenir (ofis 15-20, kuyumcu/banka/akaryakıt 45).
   # Müşteri politikasına göre ayarla — fazlası da hukuki risk, azı da.
+  # Substream'den kaydet (kamerada url_sub tanımlıysa). ÖLÇEK KALDIRACI:
+  # 100 kamera × 30 gün → ana akıştan ~114 TB, substream'den ~16 TB.
+  # Kalite düşer; tek kamera görünümü ve analiz ana akışı kullanmaya devam eder.
+  use_substream: false
   keep_days: 15
   max_size_gb: 0           # 0 = kota yok. Doluluk riski varsa mutlaka ver (gün değil BOYUT güvenilir)
 

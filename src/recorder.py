@@ -38,13 +38,22 @@ def kayit_kok(cfg) -> Path:
     return _ROOT / cfg.get("paths.output_dir", "output") / cfg.get("record.dir", "rec")
 
 
-def _kaynak(cam: dict, cfg) -> str:
-    """Kayıt için akış adresi — go2rtc RTSP (tüm kaynak tipleri orada normalize)."""
+def _kaynak(cam: dict, cfg) -> tuple[str, str]:
+    """(akış adresi, hangi akış) — go2rtc RTSP üzerinden (kaynak tipleri orada normalize).
+
+    Substream kaydı ölçek için belirleyicidir: 100 kamerayı ana akıştan 30 gün
+    kaydetmek ~114 TB, substream'den ~16 TB. Kameranın ikinci akışı tanımlıysa
+    ve record.use_substream açıksa ondan kaydedilir — kalite düşer ama arşiv
+    derinliği aynı diskte 7 kat artar. Tek kamera görünümü ve analiz ana akışı
+    kullanmaya devam eder.
+    """
     go2rtc = (cfg.get("go2rtc.url", "") or "").rstrip("/")
+    sub = bool(cam.get("url_sub")) and bool(cfg.get("record.use_substream", False))
     if go2rtc:
         host = go2rtc.split("//", 1)[-1].split(":")[0] or "localhost"
-        return f"rtsp://{host}:8554/{cam['id']}"
-    return str(cam["source"])
+        ad = f"{cam['id']}-sub" if sub else cam["id"]
+        return f"rtsp://{host}:8554/{ad}", ("substream" if sub else "ana akış")
+    return (str(cam["url_sub"]) if sub else str(cam["source"])), ("substream" if sub else "ana akış")
 
 
 def _olcum(path: Path) -> tuple[float, int]:
@@ -111,11 +120,11 @@ class CameraRecorder(threading.Thread):
 
         from .config import http_options
 
-        url = _kaynak(self.cam, self.cfg)
+        url, akis_tipi = _kaynak(self.cam, self.cfg)
         opts = {"rtsp_transport": "tcp"} if url.startswith("rtsp") else {}
         opts.update(http_options(self.cfg, url))
         inp = av.open(url, options=opts, timeout=(30.0, 30.0))
-        self.durum = "kaydediyor"
+        self.durum = f"kaydediyor ({akis_tipi})"
         cikis = None
         ovs = None
         seg_bas = 0.0        # segmentin ilk paket zamanı (kaynak saatinde)

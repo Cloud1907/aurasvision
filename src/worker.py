@@ -126,12 +126,20 @@ def main() -> None:
 
     engine = (cfg.get("worker.engine", "ultralytics") or "ultralytics").lower()
     if engine == "nvdec":
-        # GB10 GPU pipeline (ADR-0003): NVDEC decode + batch TensorRT + tracker,
-        # olaylar yine BusStore/Redis üzerinden akar. Fallback: ultralytics.
-        from .gpu_engine import run_gpu_worker
-        print(f"[worker] motor=nvdec, {len(cams)} kamera: {', '.join(c['id'] for c in cams)}")
-        run_gpu_worker(cams, cfg, bus)
-        return
+        # GB10 GPU pipeline (ADR-0003): NVDEC decode + batch TensorRT + tracker.
+        # PyNvVideoCodec/TensorRT her platformda YOK (ör. Windows wheel'i belirsiz);
+        # import patlarsa sessizce ölmek yerine ultralytics motoruna düşülür —
+        # yavaş ama çalışır. Sessiz çökme sahada "worker açık ama olay yok" demek.
+        try:
+            from .gpu_engine import run_gpu_worker
+        except Exception as e:
+            print(f"[worker] nvdec motoru yüklenemedi ({e.__class__.__name__}: {e}) — "
+                  f"ultralytics motoruna düşülüyor. Kalıcı çözüm: config.yaml → "
+                  f"worker.engine: ultralytics", flush=True)
+        else:
+            print(f"[worker] motor=nvdec, {len(cams)} kamera: {', '.join(c['id'] for c in cams)}")
+            run_gpu_worker(cams, cfg, bus)
+            return
 
     print(f"[worker] {len(cams)} kamera: {', '.join(c['id'] for c in cams)}")
     threads = [threading.Thread(target=_run_camera, args=(c, cfg, bus), daemon=True)

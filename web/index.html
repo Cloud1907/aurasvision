@@ -1402,7 +1402,12 @@ function openCamForm(cam){
     const sub=m.querySelector("#f-sub");
     if(sub&&alt&&alt!==ana){sub.value=alt;m.querySelector("details.adv")?.setAttribute("open","");}
     if(ad&&!adEl.value)adEl.value=ad;
-    toast("Adres forma yazıldı — kaydetmeden önce test edin");
+    // Keşif adresi buldu → doğrulamayı KULLANICI TIKLAMADAN başlat.
+    // Keşif "kamera bu adresi bildiriyor" der; açılacağını kanıtlamaz (RTSP portu
+    // kapalı, kimlik farklı, codec desteksiz olabilir) — o yüzden test şart, ama
+    // kullanıcıya ayrıca tıklatmaya gerek yok.
+    toast("Adres bulundu — bağlantı doğrulanıyor…");
+    m.querySelector("#f-test")?.click();
   };
   if(!duzenle){
     api("/discover/brands").then(r=>{

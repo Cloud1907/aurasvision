@@ -1,6 +1,7 @@
 """config.yaml yükleyici — tüm eşik/parametreler tek yerden (manifest convention)."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,34 @@ class Config:
     @property
     def root(self) -> Path:
         return _ROOT
+
+
+def load_env(path: str = ".env") -> int:
+    """`.env` dosyasını ortam değişkenlerine yükler (bağımlılıksız).
+
+    Neden gerekli: kod bugüne dek `DATABASE_URL`/`REDIS_URL`/`AURAS_TOKEN`
+    değişkenlerinin kabuktan export edilmiş olmasını bekliyordu
+    (`set -a; . ./.env`). Bu Windows'ta karşılığı olmayan bir varsayım; orada
+    değişkenler boş kalır ve sistem SESSİZCE SQLite'a düşüp kimlik doğrulamasız
+    açılır. Artık dosya varsa Python'un kendisi okur.
+
+    Zaten tanımlı değişkenler EZİLMEZ — systemd/compose ortamı önceliklidir.
+    """
+    p = _ROOT / path
+    if not p.is_file():
+        return 0
+    n = 0
+    for satir in p.read_text(encoding="utf-8", errors="replace").splitlines():
+        satir = satir.strip()
+        if not satir or satir.startswith("#") or "=" not in satir:
+            continue
+        anahtar, _, deger = satir.partition("=")
+        anahtar = anahtar.strip()
+        deger = deger.strip().strip('"').strip("'")
+        if anahtar and anahtar not in os.environ:
+            os.environ[anahtar] = deger
+            n += 1
+    return n
 
 
 def http_options(cfg, url: str) -> dict:
@@ -65,6 +94,7 @@ def apply_cv2_http_headers(cfg) -> None:
 
 def load_config(path: str | Path | None = None) -> Config:
     """config.yaml'i yükler. Yoksa boş config döner (varsayılanlar kodda)."""
+    load_env()   # .env varsa ortama yükle (Windows'ta kabuk export'u yok)
     cfg_path = Path(path) if path else _DEFAULT_CONFIG
     if not cfg_path.exists():
         return Config({})
