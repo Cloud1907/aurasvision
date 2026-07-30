@@ -151,7 +151,19 @@
   .chipbtn{border:1px solid var(--line-2);background:var(--panel);color:var(--ink-3);border-radius:20px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer;transition:all var(--t);}
   .chipbtn:hover{border-color:var(--ink-3);color:var(--ink-2);}
   .chipbtn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);}
-  .modal.wide{max-width:720px;}
+  .modal.wide{max-width:760px;}
+  /* Adımlı kamera ekleme — bul → doğrula → adlandır */
+  .step{border-left:2px solid var(--line);padding:0 0 20px 20px;margin-left:13px;position:relative;}
+  .step:last-child{border-left-color:transparent;padding-bottom:4px;}
+  .step>.no{position:absolute;left:-14px;top:-2px;width:26px;height:26px;border-radius:50%;
+    background:var(--panel-2);border:1px solid var(--line-2);color:var(--ink-3);
+    display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;}
+  .step.on{border-left-color:var(--accent);}
+  .step.on>.no{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
+  .step.ok>.no{background:var(--ok);border-color:var(--ok);color:#fff;}
+  .step>.bas{font-weight:700;font-size:13.5px;margin-bottom:3px;}
+  .step>.aciklama{font-size:12px;color:var(--ink-3);margin-bottom:11px;}
+  .modal.wide .modalgovde{max-height:64vh;overflow-y:auto;padding-right:4px;}
   .field{margin-bottom:14px;}
   .field label{display:block;font-size:12.5px;font-weight:700;color:var(--ink-2);margin-bottom:6px;}
   .field input{width:100%;margin:0;}
@@ -644,6 +656,9 @@ const SCREENS={
             ${arac("line","Çizgi","—","bas-çek · A→B geçişi sayılır")}
             ${arac("zone","Bölge","▱","nokta tıkla · alan tanımı")}
             ${arac("intrusion","İhlal alanı","⚠","nokta tıkla · içeride kalan alarm üretir")}
+            <div class="mut-s" style="margin-top:10px;line-height:1.8;border-top:1px solid var(--line);padding-top:9px;">
+              <b>Düzeltme:</b><br>• Noktayı sürükle → taşı<br>• Kenara tıkla → araya nokta ekle<br>
+              • Alt+tık → noktayı sil<br>• ✕ rozeti → bölgeyi sil</div>
           </div>
           <div class="card pad">
             <div class="mut-s" style="margin-bottom:9px;">Yeni çizimde hangi nesneler</div>
@@ -868,9 +883,36 @@ const dist=(ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by);
 function hitHandle(x,y){for(let zi=ZONES.length-1;zi>=0;zi--){const z=ZONES[zi];for(let pi=0;pi<z.points.length;pi++){const[hx,hy]=px(z.points[pi]);if(dist(x*CV.width,y*CV.height,hx,hy)<11)return{zi,pi};}}return null;}
 function xBadge(z){const p=px(z.points[z.points.length-1]);return[p[0]+15,p[1]-15];}
 function hitX(x,y){for(let zi=ZONES.length-1;zi>=0;zi--){if(!ZONES[zi].points.length)continue;const[bx,by]=xBadge(ZONES[zi]);if(dist(x*CV.width,y*CV.height,bx,by)<11)return zi;}return null;}
+/* Poligon kenarına tıklayınca ARAYA nokta ekler — eskiden şekli düzeltmek için
+   bölgeyi silip yeniden çizmek gerekiyordu. Alt+tık ile nokta silinir. */
+function hitEdge(x,y,tol=9){
+  const px_=x*CV.width,py_=y*CV.height;
+  for(let zi=ZONES.length-1;zi>=0;zi--){
+    const z=ZONES[zi];if(z.kind==="line"||z.points.length<3)continue;
+    const p=z.points.map(px);
+    for(let i=0;i<p.length;i++){
+      const a=p[i],b=p[(i+1)%p.length];
+      const dx=b[0]-a[0],dy=b[1]-a[1],L2=dx*dx+dy*dy||1;
+      let t=((px_-a[0])*dx+(py_-a[1])*dy)/L2;t=Math.max(0,Math.min(1,t));
+      if(Math.hypot(px_-(a[0]+t*dx),py_-(a[1]+t*dy))<tol)return {zi,pi:i+1};
+    }
+  }
+  return null;
+}
 function onDown(e){
   const[x,y]=evNorm(e);
   const xi=hitX(x,y);if(xi!=null){ZONES.splice(xi,1);kirlet();draw();renderZoneList();return;}
+  const h0=hitHandle(x,y);
+  if(h0&&(e.altKey||e.metaKey)){          // Alt+tık: noktayı sil (en az 3 kalmalı)
+    const z=ZONES[h0.zi];
+    if(z.kind!=="line"&&z.points.length>3){z.points.splice(h0.pi,1);kirlet();draw();renderZoneList();}
+    else toast("Alan en az 3 nokta ister","warn");
+    return;
+  }
+  if(!h0&&!DRAWING&&!DRAFT.length){       // kenara tık: araya nokta ekle
+    const ed=hitEdge(x,y);
+    if(ed){ZONES[ed.zi].points.splice(ed.pi,0,[x,y]);DRAG={zi:ed.zi,pi:ed.pi};kirlet();draw();return;}
+  }
   const h=hitHandle(x,y);if(h){DRAG=h;return;}
   if(TOOL==="line"){DRAWING={a:[x,y],b:[x,y]};}
   else{DRAFT.push([x,y]);draw();}
@@ -1302,31 +1344,37 @@ function openCamForm(cam){
     <h3>${duzenle?"Kamerayı düzenle":"Yeni kamera"}</h3>
     <p>${duzenle?"Adres veya substream değişikliği kaydedildiğinde canlı akış yenilenir."
       :"RTSP/IP kamera ya da yerel video dosyası. Kaydetmeden önce bağlantıyı test edin."}</p>
-    ${duzenle?"":`<div class="field"><label>Kamerayı bul</label>
-      <div style="display:flex;gap:9px;flex-wrap:wrap;">
-        <button class="btn" id="f-scan">${svg('live',15)} Ağı tara (ONVIF)</button>
-        <button class="btn" id="f-onvif">${svg('cams',15)} IP ile sorgula</button>
-        <button class="btn" id="f-paths">${svg('bolt',15)} RTSP yolunu dene</button></div>
-      <div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:9px;">
-        <input id="f-ip" placeholder="Kamera IP (ör. 192.168.1.10)" style="flex:1;min-width:170px;"/>
-        <input id="f-user" placeholder="kullanıcı" style="width:130px;"/>
-        <input id="f-pass" type="password" placeholder="şifre" style="width:130px;"/>
+    <div class="modalgovde">
+    ${duzenle?"":`<div class="step on" id="st1"><span class="no">1</span>
+      <div class="bas">Kamerayı bul</div>
+      <div class="aciklama">ONVIF açıksa <b>IP ile sorgula</b> en güvenilir yoldur — adresleri kameranın kendisi bildirir, tahmin yapılmaz. Adresi biliyorsanız bu adımı atlayıp aşağıya yapıştırın.</div>
+      <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:9px;">
+        <input id="f-ip" placeholder="Kamera IP (ör. 192.168.1.10)" style="flex:1;min-width:160px;"/>
+        <input id="f-user" placeholder="kullanıcı" style="width:120px;"/>
+        <input id="f-pass" type="password" placeholder="şifre" style="width:120px;"/>
         <select id="f-brand" title="RTSP yolu denemesinde daralt"><option value="">Marka: hepsi</option></select></div>
-      <div class="hint">Kameranın ONVIF'i açıksa <b>IP ile sorgula</b> en güvenilir yoldur — adresleri kameranın kendisi bildirir, tahmin yapılmaz.</div>
-      <div id="f-disc"></div></div>`}
-    <div class="field"><label for="f-src">Kaynak adresi</label>
       <div style="display:flex;gap:9px;flex-wrap:wrap;">
-        <input id="f-src" style="flex:1;min-width:260px;" value="${esc(cam?.source||"")}"
+        <button class="btn" id="f-onvif">${svg('cams',15)} IP ile sorgula</button>
+        <button class="btn" id="f-scan">${svg('live',15)} Ağı tara</button>
+        <button class="btn" id="f-paths">${svg('bolt',15)} RTSP yolunu dene</button></div>
+      <div id="f-disc"></div></div>`}
+    <div class="step ${duzenle?'on':''}" id="st2"><span class="no">${duzenle?1:2}</span>
+      <div class="bas">Adresi doğrula</div>
+      <div class="aciklama">Kaydetmeden önce bağlantıyı test edin — çözünürlük, fps ve canlı bir kare görürsünüz. Yerel dosya de olur: <span class="mono">data/videos/ornek.mp4</span></div>
+      <div style="display:flex;gap:9px;flex-wrap:wrap;">
+        <input id="f-src" style="flex:1;min-width:250px;" value="${esc(cam?.source||"")}"
                placeholder="rtsp://kullanıcı:şifre@192.168.1.10:554/stream1"/>
         <button class="btn" id="f-test">${svg('bolt',15)} Bağlantıyı test et</button></div>
-      <div class="hint">Yerel dosya de olur: <span class="mono">data/videos/ornek.mp4</span></div></div>
-    <div id="f-probe"></div>
-    <div class="field"><label for="f-name">Kamera adı</label>
-      <input id="f-name" value="${esc(cam?.name||"")}" placeholder="Ör. Ana Giriş"/></div>
-    <details class="adv" ${cam?.url_sub?"open":""}><summary>Gelişmiş — substream</summary>
-      <div class="field" style="margin-bottom:0;"><label for="f-sub">Substream adresi (opsiyonel)</label>
-        <input id="f-sub" value="${esc(cam?.url_sub||"")}" placeholder="rtsp://.../stream2"/>
-        <div class="hint">Kameranın düşük çözünürlüklü ikinci akışı. Kamera duvarında bu gösterilir; tam çözünürlük tek kamera görünümü ve analiz için saklanır — çok kameralı kurulumda tarayıcıyı rahatlatır.</div></div></details>
+      <div id="f-probe"></div></div>
+    <div class="step ${duzenle?'on':''}" id="st3"><span class="no">${duzenle?2:3}</span>
+      <div class="bas">Adlandır ve kaydet</div>
+      <div class="aciklama">Ad operatör ekranlarında görünür; substream çok kameralı duvarda tarayıcıyı rahatlatır.</div>
+      <input id="f-name" value="${esc(cam?.name||"")}" placeholder="Kamera adı — ör. Ana Giriş" style="width:100%;margin-bottom:10px;"/>
+      <details class="adv" style="border:0;margin:0;padding:0;" ${cam?.url_sub?"open":""}>
+        <summary>Substream (opsiyonel)</summary>
+        <input id="f-sub" value="${esc(cam?.url_sub||"")}" placeholder="rtsp://.../stream2" style="width:100%;"/>
+        <div class="hint">Kameranın düşük çözünürlüklü ikinci akışı. Duvarda bu gösterilir; tam çözünürlük tek kamera görünümü ve analiz için saklanır.</div></details></div>
+    </div>
     <div class="acts" style="margin-top:18px;"><button class="btn" id="f-x">Vazgeç</button>
       <button class="btn pri" id="f-ok">${duzenle?"Kaydet":"Ekle"}</button></div></div>`;
   document.body.appendChild(m);
@@ -1344,7 +1392,12 @@ function openCamForm(cam){
   const hata=(msg)=>{if(disc)disc.innerHTML=`<div style="margin-top:12px;padding:12px;border:1px solid var(--danger);background:var(--danger-soft);border-radius:var(--r-lg);">
       <b style="color:var(--danger);">Bulunamadı</b><div class="mut-s" style="margin-top:3px;">${esc(msg)}</div></div>`;};
   /* Bulunan adresi forma yazar — kullanıcı ayrıca "Bağlantıyı test et" ile doğrular */
+  /* Adım göstergesi: tamamlanan adım yeşile döner, sıradaki vurgulanır —
+     operatör nerede olduğunu ve ne kaldığını görür. */
+  const adim=(id,durum)=>{const el=m.querySelector(id);if(!el)return;
+    el.classList.toggle("ok",durum==="ok");el.classList.toggle("on",durum!=="bos");};
   const sec=(ana,alt,ad)=>{
+    adim("#st1","ok");adim("#st2","on");
     srcEl.value=ana;
     const sub=m.querySelector("#f-sub");
     if(sub&&alt&&alt!==ana){sub.value=alt;m.querySelector("details.adv")?.setAttribute("open","");}
@@ -1421,6 +1474,9 @@ function openCamForm(cam){
     out.innerHTML=`<div class="skel" style="height:72px;border-radius:var(--r);margin-bottom:14px;"></div>`;
     try{
       const r=await api("/cameras/probe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source})});
+      // Doğrulama başarılıysa 2. adım tamamlandı, sıra adlandırmada
+      adim("#st2",r.ok?"ok":"on");
+      if(r.ok){adim("#st3","on");if(!adEl.value)adEl.focus();}
       out.innerHTML=r.ok
         ?`<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px;padding:13px;border:1px solid var(--ok);background:var(--ok-soft);border-radius:var(--r-lg);flex-wrap:wrap;">
             <img src="data:image/jpeg;base64,${r.preview}" style="width:190px;border-radius:var(--r);display:block;"/>
