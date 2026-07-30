@@ -14,6 +14,7 @@ from typing import Any, Callable
 from .config import Config
 from .detect import load_yolo
 from .device import select_device
+from .evidence import kaydet as kanit_kaydet
 
 
 @dataclass
@@ -24,6 +25,7 @@ class CountResult:
     fps: float = 0.0
     events: list[dict[str, Any]] = field(default_factory=list)
     lines: list[dict[str, Any]] = field(default_factory=list)  # [{name,in,out}]
+    intrusions: list[dict[str, Any]] = field(default_factory=list)  # ihlal alanı alarmları
 
 
 def _side(px: float, py: float, line: tuple[float, float, float, float]) -> float:
@@ -40,7 +42,8 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
               store=None, camera_id: str = "",
               lines: list[dict] | None = None, on_event=None,
               on_frame=None,
-              should_stop: Callable[[], bool] | None = None) -> CountResult:
+              should_stop: Callable[[], bool] | None = None,
+              intrusions: list[dict] | None = None, on_alert=None) -> CountResult:
     """Videoda kişileri sayar.
 
     `lines`: [{"name","pts":[[ax,ay],[bx,by]],"direction"}] normalize koordinat.
@@ -63,7 +66,10 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
     cooldown = float(cfg.get("count.cooldown_seconds", 2.0))
     camera_id = camera_id or Path(source).stem
 
-    if not lines:
+    # lines=None → config varsayılanı (CLI); lines=[] → ÇİZGİ YOK (yalnız ihlal alanı
+    # tanımlı kamera). Bu ayrım olmadan boş liste sessizce orta çizgiye düşer, kullanıcı
+    # çizmediği bir çizgiden sayım görürdü.
+    if lines is None:
         ln = cfg.get("count.line", {"x1": 0.5, "y1": 0.0, "x2": 0.5, "y2": 1.0})
         lines = [{"name": "Çizgi", "pts": [[ln["x1"], ln["y1"]], [ln["x2"], ln["y2"]]],
                   "direction": "AtoB"}]
@@ -95,6 +101,16 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
         writer = cv2.VideoWriter(str(out_dir / (Path(source).stem + "_count.mp4")), fourcc,
                                  fps / max(vid_stride, 1), (w, h))
 
+    # İhlal alanları sayım hattında değerlendirilir: aynı tespit+takip çıktısını kullanır
+    from .zones import IntrusionWatcher
+    watcher = IntrusionWatcher(intrusions or [], w, h,
+                               cfg.get("intrusion.dwell_seconds", 1.0),
+                               cfg.get("intrusion.cooldown_seconds", 30.0))
+    classes_sayim = set(classes)   # ÇİZGİ sayımına giren sınıflar (ihlal genişletmesinden önce)
+    if watcher:
+        # İhlal alanı insan DIŞI sınıf da isteyebilir (araç); tespit sınıflarını genişlet
+        classes = sorted(classes_sayim | {c for z in watcher.zones for c in z["classes"]})
+
     yolo = load_yolo(model, device, instance_key=camera_id)
     result = CountResult(fps=fps)
     frame_idx = 0
@@ -115,7 +131,29 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
         if boxes is not None and boxes.id is not None:
             ids = boxes.id.int().tolist()
             xyxy = boxes.xyxy.tolist()
-            for tid, (x1, y1, x2, y2) in zip(ids, xyxy):
+            cls_ids = (boxes.cls.int().tolist() if boxes.cls is not None
+                       else [0] * len(ids))
+            izler: list[tuple[int, float, float, int]] = []
+            for tid, (x1, y1, x2, y2), cid in zip(ids, xyxy, cls_ids):
+                izler.append((tid, (x1 + x2) / 2.0, y2, cid))   # ayak noktası
+            for ihlal in watcher.update(izler, ts):
+                ihlal["camera_id"] = camera_id
+                ihlal["frame_idx"] = real_frame
+                # Alarm anının kanıt karesi — operatör "gerçekten ihlal mi" diye bakabilsin
+                ihlal["snapshot"] = kanit_kaydet(
+                    cfg, r.orig_img, camera_id, "intrusion",
+                    etiket=f"{_ascii(ihlal['zone'])}  track {ihlal['track_id']}  "
+                           f"{ihlal['dwell']} sn")
+                result.intrusions.append(ihlal)
+                if on_alert is not None:
+                    on_alert(ihlal)
+                if store is not None:
+                    store.add_alert("intrusion", ihlal["zone"], "intrusion",
+                                    f"track {ihlal['track_id']} · {ihlal['dwell']} sn",
+                                    camera_id, snapshot=ihlal["snapshot"])
+            for tid, (x1, y1, x2, y2), cid in zip(ids, xyxy, cls_ids):
+                if cid not in classes_sayim:
+                    continue   # ihlal için eklenen sınıflar ÇİZGİ sayımına girmez
                 track_hits[tid] = track_hits.get(tid, 0) + 1
                 # Ayak noktası (alt-orta): eğilme/oturmada kutu merkezi kayar ama ayak sabit kalır
                 cx = (x1 + x2) / 2.0
@@ -151,6 +189,8 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
             annotated = r.plot()
             # Yüksek çözünürlükte (ör. 2560×1440) yazı/çizgi okunur kalsın diye ölçekle
             k = max(1.0, w / 1280)
+            for z in watcher.zones:      # ihlal alanı — kırmızı poligon
+                _draw_zone(cv2, annotated, z, k)
             for lc in L:
                 _draw_line(cv2, annotated, lc, k)
             # Sol üst: toplam + çizgi başına döküm — koyu zemin + beyaz yazı (her sahnede okunur)
@@ -180,6 +220,20 @@ def _badge(cv2, img, text: str, x: int, y: int, scale: float, thick: int) -> int
     cv2.rectangle(img, (x - pad, y - th - pad), (x + tw + pad, y + base + pad), (32, 28, 24), -1)
     cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thick)
     return th + base + 2 * pad + int(th * 0.3)
+
+
+def _draw_zone(cv2, img, z, k: float = 1.0) -> None:
+    """İhlal alanını yarı saydam kırmızı poligon + isim olarak çizer."""
+    import numpy as np
+
+    pts = np.array([[int(x), int(y)] for x, y in z["poly"]], dtype=np.int32)
+    kapla = img.copy()
+    cv2.fillPoly(kapla, [pts], (0, 0, 220))
+    cv2.addWeighted(kapla, 0.22, img, 0.78, 0, img)   # dolgu görüntüyü boğmasın
+    cv2.polylines(img, [pts], True, (0, 0, 255), max(2, round(2.5 * k)))
+    x, y = pts[0]
+    cv2.putText(img, _ascii(z["name"]), (int(x + 6 * k), int(y - 8 * k)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55 * k, (0, 0, 255), max(2, round(2 * k)))
 
 
 def _draw_line(cv2, img, lc, k: float = 1.0) -> None:

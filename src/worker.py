@@ -19,7 +19,7 @@ import threading
 import time
 
 from .bus import BusStore, open_bus, publish
-from .config import load_config
+from .config import apply_cv2_http_headers, load_config
 from .store import merged_cameras, open_store
 
 # kamera_id → o an çalışan aşama (heartbeat bunu yayınlar)
@@ -36,6 +36,14 @@ def _saved_lines(store, camera_id: str) -> list[dict]:
     return out
 
 
+def _saved_intrusions(store, camera_id: str) -> list[dict]:
+    """İhlal alanları — sayım hattında değerlendirilir (aynı tespit/takip çıktısı)."""
+    return [{"name": z.get("name") or "İhlal alanı", "points": z["points"],
+             "classes": z.get("classes") or []}
+            for z in store.list_zones(camera_id)
+            if z["kind"] == "intrusion" and len(z["points"] or []) >= 3]
+
+
 def _run_camera(cam: dict, cfg, bus) -> None:
     cid = cam["id"]
     source = cam["source"]
@@ -48,7 +56,10 @@ def _run_camera(cam: dict, cfg, bus) -> None:
         try:
             fresh = next((c for c in merged_cameras(cfg, rstore) if c["id"] == cid), cam)
             tasks = fresh.get("tasks") or {}
-            lines = _saved_lines(rstore, cid) or None
+            ihlaller = _saved_intrusions(rstore, cid)
+            cizgiler = _saved_lines(rstore, cid)
+            # İhlal alanı varken çizgi yoksa [] geçilir: None config varsayılanına düşerdi
+            lines = cizgiler or ([] if ihlaller else None)
         finally:
             rstore.close()
 
@@ -57,7 +68,8 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             if tasks.get("count"):
                 _STAGE[cid] = "count"
                 from .count import run_count
-                run_count(source, cfg, store=bstore, camera_id=cid, lines=lines)
+                run_count(source, cfg, store=bstore, camera_id=cid, lines=lines,
+                          intrusions=ihlaller)
                 did_work = True
             if tasks.get("plate"):
                 _STAGE[cid] = "plate"
@@ -97,6 +109,7 @@ def _heartbeat(cams: list[dict], bus, interval: float = 5.0) -> None:
 
 def main() -> None:
     cfg = load_config()
+    apply_cv2_http_headers(cfg)   # HLS/CDN kaynakları için ek başlıklar
     bus = open_bus(cfg)
     if bus is None:
         raise SystemExit("REDIS_URL (veya config redis.url) gerekli — worker olay yolu olmadan çalışmaz")

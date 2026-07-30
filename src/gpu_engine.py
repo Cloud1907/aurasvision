@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 from .bus import publish
+from .config import http_options
 from .count import _side
 from .plate import _vote
 
@@ -65,10 +66,11 @@ class LineCounter:
 
 # ── NVDEC decoder thread'i — son kareyi tutar (kuyruk yok, gecikme birikmez) ──
 class _Decoder(threading.Thread):
-    def __init__(self, cam_id: str, url: str) -> None:
+    def __init__(self, cam_id: str, url: str, extra_opts: dict | None = None) -> None:
         super().__init__(daemon=True, name=f"dec-{cam_id}")
         self.cam_id = cam_id
         self.url = url
+        self.extra_opts = extra_opts or {}   # CDN/HLS başlıkları (stream.http_headers)
         self.lock = threading.Lock()
         self.latest = None          # torch NV12 (H*3/2, W) uint8 cuda
         self.wh: tuple[int, int] | None = None
@@ -100,6 +102,7 @@ class _Decoder(threading.Thread):
             cont = None
             try:
                 opts = {"rtsp_transport": "tcp"} if self.url.startswith("rtsp") else {}
+                opts.update(self.extra_opts)
                 # (açılış, okuma) sn — çok kameralı başlangıç fırtınasında go2rtc
                 # producer'ı geç ayağa kalkabiliyor; kısa timeout flapping yapar
                 cont = av.open(self.url, options=opts, timeout=(30.0, 30.0))
@@ -261,20 +264,22 @@ class _SecondStage:
 
     # — plaka: okumaları biriktir, aralıklarla oylayıp TEK olay yaz —
     def _run_plate(self, cam_id: str, bgr, ts: float, frame_idx: int) -> None:
-        from .plate import _as_float_conf, _load_alpr
+        from .plate import _as_float_conf, _load_alpr, accept_read
 
         alpr = _load_alpr(self.cfg.get("plate.detector", "yolo-v9-t-384-license-plate-end2end"),
                           self.cfg.get("plate.ocr", "global-plates-mobile-vit-v2-model"),
                           self.cfg.get("device", "auto"))
         min_conf = self.cfg.get("plate.min_conf", 0.4)
+        fmt = self.cfg.get("plate.format", "tr")
         reads = self.plate_reads.setdefault(cam_id, [])
         for pred in alpr.predict(bgr):
             ocr = getattr(pred, "ocr", None)
             text = getattr(ocr, "text", None) if ocr else None
             conf = _as_float_conf(getattr(ocr, "confidence", None) if ocr else None)
-            if not text or (conf is not None and conf < min_conf):
+            plate = accept_read(text, conf, min_conf, fmt)
+            if plate is None:
                 continue
-            reads.append({"plate": text.replace(" ", "").upper(), "confidence": conf,
+            reads.append({"plate": plate, "confidence": conf,
                           "frame_idx": frame_idx, "ts_seconds": round(ts, 2)})
         if ts - self.plate_last_flush.get(cam_id, 0.0) >= self.plate_flush and reads:
             self.plate_last_flush[cam_id] = ts
@@ -399,7 +404,9 @@ def run_gpu_worker(cams: list[dict], cfg, bus) -> None:
     store.close()
     stage2 = _SecondStage(cfg, bstore, watch)
 
-    decoders = {c["id"]: _Decoder(c["id"], _stream_url(c, cfg)) for c in cams}
+    decoders = {c["id"]: _Decoder(c["id"], _stream_url(c, cfg),
+                                  http_options(cfg, _stream_url(c, cfg)))
+                for c in cams}
     for i, d in enumerate(decoders.values()):
         d.start()
         if i % 8 == 7:

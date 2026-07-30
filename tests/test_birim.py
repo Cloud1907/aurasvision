@@ -17,9 +17,10 @@ from src.count import _ascii, _side
 from src.face import (_affinity, _best_reid, _calm_frac, _compact_gallery,
                       _dedup_tracks, _FaceTrack, _final_tracks, _iou,
                       _wander_ratio, run_face)
-from src.plate import _as_float_conf, _lev, _vote
+from src.plate import _as_float_conf, _lev, _vote, accept_read, normalize_tr
 from src.server import _slug
 from src.store import DEFAULT_TASKS, SqliteStore, merged_cameras
+from src.zones import IntrusionWatcher, point_in_poly, wanted_classes
 
 
 # ── Sayım: çizgi tarafı geometrisi ─────────────────────────────────
@@ -43,6 +44,131 @@ class TestCizgiGecisi:
 
     def test_ascii_turkce_karakter(self):
         assert _ascii("Giriş Çizgisi ÜĞİ") == "Giris Cizgisi UGI"
+
+
+# ── İhlal alanı (poligon + bekleme + soğuma) ───────────────────────
+class TestIhlalAlani:
+    KARE = [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]   # 100x100'de 20..80
+
+    def _w(self, **kw):
+        return IntrusionWatcher([{"name": "Depo", "points": self.KARE,
+                                  "classes": kw.pop("classes", ["person"])}],
+                                100, 100, kw.pop("dwell_seconds", 1.0),
+                                kw.pop("cooldown_seconds", 5.0))
+
+    def test_poligon_ici_disi(self):
+        kare = [(0, 0), (100, 0), (100, 100), (0, 100)]
+        assert point_in_poly(50, 50, kare) is True
+        assert point_in_poly(150, 50, kare) is False
+        assert point_in_poly(50, 50, [(0, 0), (10, 0)]) is False   # poligon değil
+
+    def test_bekleme_dolmadan_alarm_yok(self):
+        """Sınıra değip geçen nesne alarm üretmemeli (yanlış alarm filtresi)."""
+        w = self._w()
+        assert w.update([(1, 50, 50, 0)], 0.0) == []
+        assert w.update([(1, 50, 50, 0)], 0.9) == []
+
+    def test_bekleme_dolunca_alarm(self):
+        w = self._w()
+        w.update([(1, 50, 50, 0)], 0.0)
+        al = w.update([(1, 50, 50, 0)], 1.5)
+        assert len(al) == 1 and al[0]["zone"] == "Depo" and al[0]["track_id"] == 1
+
+    def test_soguma_tekrar_alarmi_engeller(self):
+        w = self._w()
+        w.update([(1, 50, 50, 0)], 0.0)
+        assert len(w.update([(1, 50, 50, 0)], 1.5)) == 1
+        assert w.update([(1, 50, 50, 0)], 3.0) == []      # soğuma sürüyor
+        assert len(w.update([(1, 50, 50, 0)], 7.0)) == 1  # soğuma bitti
+
+    def test_alandan_cikinca_sayac_sifirlanir(self):
+        """Girip çıkan nesne, toplam süresi eşiği aşsa bile alarm üretmemeli."""
+        w = self._w()
+        w.update([(1, 50, 50, 0)], 0.0)
+        w.update([(1, 5, 5, 0)], 0.8)      # dışarı çıktı
+        assert w.update([(1, 50, 50, 0)], 1.5) == []   # sayaç yeniden başladı
+
+    def test_sinif_filtresi(self):
+        """Yalnız 'insan' seçili alanda araç geçişi alarm üretmez."""
+        w = self._w()
+        w.update([(9, 50, 50, 2)], 0.0)
+        assert w.update([(9, 50, 50, 2)], 2.0) == []
+
+    def test_arac_secili_alanda_arac_yakalanir(self):
+        w = self._w(classes=["car"])
+        w.update([(9, 50, 50, 2)], 0.0)
+        assert len(w.update([(9, 50, 50, 2)], 2.0)) == 1
+
+    def test_sinif_secimi_yoksa_hepsi(self):
+        w = self._w(classes=[])
+        w.update([(9, 50, 50, 7)], 0.0)
+        assert len(w.update([(9, 50, 50, 7)], 2.0)) == 1
+
+    def test_gecersiz_poligon_atlanir(self):
+        assert not IntrusionWatcher([{"name": "x", "points": [[0, 0], [1, 1]]}], 100, 100)
+
+    def test_sinif_esleme(self):
+        assert 0 in wanted_classes(["person"])
+        assert 2 in wanted_classes(["car"]) and 7 in wanted_classes(["car"])
+        assert wanted_classes([]) == set()
+
+
+# ── Uyarı kabul akışı (denetim izi) ────────────────────────────────
+class TestUyariKabul:
+    def _store(self, tmp_path):
+        return SqliteStore(str(tmp_path / "t.db"))
+
+    def test_kabul_bekleyenlerden_duser_kayit_kalir(self, tmp_path):
+        s = self._store(tmp_path)
+        s.add_alert("plate", "34ABC123", "blacklist", "test", "kamera1")
+        bekleyen = s.recent_alerts(10, pending_only=True)
+        assert len(bekleyen) == 1
+        assert s.ack_alert(bekleyen[0]["id"], "ayse") is True
+        assert s.recent_alerts(10, pending_only=True) == []   # bekleyenden düştü
+        hepsi = s.recent_alerts(10)
+        assert len(hepsi) == 1 and hepsi[0]["acked_by"] == "ayse"   # kayıt SİLİNMEDİ
+        s.close()
+
+    def test_ayni_uyari_iki_kez_kabul_edilemez(self, tmp_path):
+        s = self._store(tmp_path)
+        s.add_alert("face", "Ali", "vip", "", "kamera1")
+        aid = s.recent_alerts(10)[0]["id"]
+        assert s.ack_alert(aid) is True
+        assert s.ack_alert(aid) is False   # ikinci çağrı kimliği ezmez → API 404
+        s.close()
+
+
+# ── Plaka: TR format doğrulama + kabul kapısı ──────────────────────
+class TestPlakaTRFormat:
+    def test_gecerli_formatlar_aynen_gecer(self):
+        for p in ("34A1234", "34AB123", "34AB1234", "06ABC12", "81ABC123"):
+            assert normalize_tr(p) == p
+
+    def test_rakam_pozisyonunda_harf_duzeltilir(self):
+        assert normalize_tr("34ABC1Z3") == "34ABC123"   # Z→2
+        assert normalize_tr("O6AB123") == "06AB123"     # O→0 (il kodu)
+        assert normalize_tr("34AB12B") == "34AB128"     # B→8 (son blok)
+
+    def test_harf_pozisyonunda_rakam_duzeltilir(self):
+        assert normalize_tr("340B1234") == "34OB1234"   # 0→O (orta blok)
+
+    def test_gecersiz_okumalar_reddedilir(self):
+        assert normalize_tr("00AB123") is None    # il 00 yok
+        assert normalize_tr("82AB123") is None    # il 82 yok
+        assert normalize_tr("34QW123") is None    # W plakada kullanılmaz
+        assert normalize_tr("ABC123") is None     # il kodu yok
+        assert normalize_tr("34ABCD12") is None   # 4 harf olmaz
+        assert normalize_tr("3") is None
+
+    def test_kabul_kapisi_conf_none_bypass_edemez(self):
+        """Güven skoru olmayan okuma eşiği atlayamaz (eski davranış açıktı)."""
+        assert accept_read("34ABC123", None, 0.4) is None
+
+    def test_kabul_kapisi_esik_ve_format(self):
+        assert accept_read("34 ABC 123", 0.9, 0.4) == "34ABC123"
+        assert accept_read("34ABC123", 0.3, 0.4) is None      # eşik altı
+        assert accept_read("GARBAGE1", 0.9, 0.4) is None      # format dışı
+        assert accept_read("GARBAGE1", 0.9, 0.4, fmt="none") == "GARBAGE1"
 
 
 # ── Plaka: Levenshtein + çok-kareli oylama ─────────────────────────
