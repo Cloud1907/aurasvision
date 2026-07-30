@@ -4,6 +4,8 @@
 # Tasarım: TEKRAR ÇALIŞTIRILABİLİR. Var olanı bozmaz, eksik olanı tamamlar.
 # .env varsa dokunulmaz (erişim anahtarı yeniden üretilseydi tüm istemciler düşerdi).
 
+param([switch]$NoLaunch)   # kurulum sihirbazı içinden çağrılırken paneli açma
+
 $ErrorActionPreference = "Stop"
 $Kok = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Kok
@@ -79,13 +81,30 @@ if (Test-Path ".env") {
     $token = (Select-String -Path ".env" -Pattern '^AURAS_TOKEN=(.*)$').Matches.Groups[1].Value
 } else {
     $token = & $vpy -c "import secrets;print(secrets.token_urlsafe(24))"
-    @"
+    # Veritabanı seçimi Docker'ın GERÇEKTEN çalışmasına bağlı:
+    #  * Docker var  → PostgreSQL + TimescaleDB + pgvector (konteynerde, ayrı kurulum yok)
+    #  * Docker yok  → satırlar YAZILMAZ; uygulama SQLite'a düşer (kurulum gerektirmez).
+    # Adresi körlemesine yazmak, Docker yokken "bağlanamıyor" hatası demekti.
+    if ($dockerVar) {
+        @"
 # AurasVision — gizli bilgiler. Bu dosyayı paylaşmayın.
 AURAS_TOKEN=$token
 DATABASE_URL=postgresql://auras:auras@localhost:5433/auras
 REDIS_URL=redis://localhost:6379/0
 "@ | Set-Content -Path ".env" -Encoding UTF8
-    Ye "Erişim anahtarı üretildi"
+        Ye "Erişim anahtarı üretildi · veritabanı: PostgreSQL (Docker)"
+    } else {
+        @"
+# AurasVision — gizli bilgiler. Bu dosyayı paylaşmayın.
+AURAS_TOKEN=$token
+# Docker kurulu olmadığı için veritabanı SQLite (output\aurasvision.db).
+# Çok kameralı kurulumda Docker Desktop kurup aşağıdaki iki satırı açın:
+# DATABASE_URL=postgresql://auras:auras@localhost:5433/auras
+# REDIS_URL=redis://localhost:6379/0
+"@ | Set-Content -Path ".env" -Encoding UTF8
+        Ye "Erişim anahtarı üretildi · veritabanı: SQLite (kurulum gerektirmez)"
+        Uy "Sürekli analiz (worker) için Redis gerekir — Docker kurulunca etkinleşir"
+    }
 }
 
 # GPU yoksa hafif modele düş — TensorRT engine donanıma özeldir, taşınmaz
@@ -176,6 +195,16 @@ Write-Host "  KURULUM TAMAMLANDI" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Panel     : http://127.0.0.1:8000"
 Write-Host "  Anahtar   : $token"
+@"
+AurasVision erisim anahtari
+===========================
+$token
+
+Panel: http://127.0.0.1:8000
+Tek tik giris: http://127.0.0.1:8000/?token=$token
+
+Bu dosyayi guvenli tutun; anahtar panele erisim yetkisidir.
+"@ | Set-Content -Path (Join-Path $Kok "ERISIM-ANAHTARI.txt") -Encoding UTF8
 Write-Host ""
 Write-Host "  Başlatmak için masaüstündeki AurasVision kısayoluna çift tıklayın."
 Write-Host "  Panel tarayıcıda kendiliğinden açılır."
@@ -185,6 +214,6 @@ Write-Host "  ──────────────────────
 Write-Host ""
 
 # Kurulum bitince paneli aç
-if ($dockerVar) {
+if ($dockerVar -and -not $NoLaunch) {
     Start-Process (Join-Path $Kok "windows\AurasVision-Baslat.bat")
 }
