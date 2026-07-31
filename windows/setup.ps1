@@ -148,11 +148,12 @@ for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
     if not "%%a"=="" if not "%%a:~0,1%"=="#" set "%%a=%%b"
 )
 start "" http://127.0.0.1:8000/?token=$token
-start "AurasVision Sunucu" /min .venv\Scripts\python.exe -m src.server
+if not exist output\logs mkdir output\logs
+start "AurasVision Sunucu" /min cmd /c ".venv\Scripts\python.exe -m src.server 1>>output\logs\sunucu-konsol.log 2>&1"
 timeout /t 3 >nul
-start "AurasVision Kayit" /min .venv\Scripts\python.exe -m src.recorder
-start "AurasVision Analiz" /min .venv\Scripts\python.exe -m src.worker
-start "AurasVision Olaylar" /min .venv\Scripts\python.exe -m src.ingestor
+start "AurasVision Kayit" /min cmd /c ".venv\Scripts\python.exe -m src.recorder 1>>output\logs\kayit-konsol.log 2>&1"
+start "AurasVision Analiz" /min cmd /c ".venv\Scripts\python.exe -m src.worker 1>>output\logs\analiz-konsol.log 2>&1"
+start "AurasVision Olaylar" /min cmd /c ".venv\Scripts\python.exe -m src.ingestor 1>>output\logs\olaylar-konsol.log 2>&1"
 echo AurasVision calisiyor. Bu pencereyi kapatabilirsiniz.
 timeout /t 5 >nul
 "@ | Set-Content -Path "windows\AurasVision-Baslat.bat" -Encoding ASCII

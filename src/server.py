@@ -1299,6 +1299,8 @@ class _QuietPolls(logging.Filter):
 
 def main() -> None:
     import uvicorn
+    from .gunluk import kur as gunluk_kur
+    gunluk_kur("sunucu", cfg)
 
     logging.getLogger("uvicorn.access").addFilter(_QuietPolls())
     _sync_go2rtc()

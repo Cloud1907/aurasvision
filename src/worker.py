@@ -136,6 +136,8 @@ def _heartbeat(cams: list[dict], bus, interval: float = 5.0) -> None:
 
 def main() -> None:
     cfg = load_config()
+    from .gunluk import kur as gunluk_kur
+    gunluk_kur("worker", cfg)
     apply_cv2_http_headers(cfg)   # HLS/CDN kaynakları için ek başlıklar
     bus = open_bus(cfg)
     if bus is None:

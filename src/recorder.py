@@ -256,6 +256,8 @@ def _sil(kok: Path, r: dict, store) -> None:
 
 def main() -> None:
     cfg = load_config()
+    from .gunluk import kur as gunluk_kur
+    gunluk_kur("kayit", cfg)
     if not cfg.get("record.enabled", True):
         raise SystemExit("record.enabled=false — kayıt servisi kapalı")
     store = open_store(cfg)

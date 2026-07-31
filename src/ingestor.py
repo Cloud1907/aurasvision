@@ -17,6 +17,8 @@ from .store import open_store
 
 def main() -> None:
     cfg = load_config()
+    from .gunluk import kur as gunluk_kur
+    gunluk_kur("ingestor", cfg)
     bus = open_bus(cfg)
     if bus is None:
         raise SystemExit("REDIS_URL (veya config redis.url) gerekli")
