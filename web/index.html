@@ -1498,6 +1498,15 @@ function openCamForm(cam){
   m.querySelector("#f-ok").onclick=async ev=>{
     const source=srcEl.value.trim(),name=adEl.value.trim(),source_sub=m.querySelector("#f-sub").value.trim();
     if(!source||!name){toast("Ad ve kaynak adresi zorunlu","warn");return;}
+    // Doğrulanmamış adres kaydedilebilir ama SESSİZCE değil: sahada en sık
+    // kaybedilen zaman "ekledim, siyah geliyor" turudur. Kullanıcı bilerek
+    // atlıyorsa engellenmez — uyarılıp onayı alınır.
+    if(!duzenle&&!m.querySelector("#st2")?.classList.contains("ok")){
+      const devam=await confirmDialog("Adres doğrulanmadı",
+        "Bu adrese bağlanılıp bağlanılamadığı denenmedi. Kamera görüntü vermezse bunu ancak canlı ekranda fark edersiniz.",
+        "Yine de kaydet");
+      if(!devam)return;
+    }
     const btn=ev.currentTarget;btn.disabled=true;btn.style.opacity=".6";
     try{
       if(duzenle)await api("/cameras/"+encodeURIComponent(cam.id),{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,source,source_sub})});
