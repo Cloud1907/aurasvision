@@ -41,11 +41,14 @@ jobs:
 
       - name: test
         run: |
-          source .venv/bin/activate && pytest -q
+          # CI'da .venv yok — bağımlılıklar sistem Python'una kurulur.
+          # "source .venv/bin/activate" burada her koşuda kırılıyordu
+          # (bu workflow HİÇ yeşil olmamıştı).
+          pytest -q
 
       - name: build
         run: |
-          source .venv/bin/activate && find src -name '*.py' -print0 | xargs -0 python -m py_compile
+          find src -name '*.py' -print0 | xargs -0 python -m py_compile
 
       - name: dep_audit
         continue-on-error: true     # advisory (enforced modda blocking'e çekilebilir)
