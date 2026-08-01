@@ -245,6 +245,7 @@ class _SecondStage:
         self.plate_takip: dict[str, PlakaTakip] = {}
         self.plate_kayip = float(cfg.get("plate.track_lost_seconds", 4.0))
         self.plate_dirilme = float(cfg.get("plate.track_rebirth_seconds", 30.0))
+        self.plate_tek_conf = float(cfg.get("plate.single_read_min_conf", 0.65))
         self.face_tracks: dict[str, list] = {}
         self.face_next_tid: dict[str, int] = {}
         self.busy: set[tuple[str, str]] = set()
@@ -277,7 +278,8 @@ class _SecondStage:
         fmt = self.cfg.get("plate.format", "tr")
         yabanci_conf = self.cfg.get("plate.foreign_min_conf", 0.75)
         takip = self.plate_takip.setdefault(
-            cam_id, PlakaTakip(kayip_sn=self.plate_kayip, dirilme_sn=self.plate_dirilme))
+            cam_id, PlakaTakip(kayip_sn=self.plate_kayip, dirilme_sn=self.plate_dirilme,
+                               tek_okuma_min_conf=self.plate_tek_conf))
         for pred in alpr.predict(bgr):
             ocr = getattr(pred, "ocr", None)
             text = getattr(ocr, "text", None) if ocr else None

@@ -197,9 +197,11 @@ class PlakaTakip:
     kapatabilir) — yeni satır yazılmaz. Konum farklıysa yazılır.
     """
 
-    def __init__(self, kayip_sn: float = 4.0, dirilme_sn: float = 30.0) -> None:
+    def __init__(self, kayip_sn: float = 4.0, dirilme_sn: float = 30.0,
+                 tek_okuma_min_conf: float = 0.65) -> None:
         self.kayip_sn = kayip_sn
         self.dirilme_sn = dirilme_sn
+        self.tek_okuma_min_conf = tek_okuma_min_conf
         self.izler: list[dict[str, Any]] = []    # {bbox, son, reads}
         self.kapanan: list[dict[str, Any]] = []  # {rep, bbox, son}
 
@@ -241,6 +243,14 @@ class PlakaTakip:
             if not oylar:
                 continue
             v = max(oylar, key=lambda x: x.get("count", 0))   # izin baskın okuması
+            # TEK okumalık ve düşük güvenli iz araç kanıtı değildir. Gece
+            # sahasında görüldü: İngiliz plakasının yanlış okunuşu tesadüfen
+            # TR şekline oturup 0.4'lük TR eşiğinden sızıyor (80Z6133 conf=0.51
+            # gibi) — gerçek plakalar ise yabancı eşiğini geçemiyor. Gerçek bir
+            # geçiş ya birden çok okuma üretir ya da yüksek güvenli tek okuma.
+            if (v.get("count", 0) <= 1 and
+                    (v.get("conf") or 0.0) < self.tek_okuma_min_conf):
+                continue
             devam = None
             for k in self.kapanan:
                 if (ts - k["son"] < self.dirilme_sn and
@@ -349,7 +359,8 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     kanit_gorulen: dict[str, tuple[float, str]] = {}
     # Konum-temelli araç takibi (sınıfın üstündeki gerekçeye bak)
     takip = PlakaTakip(kayip_sn=float(cfg.get("plate.track_lost_seconds", 4.0)),
-                       dirilme_sn=float(cfg.get("plate.track_rebirth_seconds", 30.0)))
+                       dirilme_sn=float(cfg.get("plate.track_rebirth_seconds", 30.0)),
+                       tek_okuma_min_conf=float(cfg.get("plate.single_read_min_conf", 0.65)))
     ts = 0.0   # son işlenen kaynak saniyesi
 
     def _yaz(satirlar: list[dict[str, Any]]) -> None:

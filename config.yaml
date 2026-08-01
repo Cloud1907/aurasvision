@@ -146,6 +146,10 @@ plate:
   # (yaya kalabalığı plakayı uzun örtebilir). Kameradan çıkıp geri gelen
   # araç BAŞKA konumdan girer → süreye bakılmaksızın yeni olay.
   track_rebirth_seconds: 30
+  # TEK okumalık iz ancak bu güvenin üstündeyse yazılır. Gece sahasında yanlış
+  # okumalar tesadüfen TR şekline oturup 0.4'lük eşikten sızıyordu; gerçek
+  # geçiş ya çok okuma üretir ya yüksek güvenli tek okuma.
+  single_read_min_conf: 0.65
   # Kara/VIP liste alarmı için asgari okuma sayısı (oylama penceresinde).
   # Gerçek geçiş birden çok kare okutur; tek karelik eşleşme alarm olmaz.
   alert_min_reads: 2

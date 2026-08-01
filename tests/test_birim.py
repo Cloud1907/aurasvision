@@ -803,3 +803,18 @@ class TestPlakaTakip:
         yaz += tk.kapat(10.0)
         assert len(yaz) == 1
 
+
+    def test_dusuk_guvenli_tek_okuma_yazilmaz(self):
+        from src.plate import PlakaTakip
+        tk = PlakaTakip(kayip_sn=4.0, dirilme_sn=30.0, tek_okuma_min_conf=0.65)
+        # Gece sahasındaki desen: tek okuma, conf ~0.5 → çöp, yazılmamalı
+        tk.ekle(self._oku("80Z6133", 1.0, conf=0.51), (100, 200, 220, 240), 1.0)
+        assert tk.kapat(10.0) == []
+        # Yüksek güvenli tek okuma yazılır (hızlı geçen araç)
+        tk.ekle(self._oku("FJ22KJF", 12.0, conf=0.93), (300, 200, 420, 240), 12.0)
+        yaz = tk.kapat(20.0)
+        assert [v["plate"] for v in yaz] == ["FJ22KJF"]
+        # İki okumalık iz düşük güvenle de yazılır (oylama zaten çalıştı)
+        tk.ekle(self._oku("34ABC123", 22.0, conf=0.5), (500, 200, 620, 240), 22.0)
+        tk.ekle(self._oku("34ABC123", 23.0, conf=0.5), (500, 200, 620, 240), 23.0)
+        assert len(tk.kapat(30.0)) == 1
