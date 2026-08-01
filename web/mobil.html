@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="tr" data-theme="dark">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="theme-color" content="#0B1015"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<link rel="manifest" href="/m/manifest.json"/>
+<title>AurasVision</title>
+<style>
+  /* Tasarım dili: koyu zemin, camgöbeği vurgu, 8px köşe.
+     Yazı tipi sistem yığını — IBM Plex yerel dosya olmadan CDN'den çekilirdi;
+     çevrimdışı kurulumda dış bağımlılık istemiyoruz. Sıkı başlık görünümü
+     letter-spacing ve font-stretch ile yaklaşık olarak karşılanıyor. */
+  :root{
+    --bg:#0B1015; --yuzey:#121A21; --yuzey2:#182229; --cizgi:#1F2C35;
+    --ink:#E8F1F5; --ink2:#93A5B1; --ink3:#5E7382;
+    --vurgu:#20C4D9; --vurgu-soft:#0E3B44;
+    --kritik:#F0455F; --kritik-soft:#3A1620;
+    --uyari:#F2A93B; --uyari-soft:#3A2A12;
+    --ok:#35C77F; --ok-soft:#0F3325;
+    --r:8px; --r2:12px;
+    --alt:calc(58px + env(safe-area-inset-bottom));
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+    font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased;overscroll-behavior-y:none;}
+  h1,h2,h3,.baslik{font-stretch:condensed;letter-spacing:-.01em;margin:0;}
+  button,input,select{font:inherit;color:inherit;}
+  .gizli{display:none!important;}
+
+  /* Üst çubuk */
+  .ust{position:sticky;top:0;z-index:20;background:rgba(11,16,21,.92);backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--cizgi);padding:calc(10px + env(safe-area-inset-top)) 16px 10px;}
+  .ust .satir{display:flex;align-items:center;gap:10px;}
+  .ust .ad{font-size:17px;font-weight:650;font-stretch:condensed;display:flex;align-items:center;gap:6px;}
+  .ust .alt{font-size:10.5px;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-top:1px;}
+  .ikonbtn{width:34px;height:34px;border-radius:var(--r);border:1px solid var(--cizgi);
+    background:var(--yuzey);display:flex;align-items:center;justify-content:center;color:var(--ink2);}
+  .ikonbtn:active{background:var(--yuzey2);}
+
+  /* Durum çipleri */
+  .durumlar{display:flex;gap:14px;padding:9px 16px 0;font-size:12px;color:var(--ink2);}
+  .durumlar b{color:var(--ink);font-weight:600;}
+  .nokta{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:1px;}
+
+  /* İçerik */
+  main{padding:12px 16px calc(var(--alt) + 16px);}
+  .bolum{font-size:12px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;margin:16px 0 8px;}
+
+  /* Kamera ızgarası */
+  .izgara{display:grid;gap:8px;}
+  .izgara.k1{grid-template-columns:1fr;}
+  .izgara.k2{grid-template-columns:1fr 1fr;}
+  .izgara.k3{grid-template-columns:1fr 1fr 1fr;}
+  .kam{position:relative;aspect-ratio:16/10;border-radius:var(--r);overflow:hidden;
+    background:#0A0F13;border:1px solid var(--cizgi);}
+  .kam img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .25s;}
+  .kam img.yuklendi{opacity:1;}
+  .kam .rec{position:absolute;left:6px;top:6px;display:inline-flex;align-items:center;gap:4px;
+    background:rgba(6,10,13,.78);border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700;letter-spacing:.04em;}
+  .kam .rec i{width:5px;height:5px;border-radius:50%;background:var(--kritik);animation:yanip 1.6s infinite;}
+  @keyframes yanip{0%,100%{opacity:1}50%{opacity:.3}}
+  .kam .etiket{position:absolute;left:6px;right:6px;bottom:5px;display:flex;justify-content:space-between;
+    align-items:flex-end;gap:6px;font-size:10px;}
+  .kam .etiket .ad{font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,.8);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;}
+  .kam .etiket .zaman{color:var(--ink2);font-variant-numeric:tabular-nums;flex-shrink:0;}
+  .kam .rozet{position:absolute;right:6px;top:6px;font-size:9px;font-weight:700;padding:2px 6px;
+    border-radius:4px;letter-spacing:.03em;}
+  .kam .yok{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:6px;color:var(--ink3);font-size:11px;}
+
+  /* Sayaç kartları */
+  .sayaclar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+  .sayac{background:var(--yuzey);border:1px solid var(--cizgi);border-radius:var(--r);padding:10px 11px;}
+  .sayac .k{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3);font-weight:700;}
+  .sayac .v{font-size:30px;font-weight:700;font-stretch:condensed;line-height:1.05;margin-top:3px;}
+  .sayac .s{font-size:10px;color:var(--ink3);margin-top:3px;}
+  .sayac.kritik{border-color:var(--kritik);}   .sayac.kritik .v{color:var(--kritik);}
+  .sayac.uyari{border-color:var(--uyari);}     .sayac.uyari .v{color:var(--uyari);}
+  .sayac.ok .v{color:var(--ok);}
+
+  /* Çip filtreler */
+  .cipler{display:flex;gap:7px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none;}
+  .cipler::-webkit-scrollbar{display:none;}
+  .cip{flex-shrink:0;border:1px solid var(--cizgi);background:var(--yuzey);color:var(--ink2);
+    border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;white-space:nowrap;}
+  .cip.on{background:var(--vurgu-soft);border-color:var(--vurgu);color:var(--vurgu);}
+  .cip .sy{opacity:.7;margin-left:4px;}
+
+  /* Alarm kartı */
+  .alarm{background:var(--yuzey);border:1px solid var(--cizgi);border-radius:var(--r);
+    margin-bottom:9px;overflow:hidden;}
+  .alarm.kritik{border-color:var(--kritik);}
+  .alarm .bas{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--cizgi);}
+  .alarm .rozet{font-size:9.5px;font-weight:700;letter-spacing:.05em;padding:2px 7px;border-radius:4px;}
+  .alarm .zaman{margin-left:auto;font-size:10.5px;color:var(--ink3);font-variant-numeric:tabular-nums;}
+  .alarm .govde{padding:10px 11px;}
+  .alarm .baslik{font-size:15px;font-weight:650;}
+  .alarm .meta{font-size:11.5px;color:var(--ink3);margin-top:3px;}
+  .alarm .eylem{display:flex;gap:7px;padding:0 11px 11px;}
+  .alarm .eylem button{flex:1;border-radius:var(--r);border:1px solid var(--cizgi);
+    background:var(--yuzey2);padding:9px;font-size:12.5px;font-weight:650;}
+  .alarm .eylem .onay{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);}
+  .alarm .eylem .kayit{background:var(--vurgu-soft);border-color:var(--vurgu);color:var(--vurgu);}
+
+  /* Olay satırı */
+  .olay{display:flex;gap:10px;align-items:center;background:var(--yuzey);border:1px solid var(--cizgi);
+    border-radius:var(--r);padding:8px;margin-bottom:7px;}
+  .olay .kucuk{width:64px;height:44px;border-radius:5px;object-fit:cover;background:#0A0F13;flex-shrink:0;}
+  .olay .simge{width:64px;height:44px;border-radius:5px;background:var(--yuzey2);display:flex;
+    align-items:center;justify-content:center;color:var(--ink3);flex-shrink:0;}
+  .olay .ic{flex:1;min-width:0;}
+  .olay .ust2{display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:650;}
+  .olay .alt2{font-size:11px;color:var(--ink3);margin-top:2px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;}
+  .olay .sag{font-size:10.5px;color:var(--ink3);text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums;}
+  .tur{width:7px;height:7px;border-radius:2px;flex-shrink:0;}
+
+  /* Depolama şeridi */
+  .depo{display:flex;align-items:center;gap:10px;background:var(--yuzey);border:1px solid var(--cizgi);
+    border-radius:var(--r);padding:11px;margin-top:12px;}
+  .depo .cubuk{flex:1;height:5px;border-radius:3px;background:var(--yuzey2);overflow:hidden;}
+  .depo .dolu{height:100%;background:var(--vurgu);}
+
+  /* Alt navigasyon */
+  nav{position:fixed;left:0;right:0;bottom:0;z-index:30;display:grid;grid-template-columns:repeat(3,1fr);
+    background:rgba(11,16,21,.96);backdrop-filter:blur(14px);border-top:1px solid var(--cizgi);
+    padding-bottom:env(safe-area-inset-bottom);}
+  nav button{background:none;border:0;padding:8px 4px 9px;display:flex;flex-direction:column;
+    align-items:center;gap:3px;color:var(--ink3);font-size:10px;font-weight:600;position:relative;}
+  nav button.on{color:var(--vurgu);}
+  nav button .im{position:absolute;top:5px;right:calc(50% - 20px);width:6px;height:6px;
+    border-radius:50%;background:var(--kritik);}
+
+  .bos{text-align:center;color:var(--ink3);padding:36px 16px;font-size:13px;}
+  .yukleniyor{height:70px;border-radius:var(--r);background:linear-gradient(100deg,var(--yuzey) 30%,var(--yuzey2) 50%,var(--yuzey) 70%);
+    background-size:200% 100%;animation:kay 1.2s infinite;margin-bottom:8px;}
+  @keyframes kay{from{background-position:200% 0}to{background-position:-200% 0}}
+  .arama{display:flex;align-items:center;gap:8px;background:var(--yuzey);border:1px solid var(--cizgi);
+    border-radius:var(--r);padding:9px 11px;margin-bottom:10px;}
+  .arama input{flex:1;background:none;border:0;outline:none;font-size:13px;}
+  .arama input::placeholder{color:var(--ink3);}
+</style>
+</head>
+<body>
+<header class="ust">
+  <div class="satir">
+    <div style="flex:1;min-width:0;">
+      <div class="ad" id="basAd">AurasVision</div>
+      <div class="alt" id="basAlt">güvenlik sistemi</div>
+    </div>
+    <button class="ikonbtn" id="yenileBtn" aria-label="yenile">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+    </button>
+  </div>
+  <div class="durumlar" id="durumlar"></div>
+</header>
+
+<main id="icerik"><div class="yukleniyor"></div><div class="yukleniyor"></div></main>
+
+<nav id="altnav"></nav>
+
+<script>
+/* AurasVision mobil — telefona kurulabilen PWA.
+   Masaüstü paneliyle AYNI API'leri kullanır; ayrı backend yoktur.
+   Erişim anahtarı ?token= ile bir kez verilir, cihazda saklanır. */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let TOKEN = localStorage.getItem("av-token") || "";
+try {
+  const u = new URL(location.href), t = u.searchParams.get("token");
+  if (t) { TOKEN = t.trim(); localStorage.setItem("av-token", TOKEN);
+           u.searchParams.delete("token"); history.replaceState(null, "", u.pathname + u.hash); }
+} catch (e) {}
+const tokq = () => TOKEN ? "&token=" + encodeURIComponent(TOKEN) : "";
+
+async function api(yol, o = {}) {
+  o.headers = Object.assign({}, o.headers || {}, TOKEN ? { Authorization: "Bearer " + TOKEN } : {});
+  const r = await fetch("/api" + yol, o);
+  if (r.status === 401) {
+    const t = prompt("Erişim anahtarı");
+    if (t && t.trim()) { TOKEN = t.trim(); localStorage.setItem("av-token", TOKEN); return api(yol, o); }
+    throw new Error("yetkisiz");
+  }
+  return r.json();
+}
+
+const ik = {
+  canli: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/>',
+  alarm: '<path d="M6 9a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.5 21a1.5 1.5 0 0 0 3 0"/>',
+  kayit: '<path d="M7 5v14l11-7z" fill="currentColor" stroke="none"/>',
+  ara:   '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  kam:   '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/>',
+};
+const svg = (n, s = 18) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none"
+  stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ik[n] || ""}</svg>`;
+
+const gecen = t => {
+  if (!t) return "";
+  const d = new Date(String(t).replace(" ", "T") + (/[+Z]/.test(String(t).slice(10)) ? "" : "Z"));
+  if (isNaN(d)) return "";
+  const s = Math.max(0, (Date.now() - d) / 1000);
+  if (s < 60) return "az önce";
+  if (s < 3600) return Math.floor(s / 60) + " dk";
+  if (s < 86400) return Math.floor(s / 3600) + " sa";
+  return Math.floor(s / 86400) + " gün";
+};
+const saat = t => {
+  const d = new Date(String(t).replace(" ", "T") + (/[+Z]/.test(String(t).slice(10)) ? "" : "Z"));
+  return isNaN(d) ? "--:--" : d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+};
+
+let KAM = [], SAGLIK = {}, EKRAN = "canli", DUZEN = +(localStorage.getItem("av-duzen") || 2), BEKLEYEN = 0;
+const EKRANLAR = {};
+
+/* ── Canlı izleme ────────────────────────────────────────────── */
+EKRANLAR.canli = async () => {
+  $("#basAd").textContent = "Canlı İzleme";
+  $("#basAlt").textContent = `${KAM.length} kamera`;
+  const cevrimici = KAM.filter(c => durum(c) === "ok").length;
+  $("#durumlar").innerHTML =
+    `<span><i class="nokta" style="background:var(--ok)"></i>Çevrimiçi <b>${cevrimici}</b></span>
+     <span><i class="nokta" style="background:var(--ink3)"></i>Çevrimdışı <b>${KAM.length - cevrimici}</b></span>
+     <span style="margin-left:auto;display:flex;gap:5px;">
+       ${[1,2,3].map(k => `<button class="cip ${DUZEN===k?'on':''}" style="padding:3px 9px;font-size:11px;"
+          onclick="setDuzen(${k})">${k}×</button>`).join("")}</span>`;
+  $("#icerik").innerHTML = KAM.length
+    ? `<div class="izgara k${DUZEN}">${KAM.map(kart).join("")}</div>`
+    : `<div class="bos">Tanımlı kamera yok.</div>`;
+  yenileGoruntuler();
+};
+const durum = c => {
+  const h = SAGLIK[c.id];
+  if (!h) return "yok";
+  const taze = (Date.now() - new Date(String(h.time).replace(" ", "T") +
+    (String(h.time).includes("+") ? "" : "Z"))) < 15000;
+  if (!taze) return "bosta";
+  return (+h.fps || 0) > 0.1 ? "ok" : "karesiz";
+};
+const kart = c => {
+  const d = durum(c), rec = d === "ok";
+  const rozet = { karesiz: ["KARE YOK", "var(--kritik-soft)", "var(--kritik)"],
+                  bosta: ["BOŞTA", "var(--yuzey2)", "var(--ink3)"] }[d];
+  return `<div class="kam" onclick="kameraAc('${esc(c.id)}')">
+    <img data-kam="${esc(c.id)}" alt=""/>
+    ${rec ? '<span class="rec"><i></i>REC</span>' : ""}
+    ${rozet ? `<span class="rozet" style="background:${rozet[1]};color:${rozet[2]}">${rozet[0]}</span>` : ""}
+    <div class="etiket"><span class="ad">${esc(c.name)}</span>
+      <span class="zaman">${new Date().toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}</span></div>
+  </div>`;
+};
+function setDuzen(k) { DUZEN = k; localStorage.setItem("av-duzen", k); EKRANLAR.canli(); }
+let _goruntuMesgul = false;
+/* Kareler SIRAYLA istenir. Hepsini aynı anda istemek sunucunun iş parçacığı
+   havuzunu dolduruyor (her snapshot video açıyor) ve tüm API kilitleniyordu.
+   Önceki tur bitmeden yenisi başlamaz. */
+async function yenileGoruntuler() {
+  if (_goruntuMesgul) return;
+  _goruntuMesgul = true;
+  try {
+    for (const im of document.querySelectorAll("img[data-kam]")) {
+      if (EKRAN !== "canli") break;
+      await new Promise(bitti => {
+        im.onload = () => { im.classList.add("yuklendi"); bitti(); };
+        im.onerror = () => bitti();
+        im.src = `/api/snapshot?camera=${encodeURIComponent(im.dataset.kam)}${tokq()}&t=${Date.now()}`;
+        setTimeout(bitti, 8000);   // yanıt gelmezse sıradakine geç
+      });
+    }
+  } finally { _goruntuMesgul = false; }
+}
+function kameraAc(id) { window._kamera = id; git("kayit"); }
+
+/* ── Alarm merkezi ───────────────────────────────────────────── */
+EKRANLAR.alarm = async () => {
+  $("#basAd").textContent = "Alarm Merkezi";
+  $("#basAlt").textContent = "yanıt bekleyen olaylar";
+  $("#durumlar").innerHTML = "";
+  $("#icerik").innerHTML = `<div class="yukleniyor"></div>`;
+  const [bekleyen, tumu] = await Promise.all([
+    api("/alerts?limit=50&pending=true"), api("/alerts?limit=50")]);
+  const kritik = bekleyen.filter(a => a.list_type === "blacklist" || a.kind === "intrusion");
+  const uyari = bekleyen.filter(a => !kritik.includes(a));
+  const cozulen = tumu.filter(a => a.acked_at).length;
+  const f = window._af || "tumu"; window._af = f;
+  const liste = f === "kritik" ? kritik : f === "uyari" ? uyari : bekleyen;
+  $("#icerik").innerHTML = `
+    <div class="sayaclar">
+      <div class="sayac ${kritik.length ? "kritik" : ""}"><div class="k">Kritik</div>
+        <div class="v">${kritik.length}</div><div class="s">inceleme gerekli</div></div>
+      <div class="sayac ${uyari.length ? "uyari" : ""}"><div class="k">Uyarı</div>
+        <div class="v">${uyari.length}</div><div class="s">beklemede</div></div>
+      <div class="sayac ok"><div class="k">Çözülen</div>
+        <div class="v">${cozulen}</div><div class="s">kabul edildi</div></div></div>
+    <div class="bolum">Aktif alarmlar</div>
+    <div class="cipler">
+      ${[["tumu","Tümü",bekleyen.length],["kritik","Kritik",kritik.length],["uyari","Uyarı",uyari.length]]
+        .map(([k,l,n]) => `<button class="cip ${f===k?'on':''}" onclick="window._af='${k}';EKRANLAR.alarm()">
+          ${l}<span class="sy">${n}</span></button>`).join("")}</div>
+    <div style="margin-top:10px;">${liste.length ? liste.map(alarmKart).join("")
+      : `<div class="bos">Bekleyen alarm yok.</div>`}</div>`;
+};
+const alarmKart = a => {
+  const kritik = a.list_type === "blacklist" || a.kind === "intrusion";
+  const ad = (KAM.find(c => c.id === a.camera_id) || {}).name || a.camera_id || "";
+  const tur = a.kind === "intrusion" ? "Alan ihlali" : a.kind === "plate" ? "Plaka eşleşmesi" : "Yüz eşleşmesi";
+  return `<div class="alarm ${kritik ? "kritik" : ""}">
+    <div class="bas">
+      <span class="rozet" style="background:${kritik ? "var(--kritik-soft)" : "var(--uyari-soft)"};
+        color:${kritik ? "var(--kritik)" : "var(--uyari)"}">${kritik ? "KRİTİK" : "UYARI"}</span>
+      <span style="font-size:11.5px;color:var(--ink2)">${esc(tur)}</span>
+      <span class="zaman">${gecen(a.time)} önce</span></div>
+    <div class="govde">
+      <div class="baslik">${esc(a.ref)}</div>
+      <div class="meta">${esc(ad)}${a.label ? " · " + esc(a.label) : ""}</div></div>
+    <div class="eylem">
+      <button class="onay" onclick="kabul(${a.id})">Onayla</button>
+      <button class="kayit" onclick="alarmKayit('${esc(a.camera_id || "")}')">Kayda git</button></div></div>`;
+};
+async function kabul(id) {
+  try { await api(`/alerts/${id}/ack`, { method: "POST" }); EKRANLAR.alarm(); rozetleri(); }
+  catch (e) { alert("Kabul edilemedi"); }
+}
+function alarmKayit(cam) { if (cam) window._kamera = cam; git("kayit"); }
+
+/* ── Kayıtlar ve olaylar ─────────────────────────────────────── */
+EKRANLAR.kayit = async () => {
+  $("#basAd").textContent = "Kayıtlar ve Olaylar";
+  const kam = window._kamera || "";
+  $("#basAlt").textContent = kam ? ((KAM.find(c => c.id === kam) || {}).name || kam) : "tüm kameralar";
+  $("#durumlar").innerHTML = "";
+  $("#icerik").innerHTML = `<div class="yukleniyor"></div>`;
+  const f = window._ef || ""; window._ef = f;
+  const [olaylar, arsiv] = await Promise.all([
+    api(`/events?limit=60${f ? "&tur=" + f : ""}${kam ? "&kamera=" + encodeURIComponent(kam) : ""}`),
+    api("/recordings/stats")]);
+  const gb = (arsiv.total_bytes || 0) / (1024 ** 3);
+  const turlar = [["", "Tümü"], ["count", "Hareket"], ["plate", "Plaka"], ["face", "Yüz"]];
+  $("#icerik").innerHTML = `
+    <div class="arama">${svg("ara", 15)}
+      <input id="ara" placeholder="Kamera veya olay ara" oninput="filtreOlay(this.value)"/></div>
+    <div class="cipler">
+      ${turlar.map(([k, l]) => `<button class="cip ${f === k ? "on" : ""}"
+        onclick="window._ef='${k}';EKRANLAR.kayit()">${l}</button>`).join("")}
+      ${kam ? `<button class="cip on" onclick="window._kamera='';EKRANLAR.kayit()">
+        ${esc((KAM.find(c => c.id === kam) || {}).name || kam)} ✕</button>` : ""}</div>
+    <div class="bolum">Bugünün zaman akışı <span style="float:right;text-transform:none;letter-spacing:0">
+      ${olaylar.length} olay</span></div>
+    <div id="olaylar">${olaylar.length ? olaylar.map(olayKart).join("")
+      : `<div class="bos">Bu filtreyle olay yok.</div>`}</div>
+    <div class="depo">
+      <div style="flex:1;">
+        <div style="font-size:12.5px;font-weight:650;">Arşiv ${gb < 1 ? (gb * 1024).toFixed(0) + " MB" : gb.toFixed(1) + " GB"}</div>
+        <div style="font-size:10.5px;color:var(--ink3);margin-top:2px;">
+          ${(arsiv.cameras || []).length} kamera · saklama ${arsiv.keep_days} gün</div></div>
+      <div style="width:80px;"><div class="cubuk"><div class="dolu" style="width:${Math.min(100, gb * 4)}%"></div></div></div>
+    </div>`;
+};
+const OLAY_TUR = { count: ["Hareket algılandı", "var(--vurgu)"], plate: ["Plaka okundu", "var(--uyari)"],
+                   face: ["Yüz tespiti", "var(--ok)"] };
+const olayKart = e => {
+  const t = OLAY_TUR[e.type] || ["Olay", "var(--ink3)"];
+  const ad = (KAM.find(c => c.id === e.camera_id) || {}).name || e.camera_id || "";
+  return `<div class="olay" data-ara="${esc((ad + " " + (e.detail || "")).toLowerCase())}">
+    ${e.snapshot ? `<img class="kucuk" src="/media/${esc(e.snapshot)}${tokq().replace("&", "?")}" alt=""/>`
+      : `<span class="simge">${svg("kam", 17)}</span>`}
+    <div class="ic">
+      <div class="ust2"><span class="tur" style="background:${t[1]}"></span>${t[0]}</div>
+      <div class="alt2">${esc(ad)} · ${esc(e.detail || "")}</div></div>
+    <div class="sag">${saat(e.time)}<br><span style="opacity:.7">${gecen(e.time)}</span></div></div>`;
+};
+function filtreOlay(q) {
+  q = (q || "").toLowerCase().trim();
+  document.querySelectorAll("#olaylar .olay").forEach(el => {
+    el.style.display = !q || el.dataset.ara.includes(q) ? "" : "none";
+  });
+}
+
+/* ── Navigasyon ──────────────────────────────────────────────── */
+const SEKME = [["canli", "Canlı İzleme", "canli"], ["alarm", "Alarm Merkezi", "alarm"],
+               ["kayit", "Kayıtlar", "kayit"]];
+function cizNav() {
+  $("#altnav").innerHTML = SEKME.map(([k, l, i]) => `<button class="${EKRAN === k ? "on" : ""}"
+    onclick="git('${k}')">${svg(i, 20)}<span>${l}</span>
+    ${k === "alarm" && BEKLEYEN ? '<span class="im"></span>' : ""}</button>`).join("");
+}
+function git(k) { EKRAN = k; cizNav(); EKRANLAR[k](); window.scrollTo(0, 0); }
+
+async function rozetleri() {
+  try { BEKLEYEN = (await api("/alerts?limit=99&pending=true")).length; cizNav(); } catch (e) {}
+}
+
+async function baslat() {
+  cizNav();
+  try {
+    KAM = await api("/cameras");
+    (await api("/health")).forEach(h => SAGLIK[h.camera_id] = h);
+  } catch (e) {
+    $("#icerik").innerHTML = `<div class="bos">Sunucuya bağlanılamadı.<br>
+      <span style="font-size:11.5px">Panelin adresini ve erişim anahtarını kontrol edin.</span></div>`;
+    return;
+  }
+  git("canli");
+  rozetleri();
+  setInterval(rozetleri, 20000);
+  setInterval(() => { if (EKRAN === "canli") yenileGoruntuler(); }, 15000);
+}
+$("#yenileBtn").onclick = async () => {
+  try { (await api("/health")).forEach(h => SAGLIK[h.camera_id] = h); } catch (e) {}
+  EKRANLAR[EKRAN]();
+};
+baslat();
+</script>
+</body>
+</html>

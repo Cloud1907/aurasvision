@@ -740,11 +740,21 @@ def vendor_asset(name: str):
 
 # Snapshot TTL cache — VideoCapture pahalı; aynı kareyi N sn tekrar üretme (perf).
 _SNAP_CACHE: dict[str, tuple[float, bytes]] = {}
-_SNAP_TTL = 4.0  # saniye
+_SNAP_TTL = 12.0  # saniye — UI yenileme aralığından KISA olmamalı, yoksa her istek
+                  # önbelleği ıskalayıp video açar ve iş parçacığı havuzu dolar
 
 
 def _grab_jpeg(source: str) -> bytes | None:
-    cap = cv2.VideoCapture(source)
+    # Zaman aşımı ŞART: erişilemeyen bir ağ kamerası (kopmuş RTSP, süresi dolmuş
+    # HLS) varsayılan ayarla 30 sn boyunca iş parçacığını tutuyor. Çok kameralı
+    # ekranda birkaç ölü kamera FastAPI'nin havuzunu doldurup TÜM API'yi
+    # kilitledi (mobil arayüzde yaşandı). Ölü kamera hızlı başarısız olmalı.
+    if source.startswith(("rtsp://", "rtmp://", "http://", "https://")):
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG,
+                               [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000,
+                                cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
+    else:
+        cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         return None
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
@@ -1271,6 +1281,37 @@ def api_del_watch(kind: str, row_id: int):
         return {"ok": True}
     finally:
         s.close()
+
+
+@app.get("/m")
+@app.get("/m/")
+def mobil():
+    """Mobil arayüz (PWA) — masaüstü paneliyle AYNI API'leri kullanır.
+
+    Ayrı uygulama/mağaza süreci yok: telefondan /m açılır, "Ana ekrana ekle"
+    ile kurulur. Erişim anahtarı ?token= ile bir kez verilir.
+    """
+    return FileResponse(WEB_DIR / "mobil.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/m/manifest.json")
+def mobil_manifest():
+    """PWA tanımı — telefona kurulabilmesi ve tam ekran açılması için."""
+    return {
+        "name": "AurasVision", "short_name": "AurasVision",
+        "description": "Güvenlik kamerası izleme ve alarm merkezi",
+        "start_url": "/m", "scope": "/m", "display": "standalone",
+        "orientation": "portrait", "background_color": "#0B1015",
+        "theme_color": "#0B1015", "lang": "tr",
+        # Simge gömülü SVG: dış dosya bağımlılığı yok (çevrimdışı kurulum)
+        "icons": [{
+            "src": ("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' "
+                    "viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230B1015'/>"
+                    "<g fill='none' stroke='%2320C4D9' stroke-width='3' stroke-linecap='round'>"
+                    "<circle cx='32' cy='32' r='18'/><path d='M32 8v10M32 46v10M8 32h10M46 32h10'/></g>"
+                    "<circle cx='32' cy='32' r='6' fill='%2320C4D9'/></svg>"),
+            "sizes": "any", "type": "image/svg+xml", "purpose": "any"}],
+    }
 
 
 @app.get("/")
