@@ -32,9 +32,9 @@
   .app{display:flex;min-height:100vh;}
   .rail{width:264px;flex-shrink:0;background:linear-gradient(180deg,var(--rail),#080d16 58%,#05070c);color:var(--rail-ink);display:flex;flex-direction:column;padding:22px 16px;position:sticky;top:0;height:100vh;border-right:1px solid rgba(255,255,255,.06);}
   .brand{display:flex;align-items:center;gap:12px;padding:4px 8px 26px;}
-  .brand .logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;box-shadow:0 12px 28px rgba(37,99,235,.28);}
-  .brand b{font-size:17px;letter-spacing:0;color:#fff;font-weight:700;}
-  .brand span{font-size:11px;color:var(--rail-ink-2);display:block;letter-spacing:.04em;}
+  .brand .logo{width:34px;height:34px;display:flex;align-items:center;justify-content:center;color:var(--accent);flex-shrink:0;}
+  .brand b{font-size:16.5px;letter-spacing:-.01em;color:#fff;font-weight:650;}
+  .brand span{font-size:10.5px;color:var(--rail-ink-2);display:block;letter-spacing:.06em;text-transform:uppercase;}
   .nav{display:flex;flex-direction:column;gap:4px;flex:1;}
   .nav .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--rail-ink-2);padding:15px 10px 6px;font-weight:700;}
   .nav a{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:var(--rail-ink);cursor:pointer;font-size:14px;transition:background var(--t),color var(--t),transform var(--t);position:relative;}
@@ -206,7 +206,7 @@
   /* Modal — prompt()/alert() yerine markalı diyalog */
   .mask{position:fixed;inset:0;background:rgba(5,9,16,.62);backdrop-filter:blur(6px);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px;animation:fade .18s ease;}
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow-lg);width:100%;max-width:420px;padding:26px;}
-  .modal .mi{width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:#fff;margin-bottom:16px;}
+  .modal .mi{width:42px;height:42px;border-radius:11px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;margin-bottom:16px;}
   .modal h3{margin:0 0 6px;font-size:18px;font-weight:750;}
   .modal p{margin:0 0 18px;color:var(--ink-2);font-size:13px;}
   .modal input{width:100%;margin-bottom:16px;}
@@ -254,10 +254,10 @@
 <body>
 <div class="app">
   <aside class="rail">
-    <div class="brand"><span class="logo" id="logo"></span><div><b>AurasVision</b><span>Görüntü analitiği</span></div></div>
+    <div class="brand"><span class="logo" id="logo"></span><div><b>AurasVision</b><span>Güvenlik Sistemi</span></div></div>
     <nav class="nav" id="nav"></nav>
     <div class="rail-foot">
-      <button class="sysbtn" id="sysbtn" onclick="toggleSys()" title="sistem durumu — ayrıntı için tıklayın">
+      <button class="sysbtn" id="sysbtn" onclick="toggleSys()" title="Sistem durumu">
         <i id="sysdot"></i><span id="systxt">kontrol ediliyor…</span></button>
       <button class="icon-btn" id="theme" onclick="toggleTheme()" aria-label="tema"></button>
     </div>
@@ -286,7 +286,10 @@ const IC={
   bolt:'<path d="M13 2L4 14h7l-1 8 9-12h-7z" fill="currentColor" stroke="none"/>',
 };
 const svg=(n,s=19)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${IC[n]||''}</svg>`;
-document.getElementById('logo').innerHTML=svg('bolt',18);
+document.getElementById('logo').innerHTML=
+  '<svg width="30" height="30" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6">'+
+  '<circle cx="16" cy="16" r="11"/><circle cx="16" cy="16" r="3.6" fill="currentColor" stroke="none"/>'+
+  '<path d="M16 5v5M16 22v5M5 16h5M22 16h5" stroke-linecap="round"/></svg>';
 
 /* Sekmeler görev gruplarına ayrıldı: operatör günlük işini (izleme) yönetim
    işinden (kamera/bölge/liste ayarı) ayrı görür. Giriş ekranı artık PANEL —
@@ -296,9 +299,9 @@ const NAV=[
   ["events","Olaylar","events","OLAYLAR"],["lists","İzleme listeleri","lists"],
   ["cams","Kameralar","cams","YÖNETİM"],["zones","Bölgeler","zones"],
   ["test","Test","test"],["sys","Sistem","bolt"]];
-const TITLES={panel:["Panel","Sistemin son durumu tek ekranda"],
-  sys:["Sistem","Bileşen sağlığı, arşiv ve tanılama"],
-  live:["Canlı görünüm","Tüm kameralar gerçek zamanlı"],cams:["Kameralar","IP / RTSP kaynakları"],zones:["Bölgeler ve çizgiler","Görüntüye çiz · sürükle düzelt · ✕ sil"],test:["Test ve çalıştır","Analizi çalıştır, sonucu ve videoyu gör"],rec:["Kayıtlar","Arşivde gezin — zaman çizelgesinden geçmişe git"],events:["Olaylar","Birleşik akış — sayım · plaka · yüz"],lists:["İzleme listeleri","Kara liste / VIP — eşleşince uyarı"]};
+const TITLES={panel:["Panel","Sistem özeti"],
+  sys:["Sistem","Bileşen durumu ve arşiv"],
+  live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım çizgisi ve ihlal alanı"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],events:["Olaylar","Sayım, plaka ve yüz"],lists:["İzleme listeleri","Kara liste ve VIP"]};
 let CAMS=[],active="panel";
 let LIVE_COUNTS={},LIVE_ACTIVE=false;
 const $=s=>document.querySelector(s);
@@ -331,9 +334,9 @@ function askToken(){
   const p=new Promise(resolve=>{
     const mask=document.createElement("div");mask.className="mask";
     mask.innerHTML=`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
-      <div class="mi">${svg('bolt',22)}</div>
+      <div class="mi">${svg('live',20)}</div>
       <h3 id="mt">Erişim anahtarı</h3>
-      <p>Bu kurulum korumalı. Devam etmek için sistem yöneticinizden aldığınız anahtarı girin.</p>
+      <p>Devam etmek için erişim anahtarınızı girin.</p>
       <input id="tokin" type="password" placeholder="AURAS_TOKEN" autocomplete="current-password"/>
       <div class="acts"><button class="btn" id="tokc">Vazgeç</button><button class="btn pri" id="toko">Giriş yap</button></div></div>`;
     document.body.appendChild(mask);
@@ -419,7 +422,7 @@ function overviewStats(){
     ${kutu("Plaka görevi",pl.length,adlar(pl),pl.length?"var(--warn)":"")}
     ${kutu("Yüz görevi",yz.length,adlar(yz),yz.length?"var(--ok)":"")}
     ${giris===null
-      ? kutu("Canlı sayaç","—",workerCalisiyor()===false?"analiz worker'ı çalışmıyor":"sayım görevi olan kamera bekleniyor")
+      ? kutu("Canlı sayaç","—",workerCalisiyor()===false?"analiz servisi kapalı":"sayım görevi tanımlı kamera yok")
       : kutu("Canlı sayaç",`${giris} / ${cikis}`,`giriş / çıkış · ${canli} kamera`,"var(--accent)")}</div>`;
 }
 function render(){
@@ -485,7 +488,7 @@ function loadPlayer(){
       }
     }
     customElements.define("auras-stream",AurasStream);
-  }).catch(e=>{PLAYER=null;console.warn("oynatıcı yüklenemedi",e);toast("Canlı oynatıcı yüklenemedi — go2rtc erişilebilir mi?","err");});
+  }).catch(e=>{PLAYER=null;console.warn("oynatıcı yüklenemedi",e);toast("Canlı oynatıcı yüklenemedi. go2rtc çalışıyor mu?","err");});
   return PLAYER;
 }
 /* Tam ekran duvar — operatörün asıl çalışma kipi. Esc ile çıkılır; akışlar
@@ -671,7 +674,7 @@ const SCREENS={
       <button class="btn" onclick="duvarModu(true)" title="Tam ekran duvar (Esc ile çık)">${svg('live',15)} Tam ekran</button></div>`;
     const gridCls=duzen==="auto"?"tiles auto":"tiles";
     const gridStyle=duzen==="auto"?"":`--cols:${duzen};`;
-    $("#content").innerHTML=`${overviewStats()}<div class="section-head"><b>Kamera duvarı</b><span class="mut-s">Yüksek çözünürlüklü canlı izleme</span></div><div class="${gridCls}" style="${gridStyle}">${CAMS.map(c=>`
+    $("#content").innerHTML=`${overviewStats()}<div class="section-head"><b>Kamera duvarı</b><span class="mut-s"></span></div><div class="${gridCls}" style="${gridStyle}">${CAMS.map(c=>`
       <div class="tile ${SYS.go2rtc?'clickable':''}" data-state="${SYS.go2rtc?'wait':'live'}"
            ${SYS.go2rtc?`onclick="openCam('${esc(c.id)}',this.querySelector('.nm').textContent.trim())"`:''}>
         ${inner(c)}
@@ -723,9 +726,9 @@ const SCREENS={
         <div class="stat"><div class="k">Aktif görev</div><div class="v">${gorev}</div><div class="s">sayım · plaka · yüz</div></div></div>
       ${CAMS.some(c=>Object.values(c.tasks||{}).some(Boolean))?workerUyarisi():""}
       <div class="section-head"><b>Kamera envanteri</b>
-        <span class="searchbar"><input id="cam-ara" placeholder="Ara — ad veya adres" oninput="filtreCam(this.value)"/></span></div>
+        <span class="searchbar"><input id="cam-ara" placeholder="Ara" oninput="filtreCam(this.value)"/></span></div>
       ${CAMS.length?`<div class="camgrid" id="camgrid">${CAMS.map(kart).join("")}</div>`
-        :`<div class="card"><div class="empty">Henüz kamera yok.<br><span class="mut-s">Sağ üstteki <b>Kamera ekle</b> ile RTSP kameranızı veya bir video dosyasını tanımlayın.</span></div></div>`}`;
+        :`<div class="card"><div class="empty">Henüz kamera yok.<br><span class="mut-s">Sağ üstteki <b>Kamera ekle</b> ile başlayın.</span></div></div>`}`;
   },
   async zones(){
     const camId=window._zc||CAMS[0]?.id;window._zc=camId;
@@ -743,9 +746,9 @@ const SCREENS={
         <div class="tools">
           <div class="card pad">
             <div class="mut-s" style="margin-bottom:10px;">Çizim aracı</div>
-            ${arac("line","Çizgi","—","bas-çek · A→B geçişi sayılır")}
-            ${arac("zone","Bölge","▱","nokta tıkla · alan tanımı")}
-            ${arac("intrusion","İhlal alanı","⚠","nokta tıkla · içeride kalan alarm üretir")}
+            ${arac("line","Çizgi","—","bas-çek, A→B geçişi sayılır")}
+            ${arac("zone","Bölge","▱","köşelere tıklayın")}
+            ${arac("intrusion","İhlal alanı","⚠","içeride kalan alarm üretir")}
             <div class="mut-s" style="margin-top:10px;line-height:1.8;border-top:1px solid var(--line);padding-top:9px;">
               <b>Düzeltme:</b><br>• Noktayı sürükle → taşı<br>• Kenara tıkla → araya nokta ekle<br>
               • Alt+tık → noktayı sil<br>• ✕ rozeti → bölgeyi sil</div>
@@ -762,7 +765,7 @@ const SCREENS={
       <div class="card" style="margin-top:16px;">
         <div style="padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;display:flex;align-items:center;gap:9px;">
           Tanımlı çizgi ve bölgeler <span class="chip" id="zcount" style="background:var(--accent-soft);color:var(--accent);">0</span>
-          <span class="mut-s" style="margin-left:auto;font-weight:400;">Satırın üstüne gelince görüntüde vurgulanır</span></div>
+          <span class="mut-s" style="margin-left:auto;font-weight:400;">Satır üstüne gelince görüntüde vurgulanır</span></div>
         <div id="zlist"></div></div>`;
     await initEditor(camId);
   },
@@ -790,17 +793,16 @@ const SCREENS={
             <div class="seg">${kinds.map(k=>`<button class="${k[0]===kind?'on':''}" onclick="window._tk='${k[0]}';SCREENS.test()">${k[1]}</button>`).join("")}</div></div>
           <div class="field" style="margin:0;">
             <label>Tempo</label>
-            <label class="mut-s" title="Kapalıyken analiz GPU hızında koşar — 50 sn'lik video ~2 sn'de biter" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;height:38px;">
+            <label class="mut-s" title="Kapalıyken analiz GPU hızında koşar; 50 saniyelik video 2 saniyede biter" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;height:38px;">
               <input type="checkbox" id="t-rt" ${window._trt===false?'':'checked'} onchange="window._trt=this.checked" style="width:auto;"> Kamera hızında oynat</label></div>
           <div class="field" style="margin:0;">
             <label>&nbsp;</label>
             <button class="btn" id="btnStop" onclick="stopTest()" style="${currentJobId?'':'display:none;'}">${svg('stop',15)} Durdur</button>
             <span class="mut-s" id="trun"></span></div></div>
         <div class="mut-s" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:18px;flex-wrap:wrap;">
-          <span>Sürekli izlemeden bağımsız <b>tek seferlik</b> analizdir — sonucu burada görürsünüz, worker'a ihtiyaç yoktur.</span>
+          <span>Tek seferlik analiz. Sürekli izlemeden bağımsızdır.</span>
           <span style="margin-left:auto;">Bu kamerada açık görev: ${acik.length?acik.map(k=>`<span class="chip" style="background:var(--accent-soft);color:var(--accent);">${etiket[k]}</span>`).join(" "):'<span class="chip" style="background:var(--hover);color:var(--ink-3);">yok</span>'}</span></div></div>
-      <div id="tres"><div class="card"><div class="empty">Analiz çalıştırılmadı.<br>
-        <span class="mut-s">Sağ üstteki <b>Analizi çalıştır</b> ile başlatın — canlı görüntü ve sayaçlar burada akar.</span></div></div></div>`;
+      <div id="tres"><div class="card"><div class="empty">Analiz çalıştırılmadı.<br><span class="mut-s">Sağ üstteki <b>Analizi çalıştır</b> ile başlatın.</span></div></div></div>`;
   },
   async rec(){
     const camId=window._rc||CAMS[0]?.id;window._rc=camId;
@@ -817,7 +819,7 @@ const SCREENS={
           <canvas id="rtl" height="54" style="width:100%;height:54px;border-radius:10px;border:1px solid var(--line-2);cursor:pointer;background:var(--panel-2);"></canvas>
           <div class="mut-s" style="display:flex;justify-content:space-between;margin-top:6px;">
             <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
-          <div class="mut-s" style="margin-top:8px;">Bant üzerine tıklayarak o ana gidin. Dolu bölümler kayıt, boşluklar kayıt olmayan aralıklardır.</div></div></div>`;
+          <div class="mut-s" style="margin-top:8px;">Bant üzerine tıklayın. Dolu bölümler kayıt, boşluklar kayıt olmayan aralıktır.</div></div></div>`;
     await recYukle(camId,gun);
   },
   async events(){
@@ -860,14 +862,14 @@ const SCREENS={
       ${bekleyen.length?`<div class="card" style="border-color:var(--danger);margin-bottom:18px;overflow:hidden;">
         <div style="padding:13px 16px;border-bottom:1px solid var(--line);color:var(--danger);font-weight:700;display:flex;align-items:center;gap:9px;">
           ${svg('events',17)} Bekleyen uyarı <span class="chip" style="background:var(--danger-soft);color:var(--danger);">${bekleyen.length}</span>
-          <span class="mut-s" style="margin-left:auto;font-weight:400;">Kabul edilen uyarı listeden düşer, kayıt denetim izinde kalır</span></div>
+          <span class="mut-s" style="margin-left:auto;font-weight:400;">Kabul edilen uyarı listeden düşer</span></div>
         ${bekleyen.map(alarmKarti).join("")}</div>`
        :`<div class="card pad" style="margin-bottom:18px;display:flex;align-items:center;gap:12px;">
           <span class="av" style="background:var(--ok-soft);color:var(--ok);">✓</span>
           <div><div style="font-weight:700;">Bekleyen uyarı yok</div>
             <div class="mut-s">${kabulEdilen?kabulEdilen+' uyarı kabul edilmiş durumda.':'İzleme listesi eşleşmesi olduğunda burada görünür.'}</div></div></div>`}
       <div class="section-head"><b>Kamera bazında son 24 saat</b>
-        <span class="mut-s">Karta tıklayın — akış o kameraya filtrelenir</span></div>
+        <span class="mut-s">Karta tıklayın, akış filtrelenir</span></div>
       <div class="camsum" id="camsum"><div class="mut-s" style="padding:6px 2px;">yükleniyor…</div></div>
       <div class="section-head"><b>Olay akışı</b>
         <span style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
@@ -1040,7 +1042,7 @@ function renderZoneList(){
   const el=$("#zlist");if(!el)return;
   const say=$("#zcount");if(say)say.textContent=ZONES.length;
   if(!ZONES.length){
-    el.innerHTML=`<div class="empty">Henüz çizim yok.<br><span class="mut-s">Soldaki araçtan birini seçip görüntü üzerinde çizin.</span></div>`;
+    el.innerHTML=`<div class="empty">Henüz çizim yok.<br><span class="mut-s">Soldaki araçtan birini seçin.</span></div>`;
     return;
   }
   const tur={line:["Çizgi — sayım","var(--warn-soft)","—"],zone:["Bölge — alan","var(--accent-soft)","▱"],
@@ -1115,7 +1117,7 @@ async function stopTest(){
 /* Nötr bilgi bandı (error kırmızısı DEĞİL) — durdurulan/iptal edilen test için */
 const cancelBand=msg=>`<div class="card pad" style="display:flex;align-items:center;gap:12px;">
   <span class="av" style="background:var(--warn-soft);color:var(--warn);">${svg('stop',16)}</span>
-  <div><div style="font-weight:700;">${esc(msg)}</div><div class="mut-s">Analiz sonlandırıldı — istediğinizde yeni bir test başlatabilirsiniz.</div></div></div>`;
+  <div><div style="font-weight:700;">${esc(msg)}</div><div class="mut-s">Analiz sonlandırıldı.</div></div></div>`;
 async function runTest(){
   const camera=window._tc,kind=window._tk;
   // Stale-loop koruması: her yeni çalıştırma sayacı artırır; eski poll döngüleri bayatlar ve sessizce çıkar
@@ -1150,7 +1152,7 @@ async function runTest(){
     if(st&&(st.status==="cancelled"||st.cancelled)){
       const byUser=stopReqJob===job_id;stopReqJob=null;
       setRun(`<span class="mut-s">${esc(st.stage||"iptal edildi")}</span>`);
-      setRes(cancelBand(byUser?"Test durduruldu":"Test iptal edildi — yeni test başlatıldı"));
+      setRes(cancelBand(byUser?"Test durduruldu":"Yeni test başlatıldı, önceki iptal edildi"));
       return;
     }
     if(!st||st.status==="error"){setRun("hata: "+esc(st?st.error:"zaman aşımı"));setRes("");return;}
@@ -1242,7 +1244,7 @@ function renderLive(live){
 }
 function renderResult(s,videos){
   const m=[];
-  if(s.count&&s.count.no_line){m.push(`<div class="metric" style="border:1px solid var(--warn);"><div class="k">Sayım · atlandı</div><div style="margin-top:6px;font-weight:500;">⚠ Bu kamerada kayıtlı sayım çizgisi yok</div><div class="mut-s" style="margin-top:6px;">Bölgeler ekranından çizgiyi çizip <b>Kaydet</b>'e basın, sonra sayımı tekrar çalıştırın.</div></div>`);}
+  if(s.count&&s.count.no_line){m.push(`<div class="metric" style="border:1px solid var(--warn);"><div class="k">Sayım · atlandı</div><div style="margin-top:6px;font-weight:500;">Bu kamerada sayım çizgisi yok</div><div class="mut-s" style="margin-top:6px;">Bölgeler ekranından çizgi çizip kaydedin.</div></div>`);}
   else if(s.count){const ls=s.count.lines||[];
     const perline=ls.length?`<div class="mut-s" style="margin-top:8px;line-height:1.9;">${ls.map(l=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-right:6px;"></span>${esc(l.name)}: <b>${l.in}</b> giriş / <b>${l.out}</b> çıkış`).join("<br>")}</div>`:'';
     m.push(`<div class="metric"><div class="k">Sayım · A→B giriş / B→A çıkış${ls.length>1?' · '+ls.length+' çizgi':''}</div><div class="v">${s.count.in} <span class="mut" style="font-size:15px;">giriş</span> · ${s.count.out} <span class="mut" style="font-size:15px;">çıkış</span></div><div class="mut-s">${s.count.frames} kare</div>${perline}</div>`);}
@@ -1364,7 +1366,7 @@ async function disaAktar(){
         start:new Date(`${REC.gun}T00:00:00`).toISOString(),
         end:new Date(`${REC.gun}T23:59:59.999`).toISOString()})});
     const m=document.createElement("div");m.className="mask";
-    m.innerHTML=`<div class="modal wide"><div class="mi">${svg('bolt',22)}</div>
+    m.innerHTML=`<div class="modal wide"><div class="mi">${svg('live',20)}</div>
       <h3>Kanıt paketi hazır</h3>
       <p>${r.segments} segment tek videoda birleştirildi. Bütünlük özeti manifest dosyasında;
          karşı taraf <span class="mono">sha256sum</span> ile doğrulayabilir.</p>
@@ -1437,7 +1439,7 @@ function openCamForm(cam){
     <div class="modalgovde">
     ${duzenle?"":`<div class="step on" id="st1"><span class="no">1</span>
       <div class="bas">Kamerayı bul</div>
-      <div class="aciklama">En güvenilir yol <b>Kameraya bağlan</b>: adresleri kameranın kendisi bildirir, tahmin yapılmaz. Adresi zaten biliyorsanız bu adımı atlayıp aşağıya yapıştırın. Adresi biliyorsanız bu adımı atlayıp aşağıya yapıştırın.</div>
+      <div class="aciklama">Adresi kamera bildirir, tahmin edilmez. Adresi biliyorsanız bu adımı atlayın. Adresi biliyorsanız bu adımı atlayıp aşağıya yapıştırın.</div>
       <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:9px;">
         <input id="f-ip" placeholder="Kamera IP (ör. 192.168.1.10)" style="flex:1;min-width:160px;"/>
         <input id="f-user" placeholder="kullanıcı" style="width:120px;"/>
@@ -1450,7 +1452,7 @@ function openCamForm(cam){
       <div id="f-disc"></div></div>`}
     <div class="step ${duzenle?'on':''}" id="st2"><span class="no">${duzenle?1:2}</span>
       <div class="bas">Adresi doğrula</div>
-      <div class="aciklama">Kaydetmeden önce bağlantıyı test edin — çözünürlük, fps ve canlı bir kare görürsünüz. Yerel dosya de olur: <span class="mono">data/videos/ornek.mp4</span></div>
+      <div class="aciklama">Bağlantıyı test edin. Yerel dosya de olur: <span class="mono">data/videos/ornek.mp4</span></div>
       <div style="display:flex;gap:9px;flex-wrap:wrap;">
         <input id="f-src" style="flex:1;min-width:250px;" value="${esc(cam?.source||"")}"
                placeholder="rtsp://kullanıcı:şifre@192.168.1.10:554/stream1"/>
@@ -1458,12 +1460,12 @@ function openCamForm(cam){
       <div id="f-probe"></div></div>
     <div class="step ${duzenle?'on':''}" id="st3"><span class="no">${duzenle?2:3}</span>
       <div class="bas">Adlandır ve kaydet</div>
-      <div class="aciklama">Ad operatör ekranlarında görünür; substream çok kameralı duvarda tarayıcıyı rahatlatır.</div>
+      <div class="aciklama">Ad operatör ekranlarında görünür.</div>
       <input id="f-name" value="${esc(cam?.name||"")}" placeholder="Kamera adı — ör. Ana Giriş" style="width:100%;margin-bottom:10px;"/>
       <details class="adv" style="border:0;margin:0;padding:0;" ${cam?.url_sub?"open":""}>
         <summary>Substream (opsiyonel)</summary>
         <input id="f-sub" value="${esc(cam?.url_sub||"")}" placeholder="rtsp://.../stream2" style="width:100%;"/>
-        <div class="hint">Kameranın düşük çözünürlüklü ikinci akışı. Duvarda bu gösterilir; tam çözünürlük tek kamera görünümü ve analiz için saklanır.</div></details></div>
+        <div class="hint">Kameranın ikinci, düşük çözünürlüklü akışı. Duvarda bu gösterilir.</div></details></div>
     </div>
     <div class="acts" style="margin-top:18px;"><button class="btn" id="f-x">Vazgeç</button>
       <button class="btn pri" id="f-ok">${duzenle?"Kaydet":"Ekle"}</button></div></div>`;
@@ -1496,7 +1498,7 @@ function openCamForm(cam){
     // Keşif "kamera bu adresi bildiriyor" der; açılacağını kanıtlamaz (RTSP portu
     // kapalı, kimlik farklı, codec desteksiz olabilir) — o yüzden test şart, ama
     // kullanıcıya ayrıca tıklatmaya gerek yok.
-    toast("Adres bulundu — bağlantı doğrulanıyor…");
+    toast("Adres bulundu, doğrulanıyor");
     m.querySelector("#f-test")?.click();
   };
   if(!duzenle){
@@ -1614,7 +1616,7 @@ function workerUyarisi(){
   if(workerCalisiyor())return "";
   return `<div class="card pad" style="border-color:var(--warn);background:var(--warn-soft);margin-bottom:18px;display:flex;gap:13px;align-items:flex-start;">
     <span class="av" style="background:var(--warn);color:#fff;flex-shrink:0;">!</span>
-    <div><div style="font-weight:700;">Analiz worker'ı çalışmıyor — görevler işlenmiyor</div>
+    <div><div style="font-weight:700;">Analiz servisi çalışmıyor</div>
       <div class="mut-s" style="margin-top:4px;line-height:1.7;">Aşağıdaki Sayım / Plaka / Yüz anahtarları <b>sürekli analizi</b> yönetir; bu servis kapalıyken kamera görüntüsü izlenir ama <b>hiçbir olay üretilmez</b>. Tek seferlik deneme için <b>Test</b> ekranını kullanın.<br>
       Servisi başlatmak için: <span class="mono">python -m src.worker</span> ve <span class="mono">python -m src.ingestor</span></div></div></div>`;
 }
@@ -1626,7 +1628,7 @@ async function toggleTask(cid,key){
     c.tasks=r.tasks;SCREENS.cams();
     // Görevi AÇARKEN worker yoksa kullanıcı bunu anında bilsin
     if(t[key]&&!workerCalisiyor())
-      toast("Görev kaydedildi ama analiz worker'ı çalışmıyor — olay üretilmeyecek.","warn",8000);
+      toast("Görev kaydedildi. Analiz servisi çalışmadığı için olay üretilmeyecek.","warn",8000);
   }
 }
 async function delCam(id,ad){
