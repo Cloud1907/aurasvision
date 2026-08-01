@@ -140,6 +140,11 @@ plate:
   # Yabancı plakada yapısal doğrulama YAPILAMAZ (her ülkenin formatı farklı),
   # bu yüzden güven eşiği daha yüksektir. Düşürmek yanlış okuma riskini artırır.
   foreign_min_conf: 0.75
+  # Duran araç (kavşak kuyruğu, kapı bekleme) tekrar tekrar okunur; bu süre
+  # içinde aynı plakanın (veya OCR varyantının) yeniden yazımı bastırılır.
+  rewrite_suppress_seconds: 45
+  # Plaka bu kadar süre görünmezse "araç geçti" sayılır, olay yazılır
+  vehicle_gap_seconds: 3
   # Kara/VIP liste alarmı için asgari okuma sayısı (oylama penceresinde).
   # Gerçek geçiş birden çok kare okutur; tek karelik eşleşme alarm olmaz.
   alert_min_reads: 2

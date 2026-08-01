@@ -21,7 +21,7 @@ from typing import Any
 from .bus import publish
 from .config import http_options
 from .count import _side
-from .plate import _vote
+from .plate import _lev, _vote
 
 # COCO: plaka tetiği için araç sınıfları (sabit sınıf uzayı, eşik değil)
 _VEHICLE_CLASSES = {2, 3, 5, 7}   # car, motorcycle, bus, truck
@@ -241,6 +241,9 @@ class _SecondStage:
         self.last_run: dict[tuple[str, str], float] = {}   # (cam, görev) → son ts
         self.plate_reads: dict[str, list[dict]] = {}
         self.plate_last_flush: dict[str, float] = {}
+        # kamera → {plaka → son yazım ts}: bekleyen araç her flush'ta yeni
+        # satır olmasın (sahada: kavşakta duran araç 5-6 sn'de bir satır yazdı)
+        self.plate_yazilan: dict[str, dict[str, float]] = {}
         self.face_tracks: dict[str, list] = {}
         self.face_next_tid: dict[str, int] = {}
         self.busy: set[tuple[str, str]] = set()
@@ -284,9 +287,21 @@ class _SecondStage:
                           "frame_idx": frame_idx, "ts_seconds": round(ts, 2)})
         if ts - self.plate_last_flush.get(cam_id, 0.0) >= self.plate_flush and reads:
             self.plate_last_flush[cam_id] = ts
+            yazilan = self.plate_yazilan.setdefault(cam_id, {})
+            bastirma = float(self.cfg.get("plate.rewrite_suppress_seconds", 45.0))
             for v in _vote(reads):
+                # Az önce yazılan plakanın varyantı → duran aracın devamı, satır yok
+                pl = v["plate"]
+                es = next((y for y in yazilan
+                           if abs(len(y) - len(pl)) <= 1 and _lev(y, pl) <= 2), None)
+                if es is not None and ts - yazilan[es] < bastirma:
+                    yazilan[es] = ts
+                    continue
+                yazilan[pl] = ts
                 self.store.add_plate_event(cam_id, v["plate"], v["conf"], v["count"],
                                            v["ts_seconds"], v["frame_idx"])
+            for y in [y for y, t in yazilan.items() if ts - t > 2 * bastirma]:
+                del yazilan[y]
             reads.clear()
 
     # — yüz: hafif IoU takibi, track kapanınca TEK olay (face.py semantiği) —

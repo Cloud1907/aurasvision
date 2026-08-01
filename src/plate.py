@@ -253,12 +253,18 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
         raise FileNotFoundError(f"Video açılamadı: {source}")
     # plaka → (en iyi güven, kanıt yolu); aynı plakayı tekrar tekrar yazmamak için
     kanit_gorulen: dict[str, tuple[float, str]] = {}
+    # Yakın geçmişte yazılan plakalar: plaka → kaynak_saniyesi. Duran araç
+    # (kavşak kuyruğu, kapıda bekleme) tekrar tekrar okunur; her yeniden
+    # görünüş yeni satır olmasın (sahada: aynı araç 23 sn'de 5 satır yazdı).
+    yazilan: dict[str, float] = {}
+    bastirma = float(cfg.get("plate.rewrite_suppress_seconds", 45.0))
     # plaka → {"reads": [...], "son": kaynak_saniyesi}
     # Oylama eskiden koşu BİTİNCE yapılıyordu; canlı kamerada koşu bitmediği için
     # veritabanına hiç satır yazılmıyordu (ölçüm: 1429 kanıt / 0 satır). Üstelik
     # tüm koşuyu tek seferde kümelemek, saatler arayla geçen iki benzer plakayı
     # aynı araç sayıyordu. Artık gruplar araç geçtikçe kapanıp yazılıyor.
     bekleyen: dict[str, dict[str, Any]] = {}
+    ts = 0.0   # son işlenen kaynak saniyesi (kapanışta bastırma penceresi için)
 
     def _kapat(simdi: float, zorla: bool = False) -> None:
         kapanan = [pl for pl, d in bekleyen.items()
@@ -281,11 +287,22 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
             okumalar.extend(bekleyen.pop(pl)["reads"])
             kanit_gorulen.pop(pl, None)   # canlı koşuda sınırsız büyümesin
         for v in _vote(okumalar):
+            # Bu plaka (veya varyantı) az önce yazıldıysa aynı aracın devamıdır
+            pl = v["plate"]
+            es = next((y for y in yazilan
+                       if abs(len(y) - len(pl)) <= 1 and _lev(y, pl) <= 2), None)
+            if es is not None and simdi - yazilan[es] < bastirma:
+                yazilan[es] = simdi          # süreyi tazele: araç hâlâ orada
+                continue
+            yazilan[pl] = simdi
             res.voted.append(v)
             if store is not None:
                 store.add_plate_event(camera_id, v["plate"], v["conf"], v["count"],
                                       v["ts_seconds"], v["frame_idx"],
                                       snapshot=v.get("snapshot", ""))
+        # Eski girdileri temizle (canlı koşuda sınırsız büyümesin)
+        for y in [y for y, t in yazilan.items() if simdi - t > 2 * bastirma]:
+            del yazilan[y]
         if store is not None:
             store.commit()
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -371,5 +388,5 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     if writer is not None:
         writer.release()
     # Kaynak bittiğinde (dosya) veya durdurulduğunda kalan grupları da yaz
-    _kapat(0.0, zorla=True)
+    _kapat(ts, zorla=True)
     return res

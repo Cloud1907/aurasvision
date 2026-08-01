@@ -760,3 +760,52 @@ class TestPlakaGrupKapanisi:
     def test_alakasiz_plaka_birlikte_kapanmaz(self):
         bekleyen = {"FL3599": {"son": 10.0}, "34ABC123": {"son": 12.9}}
         assert self._kapatilanlar(bekleyen, simdi=13.02) == ["FL3599"]
+
+
+class TestDuranArac:
+    """Kavşakta/kapıda BEKLEYEN araç tek satır olmalı.
+
+    Sahada görüldü (abbey-road): yayalar plakayı örtüp açtıkça grup tekrar
+    tekrar kapandı, aynı araç 23 sn'de 5 satır yazdı (LB71KKL aynı metinle
+    iki kez dahil). Bastırma penceresi: az önce yazılan plakanın varyantı
+    yeniden kapanırsa satır yazılmaz, süre tazelenir.
+    """
+
+    def _kos(self, okuma_gruplari, gap=3.0, bastirma=45.0):
+        """run_plate'in kapanış+bastırma mantığının birebir simülasyonu."""
+        from src.plate import _vote, _lev
+        yazilan, satirlar = {}, []
+        for simdi, okumalar in okuma_gruplari:      # her öğe: kapanan grup
+            for v in _vote(okumalar):
+                pl = v["plate"]
+                es = next((y for y in yazilan
+                           if abs(len(y) - len(pl)) <= 1 and _lev(y, pl) <= 2), None)
+                if es is not None and simdi - yazilan[es] < bastirma:
+                    yazilan[es] = simdi
+                    continue
+                yazilan[pl] = simdi
+                satirlar.append(pl)
+        return satirlar
+
+    def _okuma(self, plate, n, t0):
+        return [{"plate": plate, "confidence": 0.85, "frame_idx": int(t0 * 25) + i,
+                 "ts_seconds": t0 + i / 25} for i in range(n)]
+
+    def test_bekleyen_arac_tek_satir(self):
+        # Aynı araç 4 kez örtülüp açılıyor (sahadaki LB71KKL deseni)
+        gruplar = [(34.0, self._okuma("LB71KLL", 1, 30.0)),
+                   (40.0, self._okuma("LB7KK2L", 7, 36.0)),
+                   (46.0, self._okuma("LB71KKL", 7, 42.0)),
+                   (51.0, self._okuma("LB71KKL", 5, 48.0))]
+        assert len(self._kos(gruplar)) == 1
+
+    def test_farkli_arac_yazilir(self):
+        gruplar = [(10.0, self._okuma("LB71KKL", 5, 6.0)),
+                   (20.0, self._okuma("34ABC123", 5, 16.0))]   # bambaşka plaka
+        assert len(self._kos(gruplar)) == 2
+
+    def test_pencere_disinda_ayni_arac_yeni_satir(self):
+        # Aynı araç 2 dk sonra TEKRAR gelirse bu yeni bir geçiştir
+        gruplar = [(10.0, self._okuma("LB71KKL", 5, 6.0)),
+                   (130.0, self._okuma("LB71KKL", 5, 126.0))]
+        assert len(self._kos(gruplar)) == 2
