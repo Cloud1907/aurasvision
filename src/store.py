@@ -177,6 +177,10 @@ class BaseStore:
 
     def delete_camera(self, cid: str) -> None:
         self._x("DELETE FROM cameras WHERE id=?", (cid,))
+        # Sağlık izi de gitmeli: latest_health() kamera tablosuna bakmadığı için
+        # silinen kamera panelde "hatalı" olarak görünmeye devam ediyordu.
+        # Olay/kayıt satırları KALIR — geçmiş kanıt, kamera silindi diye silinmez.
+        self._x("DELETE FROM camera_health WHERE camera_id=?", (cid,))
         self.commit()
 
     # --- Kayıtlar (NVR segmentleri) ---

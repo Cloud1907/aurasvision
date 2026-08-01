@@ -82,7 +82,15 @@ def _run_camera(cam: dict, cfg, bus) -> None:
         # görevler + bölgeler her turda DB'den tazelenir (UI değişikliği restart istemez)
         rstore = open_store(cfg)
         try:
-            fresh = next((c for c in merged_cameras(cfg, rstore) if c["id"] == cid), cam)
+            guncel = merged_cameras(cfg, rstore)
+            # Kamera silindiyse iş parçacığı çıkar. Liste yalnız açılışta
+            # okunduğu için silinen kamera işlenmeye ve "hatalı" heartbeat
+            # yaymaya devam ediyordu — panelde olmayan kamera hata gösteriyordu.
+            if not any(c["id"] == cid for c in guncel):
+                print(f"[worker] {cid} silinmiş — işleme durduruluyor", flush=True)
+                _STAGE[cid] = "silindi"
+                return
+            fresh = next(c for c in guncel if c["id"] == cid)
             # Kameraya özgü HTTP başlıkları (bazı HLS sağlayıcıları Referer şart koşar)
             akis.kaydet(fresh.get("source") or source, fresh.get("http_headers") or "")
             tasks = fresh.get("tasks") or {}
@@ -132,6 +140,8 @@ def _heartbeat(cams: list[dict], bus, interval: float = 5.0) -> None:
     while True:
         for cam in cams:
             st = _STAGE.get(cam["id"], "başlıyor")
+            if st == "silindi":
+                continue
             status = "error" if st.startswith("error") else ("idle" if st in ("idle", "görev kapalı", "bitti") else "ok")
             publish(bus, "health", cam["id"], {"status": status, "stage": st})
         time.sleep(interval)
