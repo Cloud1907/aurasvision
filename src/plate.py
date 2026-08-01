@@ -241,6 +241,8 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     min_conf = cfg.get("plate.min_conf", 0.4)
     fmt = cfg.get("plate.format", "tr")
     yabanci_conf = cfg.get("plate.foreign_min_conf", 0.75)
+    # Bir plaka bu kadar süre görünmezse "araç geçti" sayılır ve grubu kapanır
+    gecis_araligi = float(cfg.get("plate.vehicle_gap_seconds", 3.0))
     vid_stride = cfg.get("detect.vid_stride", 1)
     camera_id = camera_id or Path(source).stem
 
@@ -251,6 +253,30 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
         raise FileNotFoundError(f"Video açılamadı: {source}")
     # plaka → (en iyi güven, kanıt yolu); aynı plakayı tekrar tekrar yazmamak için
     kanit_gorulen: dict[str, tuple[float, str]] = {}
+    # plaka → {"reads": [...], "son": kaynak_saniyesi}
+    # Oylama eskiden koşu BİTİNCE yapılıyordu; canlı kamerada koşu bitmediği için
+    # veritabanına hiç satır yazılmıyordu (ölçüm: 1429 kanıt / 0 satır). Üstelik
+    # tüm koşuyu tek seferde kümelemek, saatler arayla geçen iki benzer plakayı
+    # aynı araç sayıyordu. Artık gruplar araç geçtikçe kapanıp yazılıyor.
+    bekleyen: dict[str, dict[str, Any]] = {}
+
+    def _kapat(simdi: float, zorla: bool = False) -> None:
+        kapanan = [pl for pl, d in bekleyen.items()
+                   if zorla or simdi - d["son"] > gecis_araligi]
+        if not kapanan:
+            return
+        okumalar: list[dict[str, Any]] = []
+        for pl in kapanan:
+            okumalar.extend(bekleyen.pop(pl)["reads"])
+            kanit_gorulen.pop(pl, None)   # canlı koşuda sınırsız büyümesin
+        for v in _vote(okumalar):
+            res.voted.append(v)
+            if store is not None:
+                store.add_plate_event(camera_id, v["plate"], v["conf"], v["count"],
+                                      v["ts_seconds"], v["frame_idx"],
+                                      snapshot=v.get("snapshot", ""))
+        if store is not None:
+            store.commit()
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
     writer = None
@@ -308,11 +334,18 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
                                     etiket=f"{plate}  ({conf:.2f})  kare {frame_idx}"
                                            if conf is not None else f"{plate}  kare {frame_idx}")
                 kanit_gorulen[plate] = ((conf or 0.0), snap)
-            res.reads.append({"plate": plate, "confidence": conf,
-                              "frame_idx": frame_idx, "ts_seconds": round(ts, 2),
-                              "snapshot": snap})
+            okuma = {"plate": plate, "confidence": conf,
+                     "frame_idx": frame_idx, "ts_seconds": round(ts, 2),
+                     "snapshot": snap}
+            res.reads.append(okuma)
+            grup = bekleyen.setdefault(plate, {"reads": [], "son": ts})
+            grup["reads"].append(okuma)
+            grup["son"] = ts
             if on_read:
                 on_read(plate, conf, frame_idx, round(ts, 2))
+
+        # Araç kareden çıktıysa grubunu kapat ve tek satır olarak yaz
+        _kapat(ts)
 
         if writer is not None or on_frame is not None:
             drawn = alpr.draw_predictions(frame)
@@ -326,13 +359,6 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     cap.release()
     if writer is not None:
         writer.release()
-    # Çok-kareli oylama: gürültülü okumaları konsolide et.
-    # DB'ye kare başına değil ARAÇ başına tek satır yazılır (track bazlı olay).
-    res.voted = _vote(res.reads)
-    if store is not None:
-        for v in res.voted:
-            store.add_plate_event(camera_id, v["plate"], v["conf"], v["count"],
-                                  v["ts_seconds"], v["frame_idx"],
-                                  snapshot=v.get("snapshot", ""))
-        store.commit()
+    # Kaynak bittiğinde (dosya) veya durdurulduğunda kalan grupları da yaz
+    _kapat(0.0, zorla=True)
     return res
