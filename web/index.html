@@ -401,7 +401,7 @@ function startSysWatch(){
 /* Sayaç kutuları yalnız bir analiz KOŞARKEN görünür — ekran ilk açılışta eski toplamlarla dolmaz */
 function countBox(id){const c=LIVE_COUNTS[id];if(!LIVE_ACTIVE||!c)return `<div class="countbox" data-countbox="${esc(id)}" style="display:none;"></div>`;return `<div class="countbox" data-countbox="${esc(id)}"><span>${c.in} giriş</span><span>${c.out} çıkış</span></div>`;}
 async function refreshLiveCounts(){try{const res=await api("/counts");LIVE_ACTIVE=!!res.active;const rows=res.rows||[];const next={};rows.forEach(r=>{next[r.camera_id]={in:Number(r.in_count||0),out:Number(r.out_count||0)};});LIVE_COUNTS=next;document.querySelectorAll("[data-countbox]").forEach(el=>{el.outerHTML=countBox(el.dataset.countbox);});// Yalnız canlı ekranın kutuları — diğer ekranların kendi istatistikleri var
-if(active==="live"){const ov=document.querySelector(".overview");if(ov)ov.outerHTML=overviewStats();}}catch(e){}}
+if(active==="panel"){const ov=document.querySelector("#pn-gorev");if(ov)ov.outerHTML=overviewStats();}}catch(e){}}
 function startLiveCounts(){clearInterval(window._countTimer);refreshLiveCounts();window._countTimer=setInterval(refreshLiveCounts,2000);}
 function taskPills(c){const t=c.tasks||{};return `<span class="taskset"><span class="taskpill ${t.count?'on':''}">Sayım</span><span class="taskpill ${t.plate?'on':''}">Plaka</span><span class="taskpill ${t.face?'on':''}">Yüz</span></span>`;}
 /* Canlı ekran özeti — eskiden "Toplam giriş: —" gibi anlamsız kutular vardı:
@@ -416,8 +416,7 @@ function overviewStats(){
   const adlar=l=>l.length?l.map(c=>esc(c.name)).join(", "):"tanımlı değil";
   const kutu=(k,v,s,renk)=>`<div class="stat"><div class="k">${k}</div>
     <div class="v"${renk?` style="color:${renk};"`:""}>${v}</div><div class="s">${s}</div></div>`;
-  return `<div class="overview" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));">
-    ${kutu("Kamera",CAMS.length,`${CAMS.length} kaynak tanımlı`)}
+  return `<div id="pn-gorev" class="overview" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));">
     ${kutu("Sayım görevi",say.length,adlar(say),say.length?"var(--accent)":"")}
     ${kutu("Plaka görevi",pl.length,adlar(pl),pl.length?"var(--warn)":"")}
     ${kutu("Yüz görevi",yz.length,adlar(yz),yz.length?"var(--ok)":"")}
@@ -582,6 +581,7 @@ const SCREENS={
     $("#tact").innerHTML=`<button class="btn" onclick="go('live')">${svg('cams',15)} Kamera duvarına git</button>`;
     $("#content").innerHTML=`<div id="pn-ust" class="overview" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));">
         <div class="stat"><div class="k">Yükleniyor</div><div class="v">—</div></div></div>
+      ${overviewStats()}
       <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(340px,1fr));">
         <div class="card"><div style="padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;">Bekleyen uyarılar</div>
           <div id="pn-uyari"><div class="empty">yükleniyor…</div></div></div>
@@ -678,7 +678,7 @@ const SCREENS={
       <button class="btn" onclick="duvarModu(true)" title="Tam ekran duvar (Esc ile çık)">${svg('live',15)} Tam ekran</button></div>`;
     const gridCls=duzen==="auto"?"tiles auto":"tiles";
     const gridStyle=duzen==="auto"?"":`--cols:${duzen};`;
-    $("#content").innerHTML=`${overviewStats()}<div class="section-head"><b>Kamera duvarı</b><span class="mut-s"></span></div><div class="${gridCls}" style="${gridStyle}">${CAMS.map(c=>`
+    $("#content").innerHTML=`<div class="${gridCls}" style="${gridStyle}">${CAMS.map(c=>`
       <div class="tile ${SYS.go2rtc?'clickable':''}" data-state="${SYS.go2rtc?'wait':'live'}"
            ${SYS.go2rtc?`onclick="openCam('${esc(c.id)}',this.querySelector('.nm').textContent.trim())"`:''}>
         ${inner(c)}
@@ -717,8 +717,8 @@ const SCREENS={
         <div class="camname">${esc(c.name)} ${c.url_sub?'<span class="subpill" title="duvarda düşük çözünürlüklü akış">substream</span>':''}</div>
         <div class="camsrc" title="${esc(maskUrl(c.source))}">${esc(maskUrl(c.source))}</div></div>
       <div class="camfoot">
-        <span style="display:inline-flex;gap:6px;">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"]].map(([k,l])=>
-          `<button class="chipbtn ${t[k]?'on':''}" title="${l} görevini aç/kapat" onclick="toggleTask('${esc(c.id)}','${k}')">${l}</button>`).join("")}</span>
+        <span style="display:inline-flex;gap:6px;">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["record","Kayıt"]].map(([k,l])=>
+          `<button class="chipbtn ${(k==="record"?t[k]!==false:t[k])?'on':''}" title="${k==='record'?'Sürekli kaydı aç/kapat (NVR arşivi)':l+' görevini aç/kapat'}" onclick="toggleTask('${esc(c.id)}','${k}')">${l}</button>`).join("")}</span>
         <span style="display:inline-flex;gap:5px;">
           <button class="btn sm ico" title="düzenle" onclick='openCamForm(${JSON.stringify({id:c.id,name:c.name,source:c.source,url_sub:c.url_sub||""}).replace(/'/g,"&#39;")})'>${svg('zones',14)}</button>
           <button class="btn sm ico" title="sil" onclick="delCam('${esc(c.id)}','${esc(c.name)}')">${svg('x',14)}</button></span></div></div>`;};
@@ -818,12 +818,22 @@ const SCREENS={
         <input type="date" value="${gun}" onchange="window._rg=this.value;SCREENS.rec()"/>
         <span class="mut-s" id="rstat">yükleniyor…</span></div>
       <div class="card pad">
-        <video id="recvid" controls playsinline style="width:100%;max-height:56vh;background:#000;border-radius:var(--r-lg);display:block;"></video>
-        <div style="margin-top:14px;">
-          <canvas id="rtl" height="54" style="width:100%;height:54px;border-radius:10px;border:1px solid var(--line-2);cursor:pointer;background:var(--panel-2);"></canvas>
+        <video id="recvid" playsinline style="width:100%;max-height:56vh;background:#000;border-radius:var(--r-lg);display:block;"></video>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">
+          <div class="seg">
+            <button title="60 sn geri (Shift+←)" onclick="recAtla(-60)">−60</button>
+            <button title="10 sn geri (←)" onclick="recAtla(-10)">−10</button>
+            <button id="rpp" title="Oynat / Duraklat (Boşluk)" style="min-width:44px;" onclick="recDurdurBaslat()">❚❚</button>
+            <button title="10 sn ileri (→)" onclick="recAtla(10)">+10</button>
+            <button title="60 sn ileri (Shift+→)" onclick="recAtla(60)">+60</button></div>
+          <div class="seg" id="rhiz">${[0.5,1,2,4,8].map(h=>`<button class="${h===1?'on':''}" onclick="recHiz(${h},this)">${h}×</button>`).join("")}</div>
+          <button class="btn sm" title="Günün son kaydına git" onclick="recSonaGit()">Son kayıt</button>
+          <span class="mono" id="rsaat" style="margin-left:auto;font-size:15px;font-weight:700;">--:--:--</span></div>
+        <div style="margin-top:12px;">
+          <canvas id="rtl" height="54" style="width:100%;height:54px;border-radius:10px;border:1px solid var(--line-2);cursor:crosshair;background:var(--panel-2);"></canvas>
           <div class="mut-s" style="display:flex;justify-content:space-between;margin-top:6px;">
             <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
-          <div class="mut-s" style="margin-top:8px;">Bant üzerine tıklayın. Dolu bölümler kayıt, boşluklar kayıt olmayan aralıktır.</div></div></div>`;
+          <div class="mut-s" style="margin-top:8px;">Bant üzerinde sürükleyerek arayın. Dolu bölümler kayıt, boşluklar kayıt olmayan aralıktır.</div></div></div>`;
     await recYukle(camId,gun);
   },
   async events(){
@@ -1304,13 +1314,61 @@ async function recYukle(cam,gun){
     : "Bu gün için kayıt yok";
   recCiz();
   const cv=$("#rtl");
-  if(cv)cv.onclick=e=>{
-    const r=cv.getBoundingClientRect();
-    recOynat((e.clientX-r.left)/r.width*86400);
-  };
+  if(cv){
+    // Sürükleyerek arama: basılıyken imleç gezinir, bırakınca o ana atlanır.
+    // (Salt onclick "dandik" kalıyordu — NVR'da scrub beklenir.)
+    const ans=e=>{const r=cv.getBoundingClientRect();
+      return Math.max(0,Math.min(86400,(e.clientX-r.left)/r.width*86400));};
+    let basili=false;
+    cv.onpointerdown=e=>{basili=true;cv.setPointerCapture(e.pointerId);
+      REC.imlec=ans(e);recCiz();};
+    cv.onpointermove=e=>{
+      const t=ans(e);
+      cv.title=recSaatYaz(t);
+      if(basili){REC.imlec=t;recCiz();$("#rsaat").textContent=recSaatYaz(t);}};
+    cv.onpointerup=e=>{basili=false;recOynat(ans(e));};
+  }
   const v=$("#recvid");
-  if(v)v.onended=()=>recSonraki();
+  if(v){
+    v.onended=()=>recSonraki();
+    // İmleç oynatmayı takip eder — nerede olduğunu bant üstünde GÖR
+    v.ontimeupdate=()=>{
+      if(!REC.aktif)return;
+      REC.imlec=_recSaniye(REC.aktif.start_time)+v.currentTime;
+      $("#rsaat").textContent=recSaatYaz(REC.imlec);
+      const p=$("#rpp");if(p)p.textContent=v.paused?"▶":"❚❚";
+      if(!REC._cizZamani||Date.now()-REC._cizZamani>400){REC._cizZamani=Date.now();recCiz();}
+    };
+  }
+  // Klavye: ←/→ 10 sn, Shift ile 60 sn, Boşluk oynat/duraklat (yalnız bu ekranda)
+  document.onkeydown=e=>{
+    if(active!=="rec"||e.target.tagName==="INPUT"||e.target.tagName==="SELECT")return;
+    if(e.key==="ArrowLeft"){e.preventDefault();recAtla(e.shiftKey?-60:-10);}
+    else if(e.key==="ArrowRight"){e.preventDefault();recAtla(e.shiftKey?60:10);}
+    else if(e.key===" "){e.preventDefault();recDurdurBaslat();}
+  };
   if(REC.segler.length)recOynat(_recSaniye(REC.segler[0].start_time));
+}
+const recSaatYaz=t=>{const x=Math.max(0,Math.round(t));
+  return `${String(Math.floor(x/3600)).padStart(2,"0")}:${String(Math.floor(x%3600/60)).padStart(2,"0")}:${String(x%60).padStart(2,"0")}`;};
+function recAtla(delta){
+  if(REC.imlec==null)return;
+  recOynat(Math.max(0,Math.min(86400,REC.imlec+delta)),delta<0?"geri":"ileri");
+}
+function recDurdurBaslat(){
+  const v=$("#recvid");if(!v)return;
+  if(v.paused)v.play().catch(()=>{});else v.pause();
+  const p=$("#rpp");if(p)p.textContent=v.paused?"▶":"❚❚";
+}
+function recHiz(h,btn){
+  REC.hiz=h;
+  const v=$("#recvid");if(v)v.playbackRate=h;
+  document.querySelectorAll("#rhiz button").forEach(b=>b.classList.toggle("on",b===btn));
+}
+function recSonaGit(){
+  if(!REC.segler.length)return;
+  const son=REC.segler[REC.segler.length-1];
+  recOynat(_recSaniye(son.start_time)+Math.max(0,(+son.duration||0)-5));
 }
 const _recSaniye=t=>{const d=new Date(String(t).replace(" ","T"));
   return d.getHours()*3600+d.getMinutes()*60+d.getSeconds();};
@@ -1335,25 +1393,31 @@ function recCiz(){
     cx.fillStyle="#ef4444";cx.fillRect(REC.imlec/86400*W-1,0,2,H);
   }
 }
-function recBul(saniye){
-  // İstenen ana en yakın segment (içinde ya da sonrasındaki ilk)
-  let en=null;
+function recBul(saniye,yon){
+  // İstenen anı içeren segment; boşluktaysa yöne göre komşu:
+  //   ileri (varsayılan) → sonraki segmentin başı
+  //   geri              → önceki segmentin sonu (yoksa geri sarmak imkânsızdı)
+  let sonraki=null,onceki=null;
   for(const r of REC.segler){
     const b=_recSaniye(r.start_time),s=+r.duration||0;
     if(saniye>=b&&saniye<b+s)return {r,offset:saniye-b};
-    if(b>=saniye&&(en===null||b<_recSaniye(en.start_time)))en=r;
+    if(b>=saniye&&(sonraki===null||b<_recSaniye(sonraki.start_time)))sonraki=r;
+    if(b<saniye&&(onceki===null||b>_recSaniye(onceki.start_time)))onceki=r;
   }
-  return en?{r:en,offset:0}:null;
+  if(yon==="geri"&&onceki)return {r:onceki,offset:Math.max(0,(+onceki.duration||0)-3)};
+  return sonraki?{r:sonraki,offset:0}:(onceki?{r:onceki,offset:Math.max(0,(+onceki.duration||0)-3)}:null);
 }
-function recOynat(saniye){
-  const bul=recBul(saniye);
+function recOynat(saniye,yon){
+  const bul=recBul(saniye,yon);
   const v=$("#recvid");if(!v)return;
   if(!bul){toast("O anda kayıt yok","warn");return;}
   REC.aktif=bul.r;REC.imlec=_recSaniye(bul.r.start_time)+bul.offset;
   const yeni=`/media/rec/${bul.r.path}${tokq().replace("&","?")}`;
   if(!v.src.endsWith(bul.r.path.split("?")[0])){v.src=yeni;}
   v.currentTime=bul.offset;
+  v.playbackRate=REC.hiz||1;   // hız seçimi segment geçişinde sıfırlanmasın
   v.play().catch(()=>{});
+  const p=$("#rpp");if(p)p.textContent="❚❚";
   recCiz();
 }
 function recSonraki(){
@@ -1643,7 +1707,7 @@ function workerUyarisi(){
 }
 async function toggleTask(cid,key){
   const c=CAMS.find(x=>x.id===cid);if(!c)return;
-  const t=Object.assign({count:false,plate:false,face:false},c.tasks||{});t[key]=!t[key];
+  const t=Object.assign({count:false,plate:false,face:false,record:true},c.tasks||{});t[key]=!t[key];
   const r=await api(`/cameras/${encodeURIComponent(cid)}/tasks`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:t})});
   if(r&&r.ok){
     c.tasks=r.tasks;SCREENS.cams();

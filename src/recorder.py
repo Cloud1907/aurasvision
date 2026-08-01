@@ -260,30 +260,56 @@ def main() -> None:
     gunluk_kur("kayit", cfg)
     if not cfg.get("record.enabled", True):
         raise SystemExit("record.enabled=false — kayıt servisi kapalı")
-    store = open_store(cfg)
-    cams = [c for c in merged_cameras(cfg, store) if c.get("enabled", True)]
-    store.close()
-
     sec = os.environ.get("AURAS_CAMERAS", "")
-    if sec:
-        keep = {x.strip() for x in sec.split(",") if x.strip()}
-        cams = [c for c in cams if c["id"] in keep]
-    if not cams:
-        raise SystemExit("Kaydedilecek kamera yok")
+    secim = {x.strip() for x in sec.split(",") if x.strip()} if sec else None
 
+    def _kayitlik() -> list[dict]:
+        """Kaydedilecek kameralar: etkin + record tiki açık (+ AURAS_CAMERAS)."""
+        st = open_store(cfg)
+        try:
+            out = [c for c in merged_cameras(cfg, st)
+                   if c.get("enabled", True)
+                   and (c.get("tasks") or {}).get("record", True)]
+        finally:
+            st.close()
+        return [c for c in out if c["id"] in secim] if secim is not None else out
+
+    cams = _kayitlik()
     print(f"[rec] {len(cams)} kamera kaydediliyor → {kayit_kok(cfg)}", flush=True)
-    kayitcilar = [CameraRecorder(c, cfg) for c in cams]
-    for k in kayitcilar:
-        k.start()
+    kayitcilar: dict[str, CameraRecorder] = {}
+    for c in cams:
+        kayitcilar[c["id"]] = CameraRecorder(c, cfg)
+        kayitcilar[c["id"]].start()
 
     try:
+        sayac = 0
         while True:
-            temizlik(cfg, cams)
-            time.sleep(300)   # 5 dakikada bir saklama/kota kontrolü
+            time.sleep(30)
+            sayac += 30
+            # Kamera listesi ve record tiki her turda tazelenir: UI'dan kaydı
+            # kapatmak/açmak veya kamera eklemek servis restart'ı İSTEMEZ.
+            # (Eski davranış: liste yalnız açılışta okunuyordu — yeni kamera
+            # sunucu yeniden başlatılana dek hiç kaydedilmiyordu.)
+            try:
+                guncel = {c["id"]: c for c in _kayitlik()}
+            except Exception as e:
+                print(f"[rec] kamera listesi okunamadı: {e}", flush=True)
+                continue
+            for cid in [x for x in kayitcilar if x not in guncel]:
+                print(f"[rec] {cid} kayıttan çıkarıldı", flush=True)
+                kayitcilar.pop(cid).dur_()
+            for cid, c in guncel.items():
+                if cid not in kayitcilar:
+                    print(f"[rec] {cid} kayda alındı", flush=True)
+                    kayitcilar[cid] = CameraRecorder(c, cfg)
+                    kayitcilar[cid].start()
+            if sayac >= 300:   # 5 dakikada bir saklama/kota kontrolü
+                sayac = 0
+                temizlik(cfg, list(guncel.values()))
     except KeyboardInterrupt:
         pass
     finally:
-        for k in kayitcilar:
+        for k in kayitcilar.values():
             k.dur_()
         time.sleep(2)
 

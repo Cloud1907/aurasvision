@@ -313,7 +313,13 @@ def api_set_tasks(cid: str, p: TasksPayload):
     cam = _camera(cid)
     if not cam:
         raise HTTPException(404, "Kamera bulunamadı")
-    tasks = {k: bool(p.tasks.get(k, False)) for k in DEFAULT_TASKS}
+    # Gönderilmeyen anahtar mevcut değeri KORUR (yoksa varsayılan). Eski davranış
+    # False'a düşürüyordu: DEFAULT_TASKS'a "record" eklenince, görev değiştiren
+    # her tıklama kaydı sessizce kapatırdı.
+    eski_tasks = cam.get("tasks") or {}
+    tasks = {k: bool(p.tasks[k]) if k in p.tasks
+             else bool(eski_tasks.get(k, DEFAULT_TASKS[k]))
+             for k in DEFAULT_TASKS}
     s = _store()
     try:
         # config kamerası DB'de yoksa önce upsert (görevler DB'de yaşar).
