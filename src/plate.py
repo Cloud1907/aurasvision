@@ -249,6 +249,8 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     cap = akis.ac(source, cfg)
     if not cap.isOpened():
         raise FileNotFoundError(f"Video açılamadı: {source}")
+    # plaka → (en iyi güven, kanıt yolu); aynı plakayı tekrar tekrar yazmamak için
+    kanit_gorulen: dict[str, tuple[float, str]] = {}
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
     writer = None
@@ -288,12 +290,24 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
             res.total_reads += 1
             # Kanıt karesi: okunan plakanın kırpması + bağlam. Olmadan "doğru okudu mu"
             # sorusu denetlenemez (bkz. evidence.py — KVKK ve saklama süresi orada).
+            #
+            # ARAÇ başına bir kanıt yeter. Kare başına yazılınca tek bir araç
+            # geçişi onlarca dosya üretiyordu (ölçüm: 1429 dosya / 0 DB satırı) —
+            # hem disk hem KVKK açısından yanlış: aynı plakanın gereksiz kopyası
+            # kişisel veriyi çoğaltmaktan başka bir şey yapmıyor.
+            # En güvenli okumanınki saklanır: sonraki okuma daha yüksek güvenliyse
+            # kanıt tazelenir, değilse atlanır.
             det = getattr(pred, "detection", None)
             bb = getattr(det, "bounding_box", None)
-            snap = kanit_kaydet(cfg, frame, camera_id, "plate",
-                                box=(bb.x1, bb.y1, bb.x2, bb.y2) if bb is not None else None,
-                                etiket=f"{plate}  ({conf:.2f})  kare {frame_idx}"
-                                       if conf is not None else f"{plate}  kare {frame_idx}")
+            onceki = kanit_gorulen.get(plate)
+            if onceki is not None and (conf or 0.0) <= onceki[0]:
+                snap = onceki[1]
+            else:
+                snap = kanit_kaydet(cfg, frame, camera_id, "plate",
+                                    box=(bb.x1, bb.y1, bb.x2, bb.y2) if bb is not None else None,
+                                    etiket=f"{plate}  ({conf:.2f})  kare {frame_idx}"
+                                           if conf is not None else f"{plate}  kare {frame_idx}")
+                kanit_gorulen[plate] = ((conf or 0.0), snap)
             res.reads.append({"plate": plate, "confidence": conf,
                               "frame_idx": frame_idx, "ts_seconds": round(ts, 2),
                               "snapshot": snap})
