@@ -21,7 +21,7 @@ from typing import Any
 from .bus import publish
 from .config import http_options
 from .count import _side
-from .plate import _lev, _vote
+from .plate import PlakaTakip
 
 # COCO: plaka tetiği için araç sınıfları (sabit sınıf uzayı, eşik değil)
 _VEHICLE_CLASSES = {2, 3, 5, 7}   # car, motorcycle, bus, truck
@@ -237,13 +237,14 @@ class _SecondStage:
         self.watch = watch
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="stage2")
         self.min_interval = float(cfg.get("worker.second_stage_interval", 0.7))
-        self.plate_flush = float(cfg.get("worker.plate_flush_seconds", 5.0))
         self.last_run: dict[tuple[str, str], float] = {}   # (cam, görev) → son ts
-        self.plate_reads: dict[str, list[dict]] = {}
-        self.plate_last_flush: dict[str, float] = {}
-        # kamera → {plaka → son yazım ts}: bekleyen araç her flush'ta yeni
-        # satır olmasın (sahada: kavşakta duran araç 5-6 sn'de bir satır yazdı)
-        self.plate_yazilan: dict[str, dict[str, float]] = {}
+        # Kamera başına konum-temelli araç takibi (plate.PlakaTakip gerekçesi):
+        # 5 sn'lik biriktirme kovası bekleyen aracı her kova sonunda yeniden
+        # yazıyordu; metin bastırması ise kameradan çıkıp GERİ GELEN aracı
+        # yutuyordu. İz = araç: durunca tek satır, geri gelince yeni satır.
+        self.plate_takip: dict[str, PlakaTakip] = {}
+        self.plate_kayip = float(cfg.get("plate.track_lost_seconds", 4.0))
+        self.plate_dirilme = float(cfg.get("plate.track_rebirth_seconds", 30.0))
         self.face_tracks: dict[str, list] = {}
         self.face_next_tid: dict[str, int] = {}
         self.busy: set[tuple[str, str]] = set()
@@ -275,7 +276,8 @@ class _SecondStage:
         min_conf = self.cfg.get("plate.min_conf", 0.4)
         fmt = self.cfg.get("plate.format", "tr")
         yabanci_conf = self.cfg.get("plate.foreign_min_conf", 0.75)
-        reads = self.plate_reads.setdefault(cam_id, [])
+        takip = self.plate_takip.setdefault(
+            cam_id, PlakaTakip(kayip_sn=self.plate_kayip, dirilme_sn=self.plate_dirilme))
         for pred in alpr.predict(bgr):
             ocr = getattr(pred, "ocr", None)
             text = getattr(ocr, "text", None) if ocr else None
@@ -283,26 +285,15 @@ class _SecondStage:
             plate = accept_read(text, conf, min_conf, fmt, yabanci_conf)
             if plate is None:
                 continue
-            reads.append({"plate": plate, "confidence": conf,
-                          "frame_idx": frame_idx, "ts_seconds": round(ts, 2)})
-        if ts - self.plate_last_flush.get(cam_id, 0.0) >= self.plate_flush and reads:
-            self.plate_last_flush[cam_id] = ts
-            yazilan = self.plate_yazilan.setdefault(cam_id, {})
-            bastirma = float(self.cfg.get("plate.rewrite_suppress_seconds", 45.0))
-            for v in _vote(reads):
-                # Az önce yazılan plakanın varyantı → duran aracın devamı, satır yok
-                pl = v["plate"]
-                es = next((y for y in yazilan
-                           if abs(len(y) - len(pl)) <= 1 and _lev(y, pl) <= 2), None)
-                if es is not None and ts - yazilan[es] < bastirma:
-                    yazilan[es] = ts
-                    continue
-                yazilan[pl] = ts
-                self.store.add_plate_event(cam_id, v["plate"], v["conf"], v["count"],
-                                           v["ts_seconds"], v["frame_idx"])
-            for y in [y for y, t in yazilan.items() if ts - t > 2 * bastirma]:
-                del yazilan[y]
-            reads.clear()
+            det = getattr(pred, "detection", None)
+            bb = getattr(det, "bounding_box", None)
+            takip.ekle({"plate": plate, "confidence": conf,
+                        "frame_idx": frame_idx, "ts_seconds": round(ts, 2)},
+                       (bb.x1, bb.y1, bb.x2, bb.y2) if bb is not None else (0, 0, 1, 1),
+                       ts)
+        for v in takip.kapat(ts):
+            self.store.add_plate_event(cam_id, v["plate"], v["conf"], v["count"],
+                                       v["ts_seconds"], v["frame_idx"])
 
     # — yüz: hafif IoU takibi, track kapanınca TEK olay (face.py semantiği) —
     def _run_face(self, cam_id: str, bgr, ts: float, frame_idx: int) -> None:

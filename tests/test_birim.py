@@ -723,89 +723,83 @@ class TestYabanciPlaka:
         assert plaka_turu("CB1234AH") == "yabanci"
 
 
-class TestPlakaGrupKapanisi:
-    """Aynı aracın OCR varyantları TEK satır olmalı.
+class TestPlakaTakip:
+    """Konum-temelli araç takibi: durunca TEK satır, geri gelince YENİ satır.
 
-    Sahada görüldü: FL3599 ve FL3594 ayrı satır yazıldı. Sebep, grupların
-    plaka metnine göre kapanması ve varyantların son görülme anlarının
-    milisaniyelerle ayrılmasıydı — ayrı oylamalara düşüyorlardı.
+    Sahada iki hata da görüldü: (1) kavşakta bekleyen araç 23 sn'de 5 satır
+    yazdı; (2) metin+süre bastırması, kameradan çıkıp geri gelen aracı
+    yutacaktı. Aracı ayırt eden plakanın KONUMU; bu sınıf onu sınar.
     """
 
-    def _kapatilanlar(self, bekleyen, simdi, gap=3.0):
-        """run_plate'teki _kapat seçim mantığı."""
-        kapanan = [pl for pl, d in bekleyen.items() if simdi - d["son"] > gap]
-        if not kapanan:
-            return []
-        for pl in list(bekleyen):
-            if pl in kapanan:
-                continue
-            if any(abs(len(pl) - len(k)) <= 1 and _lev(pl, k) <= 2 for k in kapanan):
-                kapanan.append(pl)
-        return kapanan
-
-    def test_varyantlar_birlikte_kapanir(self):
-        bekleyen = {"FL3599": {"son": 10.00}, "FL3594": {"son": 10.04}}
-        # FL3599'un süresi doldu, FL3594'ünki 0.04 sn sonra dolacak
-        kapanan = self._kapatilanlar(bekleyen, simdi=13.02)
-        assert set(kapanan) == {"FL3599", "FL3594"}
-
-    def test_varyantlar_tek_satira_iner(self):
-        okumalar = ([{"plate": "FL3599", "confidence": 0.754, "frame_idx": i,
-                      "ts_seconds": i / 25} for i in range(4)] +
-                    [{"plate": "FL3594", "confidence": 0.776, "frame_idx": i,
-                      "ts_seconds": i / 25} for i in range(4, 6)])
-        v = _vote(okumalar)
-        assert len(v) == 1 and v[0]["count"] == 6
-
-    def test_alakasiz_plaka_birlikte_kapanmaz(self):
-        bekleyen = {"FL3599": {"son": 10.0}, "34ABC123": {"son": 12.9}}
-        assert self._kapatilanlar(bekleyen, simdi=13.02) == ["FL3599"]
-
-
-class TestDuranArac:
-    """Kavşakta/kapıda BEKLEYEN araç tek satır olmalı.
-
-    Sahada görüldü (abbey-road): yayalar plakayı örtüp açtıkça grup tekrar
-    tekrar kapandı, aynı araç 23 sn'de 5 satır yazdı (LB71KKL aynı metinle
-    iki kez dahil). Bastırma penceresi: az önce yazılan plakanın varyantı
-    yeniden kapanırsa satır yazılmaz, süre tazelenir.
-    """
-
-    def _kos(self, okuma_gruplari, gap=3.0, bastirma=45.0):
-        """run_plate'in kapanış+bastırma mantığının birebir simülasyonu."""
-        from src.plate import _vote, _lev
-        yazilan, satirlar = {}, []
-        for simdi, okumalar in okuma_gruplari:      # her öğe: kapanan grup
-            for v in _vote(okumalar):
-                pl = v["plate"]
-                es = next((y for y in yazilan
-                           if abs(len(y) - len(pl)) <= 1 and _lev(y, pl) <= 2), None)
-                if es is not None and simdi - yazilan[es] < bastirma:
-                    yazilan[es] = simdi
-                    continue
-                yazilan[pl] = simdi
-                satirlar.append(pl)
-        return satirlar
-
-    def _okuma(self, plate, n, t0):
-        return [{"plate": plate, "confidence": 0.85, "frame_idx": int(t0 * 25) + i,
-                 "ts_seconds": t0 + i / 25} for i in range(n)]
+    def _oku(self, plate, t, conf=0.85):
+        return {"plate": plate, "confidence": conf,
+                "frame_idx": int(t * 25), "ts_seconds": round(t, 2)}
 
     def test_bekleyen_arac_tek_satir(self):
-        # Aynı araç 4 kez örtülüp açılıyor (sahadaki LB71KKL deseni)
-        gruplar = [(34.0, self._okuma("LB71KLL", 1, 30.0)),
-                   (40.0, self._okuma("LB7KK2L", 7, 36.0)),
-                   (46.0, self._okuma("LB71KKL", 7, 42.0)),
-                   (51.0, self._okuma("LB71KKL", 5, 48.0))]
-        assert len(self._kos(gruplar)) == 1
+        from src.plate import PlakaTakip
+        tk = PlakaTakip(kayip_sn=4.0, dirilme_sn=30.0)
+        yaz = []
+        # Araç aynı konumda 20 sn okunuyor (varyantlar dahil)
+        kutu = (100, 200, 220, 240)
+        for t, pl in [(1, "LB71KKL"), (3, "LB7KK2L"), (6, "LB71KKL"),
+                      (9, "LB71K2L"), (12, "LB71KKL"), (15, "LB71KKL")]:
+            tk.ekle(self._oku(pl, float(t)), kutu, float(t))
+            yaz += tk.kapat(float(t))
+        yaz += tk.kapat(25.0)     # araç gitti, iz kapandı
+        assert len(yaz) == 1
+        assert yaz[0]["plate"] == "LB71KKL"      # baskın okuma kazanır
 
-    def test_farkli_arac_yazilir(self):
-        gruplar = [(10.0, self._okuma("LB71KKL", 5, 6.0)),
-                   (20.0, self._okuma("34ABC123", 5, 16.0))]   # bambaşka plaka
-        assert len(self._kos(gruplar)) == 2
+    def test_ortulme_ayni_konumda_tek_satir(self):
+        from src.plate import PlakaTakip
+        tk = PlakaTakip(kayip_sn=4.0, dirilme_sn=30.0)
+        kutu = (100, 200, 220, 240)
+        yaz = []
+        for t in (1.0, 2.0, 3.0):
+            tk.ekle(self._oku("LB71KKL", t), kutu, t)
+            yaz += tk.kapat(t)
+        yaz += tk.kapat(10.0)                    # 7 sn örtülme → iz kapandı, satır yazıldı
+        # yayalar çekildi, AYNI konumda yeniden görünüyor
+        for t in (11.0, 12.0):
+            tk.ekle(self._oku("LB71KKL", t), kutu, t)
+            yaz += tk.kapat(t)
+        yaz += tk.kapat(20.0)                    # devam sayılmalı, İKİNCİ satır YOK
+        assert len(yaz) == 1
 
-    def test_pencere_disinda_ayni_arac_yeni_satir(self):
-        # Aynı araç 2 dk sonra TEKRAR gelirse bu yeni bir geçiştir
-        gruplar = [(10.0, self._okuma("LB71KKL", 5, 6.0)),
-                   (130.0, self._okuma("LB71KKL", 5, 126.0))]
-        assert len(self._kos(gruplar)) == 2
+    def test_cikip_geri_giren_arac_yeni_satir(self):
+        from src.plate import PlakaTakip
+        tk = PlakaTakip(kayip_sn=4.0, dirilme_sn=30.0)
+        yaz = []
+        # Geçiş 1: soldan sağa
+        for t, x in [(1.0, 100), (2.0, 400), (3.0, 700)]:
+            tk.ekle(self._oku("LB71KKL", t), (x, 200, x + 120, 240), t)
+            yaz += tk.kapat(t)
+        yaz += tk.kapat(8.0)                     # çıktı, iz kapandı
+        # Geçiş 2: 10 sn sonra (dirilme penceresi İÇİNDE) ama BAŞKA konumdan
+        for t, x in [(13.0, 80), (14.0, 350)]:
+            tk.ekle(self._oku("LB71KKL", t), (x, 500, x + 120, 540), t)
+            yaz += tk.kapat(t)
+        yaz += tk.kapat(20.0)
+        assert len(yaz) == 2                     # saniyeye bakılmaz, konum farklı → yeni olay
+
+    def test_iki_farkli_arac_ayni_anda(self):
+        from src.plate import PlakaTakip
+        tk = PlakaTakip(kayip_sn=4.0, dirilme_sn=30.0)
+        yaz = []
+        for t in (1.0, 2.0, 3.0):
+            tk.ekle(self._oku("LB71KKL", t), (100, 200, 220, 240), t)
+            tk.ekle(self._oku("34ABC123", t), (600, 200, 720, 240), t)
+            yaz += tk.kapat(t)
+        yaz += tk.kapat(10.0)
+        assert sorted(v["plate"] for v in yaz) == ["34ABC123", "LB71KKL"]
+
+    def test_hareket_eden_arac_iou_kopsa_da_ayni_iz(self):
+        from src.plate import PlakaTakip
+        tk = PlakaTakip(kayip_sn=4.0, dirilme_sn=30.0)
+        yaz = []
+        # Kutu her karede 100px kayıyor (IoU=0) ama metin aynı, merkez yakın
+        for t, x in [(1.0, 100), (2.0, 200), (3.0, 300)]:
+            tk.ekle(self._oku("LB71KKL", t), (x, 200, x + 120, 240), t)
+            yaz += tk.kapat(t)
+        yaz += tk.kapat(10.0)
+        assert len(yaz) == 1
+

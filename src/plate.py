@@ -164,6 +164,102 @@ def _lev(a: str, b: str) -> int:
     return prev[-1]
 
 
+def _iou(a: tuple, b: tuple) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    kx1, ky1 = max(ax1, bx1), max(ay1, by1)
+    kx2, ky2 = min(ax2, bx2), min(ay2, by2)
+    if kx2 <= kx1 or ky2 <= ky1:
+        return 0.0
+    kesisim = (kx2 - kx1) * (ky2 - ky1)
+    alan = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - kesisim
+    return kesisim / alan if alan > 0 else 0.0
+
+
+class PlakaTakip:
+    """Konum-temelli plaka takibi — ARAÇ başına tek olay.
+
+    Metin+süre temelli bastırma iki ucu birden tutturamıyordu: pencere kısa
+    olunca bekleyen araç tekrar yazılıyor, uzun olunca kameradan çıkıp GERİ
+    GELEN araç yazılmıyordu. Aracı ayırt eden şey plakanın metni değil KONUMU:
+
+      - Bekleyen araç: kutu aynı yerde durur (yayalar örtse bile aynı yerde
+        yeniden belirir) → aynı iz, tek olay.
+      - Çıkıp geri giren araç: kutu kaybolur, yeni kutu BAŞKA yerden gelir →
+        yeni iz, yeni olay. Aradan kaç saniye geçtiğinin önemi yok.
+
+    Eşleme: yeni tespit, izlerden IoU'su en yüksek olana bağlanır; IoU yoksa
+    metin benzerliği (lev<=2) + merkez yakınlığı denenir (plaka kutusu küçük,
+    araç hafif ilerleyince IoU sıfırlanabilir).
+
+    Kapanan izin plakası, az önce AYNI KONUMDA kapanmış aynı metinli ize
+    rastlarsa devam sayılır (uzun örtülme: yaya kalabalığı 4 sn'den fazla
+    kapatabilir) — yeni satır yazılmaz. Konum farklıysa yazılır.
+    """
+
+    def __init__(self, kayip_sn: float = 4.0, dirilme_sn: float = 30.0) -> None:
+        self.kayip_sn = kayip_sn
+        self.dirilme_sn = dirilme_sn
+        self.izler: list[dict[str, Any]] = []    # {bbox, son, reads}
+        self.kapanan: list[dict[str, Any]] = []  # {rep, bbox, son}
+
+    def ekle(self, okuma: dict[str, Any], bbox: tuple, ts: float) -> None:
+        en_iyi, en_deger = None, 0.0
+        for iz in self.izler:
+            v = _iou(bbox, iz["bbox"])
+            if v > en_deger:
+                en_iyi, en_deger = iz, v
+        if en_iyi is None:
+            # IoU tutmadı — hafif ilerleyen araç: metin yakın VE merkez yakınsa aynı iz
+            cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+            gen = max(bbox[2] - bbox[0], 1.0)
+            for iz in self.izler:
+                icx = (iz["bbox"][0] + iz["bbox"][2]) / 2
+                icy = (iz["bbox"][1] + iz["bbox"][3]) / 2
+                son_metin = iz["reads"][-1]["plate"]
+                if (abs(cx - icx) < 3 * gen and abs(cy - icy) < 3 * gen and
+                        abs(len(son_metin) - len(okuma["plate"])) <= 1 and
+                        _lev(son_metin, okuma["plate"]) <= 2):
+                    en_iyi = iz
+                    break
+        if en_iyi is None:
+            en_iyi = {"bbox": bbox, "son": ts, "reads": []}
+            self.izler.append(en_iyi)
+        en_iyi["bbox"] = bbox
+        en_iyi["son"] = ts
+        en_iyi["reads"].append(okuma)
+
+    def kapat(self, ts: float, zorla: bool = False) -> list[dict[str, Any]]:
+        """Kaybolan izleri kapatır; yazılacak oylanmış satırları döndürür."""
+        yaz: list[dict[str, Any]] = []
+        kalan: list[dict[str, Any]] = []
+        for iz in self.izler:
+            if not zorla and ts - iz["son"] <= self.kayip_sn:
+                kalan.append(iz)
+                continue
+            oylar = _vote(iz["reads"])
+            if not oylar:
+                continue
+            v = max(oylar, key=lambda x: x.get("count", 0))   # izin baskın okuması
+            devam = None
+            for k in self.kapanan:
+                if (ts - k["son"] < self.dirilme_sn and
+                        _iou(iz["bbox"], k["bbox"]) > 0.2 and
+                        abs(len(k["rep"]) - len(v["plate"])) <= 1 and
+                        _lev(k["rep"], v["plate"]) <= 2):
+                    devam = k
+                    break
+            if devam is not None:
+                devam["son"] = ts          # örtülme sürüyor — süreyi tazele
+                devam["bbox"] = iz["bbox"]
+                continue
+            self.kapanan.append({"rep": v["plate"], "bbox": iz["bbox"], "son": ts})
+            yaz.append(v)
+        self.izler = kalan
+        self.kapanan = [k for k in self.kapanan if ts - k["son"] < self.dirilme_sn]
+        return yaz
+
+
 def _vote(reads: list[dict[str, Any]], max_dist: int = 2) -> list[dict[str, Any]]:
     """Çok-kareli oylama: benzer okumaları kümeler, her küme için en güvenilir
     metni seçer. Aynı aracın kareler arası ufak OCR farkları tek plakaya iner.
@@ -241,8 +337,6 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     min_conf = cfg.get("plate.min_conf", 0.4)
     fmt = cfg.get("plate.format", "tr")
     yabanci_conf = cfg.get("plate.foreign_min_conf", 0.75)
-    # Bir plaka bu kadar süre görünmezse "araç geçti" sayılır ve grubu kapanır
-    gecis_araligi = float(cfg.get("plate.vehicle_gap_seconds", 3.0))
     vid_stride = cfg.get("detect.vid_stride", 1)
     camera_id = camera_id or Path(source).stem
 
@@ -253,57 +347,20 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
         raise FileNotFoundError(f"Video açılamadı: {source}")
     # plaka → (en iyi güven, kanıt yolu); aynı plakayı tekrar tekrar yazmamak için
     kanit_gorulen: dict[str, tuple[float, str]] = {}
-    # Yakın geçmişte yazılan plakalar: plaka → kaynak_saniyesi. Duran araç
-    # (kavşak kuyruğu, kapıda bekleme) tekrar tekrar okunur; her yeniden
-    # görünüş yeni satır olmasın (sahada: aynı araç 23 sn'de 5 satır yazdı).
-    yazilan: dict[str, float] = {}
-    bastirma = float(cfg.get("plate.rewrite_suppress_seconds", 45.0))
-    # plaka → {"reads": [...], "son": kaynak_saniyesi}
-    # Oylama eskiden koşu BİTİNCE yapılıyordu; canlı kamerada koşu bitmediği için
-    # veritabanına hiç satır yazılmıyordu (ölçüm: 1429 kanıt / 0 satır). Üstelik
-    # tüm koşuyu tek seferde kümelemek, saatler arayla geçen iki benzer plakayı
-    # aynı araç sayıyordu. Artık gruplar araç geçtikçe kapanıp yazılıyor.
-    bekleyen: dict[str, dict[str, Any]] = {}
-    ts = 0.0   # son işlenen kaynak saniyesi (kapanışta bastırma penceresi için)
+    # Konum-temelli araç takibi (sınıfın üstündeki gerekçeye bak)
+    takip = PlakaTakip(kayip_sn=float(cfg.get("plate.track_lost_seconds", 4.0)),
+                       dirilme_sn=float(cfg.get("plate.track_rebirth_seconds", 30.0)))
+    ts = 0.0   # son işlenen kaynak saniyesi
 
-    def _kapat(simdi: float, zorla: bool = False) -> None:
-        kapanan = [pl for pl, d in bekleyen.items()
-                   if zorla or simdi - d["son"] > gecis_araligi]
-        if not kapanan:
-            return
-        # Aynı aracın OCR varyantları (FL3599 / FL3594) ayrı anahtarlarda durur ve
-        # son görülme anları milisaniyelerle ayrılır. Yalnız süresi dolanı kapatmak
-        # onları AYRI oylamalara düşürüp aynı aracı iki satır yazıyordu (sahada
-        # görüldü). Kapanan bir plakaya yakın olan grup, kendi sayacı dolmasa da
-        # birlikte kapanır — _vote'un varyant kümelemesi ancak böyle işler.
-        if not zorla:
-            for pl in list(bekleyen):
-                if pl in kapanan:
-                    continue
-                if any(abs(len(pl) - len(k)) <= 1 and _lev(pl, k) <= 2 for k in kapanan):
-                    kapanan.append(pl)
-        okumalar: list[dict[str, Any]] = []
-        for pl in kapanan:
-            okumalar.extend(bekleyen.pop(pl)["reads"])
-            kanit_gorulen.pop(pl, None)   # canlı koşuda sınırsız büyümesin
-        for v in _vote(okumalar):
-            # Bu plaka (veya varyantı) az önce yazıldıysa aynı aracın devamıdır
-            pl = v["plate"]
-            es = next((y for y in yazilan
-                       if abs(len(y) - len(pl)) <= 1 and _lev(y, pl) <= 2), None)
-            if es is not None and simdi - yazilan[es] < bastirma:
-                yazilan[es] = simdi          # süreyi tazele: araç hâlâ orada
-                continue
-            yazilan[pl] = simdi
+    def _yaz(satirlar: list[dict[str, Any]]) -> None:
+        for v in satirlar:
+            kanit_gorulen.pop(v["plate"], None)   # canlı koşuda sınırsız büyümesin
             res.voted.append(v)
             if store is not None:
                 store.add_plate_event(camera_id, v["plate"], v["conf"], v["count"],
                                       v["ts_seconds"], v["frame_idx"],
                                       snapshot=v.get("snapshot", ""))
-        # Eski girdileri temizle (canlı koşuda sınırsız büyümesin)
-        for y in [y for y, t in yazilan.items() if simdi - t > 2 * bastirma]:
-            del yazilan[y]
-        if store is not None:
+        if satirlar and store is not None:
             store.commit()
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
@@ -366,14 +423,14 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
                      "frame_idx": frame_idx, "ts_seconds": round(ts, 2),
                      "snapshot": snap}
             res.reads.append(okuma)
-            grup = bekleyen.setdefault(plate, {"reads": [], "son": ts})
-            grup["reads"].append(okuma)
-            grup["son"] = ts
+            takip.ekle(okuma,
+                       (bb.x1, bb.y1, bb.x2, bb.y2) if bb is not None else (0, 0, 1, 1),
+                       ts)
             if on_read:
                 on_read(plate, conf, frame_idx, round(ts, 2))
 
-        # Araç kareden çıktıysa grubunu kapat ve tek satır olarak yaz
-        _kapat(ts)
+        # Kaybolan izleri kapat; her iz = bir araç geçişi = bir satır
+        _yaz(takip.kapat(ts))
 
         if writer is not None or on_frame is not None:
             drawn = alpr.draw_predictions(frame)
@@ -387,6 +444,6 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     cap.release()
     if writer is not None:
         writer.release()
-    # Kaynak bittiğinde (dosya) veya durdurulduğunda kalan grupları da yaz
-    _kapat(ts, zorla=True)
+    # Kaynak bittiğinde (dosya) veya durdurulduğunda açık izleri de yaz
+    _yaz(takip.kapat(ts, zorla=True))
     return res
