@@ -1,0 +1,14 @@
+# CI test bağımlılıkları — birim testlerin GERÇEKTE kullandığı asgari küme.
+# Tam requirements.txt CI'da kurulamıyor (GPU/aarch64 paketleri, ~9 GB) ve
+# pip ya hep ya hiç kurduğu için tek kırık paket TÜM kurulumu düşürüyordu;
+# "|| true" da bunu gizliyordu — sonuç: cv2 yok, testler toplanamıyor.
+# Ağır modüller (ultralytics, insightface, av) kodda tembel import'tur;
+# birim testler onlara dokunmaz.
+opencv-python-headless>=4.10.0
+numpy>=1.26,<2.2
+pyyaml>=6.0
+fastapi>=0.115.0
+pydantic>=2.0
+redis>=5.0
+psycopg[binary]>=3.1
+pytest>=8.0
