@@ -99,9 +99,16 @@ def _sync_go2rtc() -> None:
                 # -follow_redirects ffmpeg CLI'da yok (yalnız demuxer seçeneği); başlık
                 # gönderildiğinde kaynak zaten yönlendirmiyor
                 hdr = "\r\n".join(s.strip() for s in basliklar.splitlines() if s.strip())
-                return (f'exec:ffmpeg -headers "{hdr}" -i "{src}"'
+                # -readrate 1.05: HLS'te ffmpeg indirdiği segmenti tek seferde
+                # basar — röle 6 sn kare, 5.5 sn sessizlik üretiyordu (ölçüm:
+                # 93 sn'de 15 donma, her biri ~5.5 sn; izleyicide "donuyor
+                # sonra hızlanıyor"). Okuma gerçek zamana sabitlenir; 1.05,
+                # kaynağa yetişememe birikimini önleyen küçük pay.
+                return (f'exec:ffmpeg -readrate 1.05 -headers "{hdr}" -i "{src}"'
                         " -an -c copy -f rtsp {output}")
-            return src
+            # Başlıksız HTTP/HLS de aynı patlama sorununu yaşar → aynı tempo
+            return (f'exec:ffmpeg -readrate 1.05 -i "{src}"'
+                    " -an -c copy -f rtsp {output}")
         if src.startswith(("rtsp://", "rtmp://")):
             return src
         # Dosya kaynağı → sonsuz döngülü RTSP (gerçek kamera simülasyonu).
@@ -310,8 +317,10 @@ def api_set_tasks(cid: str, p: TasksPayload):
     s = _store()
     try:
         # config kamerası DB'de yoksa önce upsert (görevler DB'de yaşar).
-        # url_sub'ı da taşı: upsert onu da yazar, geçilmezse substream silinirdi.
-        s.add_camera(cid, cam["name"], cam["source"], cam.get("url_sub") or "")
+        # url_sub ve http_headers da taşınır: upsert hepsini yazar, geçilmeyen
+        # alan NULL'a düşüp SİLİNİRDİ (PATCH ucunda da aynı hata vardı).
+        s.add_camera(cid, cam["name"], cam["source"], cam.get("url_sub") or "",
+                     cam.get("http_headers") or "")
         s.set_camera_tasks(cid, tasks)
         return {"ok": True, "tasks": tasks}
     finally:
