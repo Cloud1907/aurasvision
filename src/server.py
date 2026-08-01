@@ -1024,6 +1024,16 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
         job.update(stage="sırada bekliyor (başka analiz çalışıyor)")
         RUN_LOCK.acquire()
     source = cam["source"]; stem = Path(source).stem
+    # Canlı HTTP/HLS kaynağı go2rtc RTSP rölesinden alınır (recorder ile aynı
+    # gerekçe): ffmpeg ham HLS'i segment segment okur — 6 sn'lik patlama +
+    # bekleme. Test önizlemesinde "hızlanıp donuyor" olarak görülen buydu;
+    # duvar için -readrate ile çözülmüştü ama test ham adresi açıyordu.
+    # Röle ayrıca kaynaktan İKİNCİ bir çekim açılmasını da önler.
+    if str(source).startswith(("http://", "https://")):
+        go2rtc = (cfg.get("go2rtc.url", "") or "").rstrip("/")
+        if go2rtc:
+            host = go2rtc.split("//", 1)[-1].split(":")[0] or "localhost"
+            source = f"rtsp://{host}:8554/{p.camera}"
     s = None; summary: dict = {}; videos: list[str] = []
     push_frame = _frame_pusher(job, _pace_seconds(source) if p.realtime else 0.0)
     try:
