@@ -400,8 +400,11 @@ function startSysWatch(){
 }
 /* Sayaç kutuları yalnız bir analiz KOŞARKEN görünür — ekran ilk açılışta eski toplamlarla dolmaz */
 function countBox(id){const c=LIVE_COUNTS[id];if(!LIVE_ACTIVE||!c)return `<div class="countbox" data-countbox="${esc(id)}" style="display:none;"></div>`;return `<div class="countbox" data-countbox="${esc(id)}"><span>${c.in} giriş</span><span>${c.out} çıkış</span></div>`;}
-async function refreshLiveCounts(){try{const res=await api("/counts");LIVE_ACTIVE=!!res.active;const rows=res.rows||[];const next={};rows.forEach(r=>{next[r.camera_id]={in:Number(r.in_count||0),out:Number(r.out_count||0)};});LIVE_COUNTS=next;document.querySelectorAll("[data-countbox]").forEach(el=>{el.outerHTML=countBox(el.dataset.countbox);});// Yalnız canlı ekranın kutuları — diğer ekranların kendi istatistikleri var
-if(active==="panel"){const ov=document.querySelector("#pn-gorev");if(ov)ov.outerHTML=overviewStats();}}catch(e){}}
+async function refreshLiveCounts(){try{const res=await api("/counts");LIVE_ACTIVE=!!res.active;const rows=res.rows||[];const next={};rows.forEach(r=>{next[r.camera_id]={in:Number(r.in_count||0),out:Number(r.out_count||0)};});LIVE_COUNTS=next;document.querySelectorAll("[data-countbox]").forEach(el=>{const y=countBox(el.dataset.countbox);if(el.outerHTML!==y)el.outerHTML=y;});
+// Panel kartları yalnız İÇERİK DEĞİŞİNCE yenilenir. Koşulsuz outerHTML her
+// 2 sn'de DOM'u söküp kuruyordu — ekran yanıp sönüyordu (sahada görüldü).
+if(active==="panel"){const ov=document.querySelector("#pn-gorev");const y=overviewStats();
+  if(ov&&ov.outerHTML!==y)ov.outerHTML=y;}}catch(e){}}
 function startLiveCounts(){clearInterval(window._countTimer);refreshLiveCounts();window._countTimer=setInterval(refreshLiveCounts,2000);}
 function taskPills(c){const t=c.tasks||{};return `<span class="taskset"><span class="taskpill ${t.count?'on':''}">Sayım</span><span class="taskpill ${t.plate?'on':''}">Plaka</span><span class="taskpill ${t.face?'on':''}">Yüz</span></span>`;}
 /* Canlı ekran özeti — eskiden "Toplam giriş: —" gibi anlamsız kutular vardı:
