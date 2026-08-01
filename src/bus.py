@@ -125,7 +125,36 @@ def consume(r, handler, on_batch=None, block_ms: int = 5000) -> None:
     except _redis.ResponseError:
         pass  # grup zaten var
     consumer = f"{socket.gethostname()}-{os.getpid()}"
+
+    def _sahipsizleri_al() -> list:
+        """Ölü tüketicilerin üstünde kalan mesajları devralır (XAUTOCLAIM).
+
+        xreadgroup '>' yalnız HİÇ teslim edilmemiş mesajı verir. Eski bir
+        ingestor mesajı alıp ack'lemeden ölürse o mesaj sonsuza dek askıda
+        kalıyordu — sahada 11k+ olay böyle kaybolmuştu (worker yeniden
+        başlatılınca görüldü). 60 sn'den uzun süredir sahipsiz olanları al.
+        """
+        try:
+            _, msgs, _ = r.xautoclaim(STREAM, GROUP, consumer,
+                                      min_idle_time=60_000, count=200)
+            return msgs
+        except (_redis.ResponseError, _redis.ConnectionError):
+            return []
+
     while True:
+        sahipsiz = _sahipsizleri_al()
+        if sahipsiz:
+            for mid, fields in sahipsiz:
+                if fields is None:      # silinmiş mesajın hayaleti
+                    continue
+                try:
+                    handler(fields.get("type", ""), fields.get("camera_id", ""),
+                            json.loads(fields.get("payload") or "{}"))
+                except Exception as e:
+                    print(f"[ingest] devralınan mesaj hatası ({mid}): {e}", flush=True)
+                r.xack(STREAM, GROUP, mid)
+            if on_batch:
+                on_batch()
         try:
             resp = r.xreadgroup(GROUP, consumer, {STREAM: ">"}, count=200, block=block_ms)
         except (_redis.TimeoutError, TimeoutError):
