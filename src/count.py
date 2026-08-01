@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from . import akis
 from .config import Config
 from .detect import load_yolo
 from .device import select_device
@@ -74,7 +75,7 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
         lines = [{"name": "Çizgi", "pts": [[ln["x1"], ln["y1"]], [ln["x2"], ln["y2"]]],
                   "direction": "AtoB"}]
 
-    cap = cv2.VideoCapture(source)
+    cap = akis.ac(source, cfg)
     if not cap.isOpened():
         raise FileNotFoundError(f"Video açılamadı: {source}")
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -112,6 +113,10 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
         classes = sorted(classes_sayim | {c for z in watcher.zones for c in z["classes"]})
 
     yolo = load_yolo(model, device, instance_key=camera_id)
+    # Akışı ultralytics kendi açar; kameraya özgü HTTP başlıkları koşu boyunca
+    # ayarlı kalmalı (kopan bağlantıda kendi kendine yeniden bağlanıyor).
+    _basliklar = akis.basliklarla(source, cfg)
+    _basliklar.__enter__()
     result = CountResult(fps=fps)
     frame_idx = 0
     track_hits: dict[int, int] = {}   # her track_id kaç karede görüldü (parça filtresi)
@@ -205,6 +210,7 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
             if on_frame is not None:
                 on_frame(annotated)
 
+    _basliklar.__exit__()
     if writer is not None:
         writer.release()
     if store is not None:

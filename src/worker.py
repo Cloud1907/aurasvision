@@ -18,6 +18,7 @@ import os
 import threading
 import time
 
+from . import akis
 from .bus import BusStore, YerelBus, open_bus, publish
 from .config import apply_cv2_http_headers, load_config
 from .store import merged_cameras, open_store
@@ -82,6 +83,8 @@ def _run_camera(cam: dict, cfg, bus) -> None:
         rstore = open_store(cfg)
         try:
             fresh = next((c for c in merged_cameras(cfg, rstore) if c["id"] == cid), cam)
+            # Kameraya özgü HTTP başlıkları (bazı HLS sağlayıcıları Referer şart koşar)
+            akis.kaydet(fresh.get("source") or source, fresh.get("http_headers") or "")
             tasks = fresh.get("tasks") or {}
             ihlaller = _saved_intrusions(rstore, cid)
             cizgiler = _saved_lines(rstore, cid)

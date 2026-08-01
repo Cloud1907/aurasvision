@@ -32,6 +32,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import akis
 from .config import apply_cv2_http_headers, http_options, load_config
 from .store import DEFAULT_TASKS, merged_cameras, open_store
 
@@ -152,6 +153,7 @@ class CameraPayload(BaseModel):
     source: str
     id: str = ""
     source_sub: str = ""   # kamera duvarı için düşük çözünürlüklü akış (opsiyonel)
+    http_headers: str = ""  # bazı HLS/CDN sağlayıcıları kendi Referer'ını şart koşar
 
 
 def _slug(s: str) -> str:
@@ -169,7 +171,9 @@ def api_add_camera(p: CameraPayload):
         existing = {c["id"] for c in _cameras()}
         while cid in existing:
             cid = f"{base}-{i}"; i += 1
-        s.add_camera(cid, p.name, p.source, p.source_sub.strip())
+        s.add_camera(cid, p.name, p.source, p.source_sub.strip(),
+                     p.http_headers.strip())
+        akis.kaydet(p.source, p.http_headers.strip())
         _sync_go2rtc()
         return {"ok": True, "id": cid}
     finally:
@@ -751,12 +755,7 @@ def _grab_jpeg(source: str) -> bytes | None:
     # HLS) varsayılan ayarla 30 sn boyunca iş parçacığını tutuyor. Çok kameralı
     # ekranda birkaç ölü kamera FastAPI'nin havuzunu doldurup TÜM API'yi
     # kilitledi (mobil arayüzde yaşandı). Ölü kamera hızlı başarısız olmalı.
-    if source.startswith(("rtsp://", "rtmp://", "http://", "https://")):
-        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG,
-                               [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000,
-                                cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
-    else:
-        cap = cv2.VideoCapture(source)
+    cap = akis.ac(source, cfg, timeout_ms=5000)
     if not cap.isOpened():
         return None
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)

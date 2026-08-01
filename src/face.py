@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from . import akis
 from .config import Config
 from .device import select_device
 
@@ -318,7 +319,7 @@ def embed_largest_face(source: str, cfg: Config, samples: int = 12) -> list | No
     import cv2
     app = _load_face(cfg.get("face.model_pack", "buffalo_l"),
                      cfg.get("face.det_size", 640), select_device(cfg.get("device", "auto")))
-    cap = cv2.VideoCapture(source)
+    cap = akis.ac(source, cfg)
     if not cap.isOpened():
         return None
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
@@ -392,7 +393,7 @@ def run_face(source: str, cfg: Config, save_video: bool = False,
 
     app = _load_face(model_pack, det_size, device)
 
-    cap = cv2.VideoCapture(source)
+    cap = akis.ac(source, cfg)
     if not cap.isOpened():
         raise FileNotFoundError(f"Video açılamadı: {source}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0

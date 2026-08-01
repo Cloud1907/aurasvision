@@ -50,10 +50,20 @@ def merged_cameras(cfg, store: "BaseStore") -> list[dict[str, Any]]:
                 by_id[c["id"]]["detect_fps"] = c["detect_fps"]
             if c.get("url_sub"):
                 by_id[c["id"]]["url_sub"] = c["url_sub"]
+            if c.get("http_headers"):
+                by_id[c["id"]]["http_headers"] = c["http_headers"]
         else:
             if not c.get("tasks"):
                 c["tasks"] = dict(DEFAULT_TASKS)
             by_id[c["id"]] = c
+    # Kameraya özgü HTTP başlıklarını akış katmanına tanıt — kamera listesini
+    # okuyan her bileşen (worker, sunucu, kayıt) böylece doğru başlığı kullanır.
+    # Tek genel başlık ayarı, farklı sağlayıcılardan iki HTTP kameranın aynı
+    # anda çalışmasını engelliyordu (yanlış Referer → 403).
+    from . import akis
+    for c in by_id.values():
+        if c.get("http_headers"):
+            akis.kaydet(c.get("source") or "", c["http_headers"])
     return list(by_id.values())
 
 
@@ -148,7 +158,8 @@ class BaseStore:
     def list_cameras_db(self) -> list[dict[str, Any]]:
         raise NotImplementedError
 
-    def add_camera(self, cid: str, name: str, source: str) -> None:
+    def add_camera(self, cid: str, name: str, source: str, url_sub: str = "",
+                   http_headers: str = "") -> None:
         raise NotImplementedError
 
     def set_camera_tasks(self, cid: str, tasks: dict) -> None:
@@ -269,6 +280,7 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE TABLE IF NOT EXISTS cameras (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL,
     url_sub TEXT,   -- düşük çözünürlüklü substream (kamera duvarı); boşsa ana akış
+    http_headers TEXT,  -- bu kameraya özgü HTTP başlıkları (bazı HLS sağlayıcıları Referer şart koşar)
     tasks TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS recordings (
     id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id TEXT NOT NULL,
@@ -326,6 +338,7 @@ class SqliteStore(BaseStore):
         self.conn.execute("PRAGMA busy_timeout=30000")
         self.conn.executescript(_SQLITE_SCHEMA)
         for tablo, sutun, tip in (("cameras", "tasks", "TEXT"), ("cameras", "url_sub", "TEXT"),
+                                  ("cameras", "http_headers", "TEXT"),
                                   ("plate_events", "snapshot", "TEXT"),
                                   ("alerts", "snapshot", "TEXT")):
             try:   # hafif migration: eski DB'lerde eksik sütunları ekle
@@ -373,16 +386,19 @@ class SqliteStore(BaseStore):
         return rows
 
     def list_cameras_db(self) -> list[dict[str, Any]]:
-        rows = self._all("SELECT id, name, source, url_sub, tasks FROM cameras ORDER BY created_at")
+        rows = self._all("SELECT id, name, source, url_sub, http_headers, tasks"
+                         " FROM cameras ORDER BY created_at")
         for r in rows:
             r["tasks"] = json.loads(r["tasks"]) if r.get("tasks") else None
         return rows
 
-    def add_camera(self, cid, name, source, url_sub: str = "") -> None:
-        self._x("INSERT INTO cameras (id, name, source, url_sub) VALUES (?, ?, ?, ?)"
+    def add_camera(self, cid, name, source, url_sub: str = "",
+                   http_headers: str = "") -> None:
+        self._x("INSERT INTO cameras (id, name, source, url_sub, http_headers)"
+                " VALUES (?, ?, ?, ?, ?)"
                 " ON CONFLICT(id) DO UPDATE SET name=excluded.name, source=excluded.source,"
-                " url_sub=excluded.url_sub",
-                (cid, name, source, url_sub or None))
+                " url_sub=excluded.url_sub, http_headers=excluded.http_headers",
+                (cid, name, source, url_sub or None, http_headers or None))
         self.commit()
 
     def set_camera_tasks(self, cid, tasks) -> None:
@@ -443,7 +459,8 @@ class PgStore(BaseStore):
             "SELECT 1 FROM information_schema.tables WHERE table_name='cameras'").fetchone()
         if exists:
             # Hafif migration: kurulu DB'lerde sonradan eklenen sütunlar
-            for tablo, sutun in (("plate_events", "snapshot"), ("alerts", "snapshot")):
+            for tablo, sutun in (("plate_events", "snapshot"), ("alerts", "snapshot"),
+                                 ("cameras", "http_headers")):
                 self.conn.execute(
                     f"ALTER TABLE {tablo} ADD COLUMN IF NOT EXISTS {sutun} TEXT")
             self.conn.execute("""CREATE TABLE IF NOT EXISTS recordings (
@@ -510,17 +527,20 @@ class PgStore(BaseStore):
         return rows
 
     def list_cameras_db(self) -> list[dict[str, Any]]:
-        rows = self._all("SELECT id, name, source, url_sub, tasks::text AS tasks, detect_fps"
+        rows = self._all("SELECT id, name, source, url_sub, http_headers,"
+                         " tasks::text AS tasks, detect_fps"
                          " FROM cameras ORDER BY created_at")
         for r in rows:
             r["tasks"] = json.loads(r["tasks"]) if r.get("tasks") else None
         return rows
 
-    def add_camera(self, cid, name, source, url_sub: str = "") -> None:
-        self._x("INSERT INTO cameras (id, name, source, url_sub) VALUES (?, ?, ?, ?)"
+    def add_camera(self, cid, name, source, url_sub: str = "",
+                   http_headers: str = "") -> None:
+        self._x("INSERT INTO cameras (id, name, source, url_sub, http_headers)"
+                " VALUES (?, ?, ?, ?, ?)"
                 " ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, source=EXCLUDED.source,"
-                " url_sub=EXCLUDED.url_sub",
-                (cid, name, source, url_sub or None))
+                " url_sub=EXCLUDED.url_sub, http_headers=EXCLUDED.http_headers",
+                (cid, name, source, url_sub or None, http_headers or None))
 
     def set_camera_tasks(self, cid, tasks) -> None:
         self._x("UPDATE cameras SET tasks=?::jsonb WHERE id=?", (json.dumps(tasks), cid))

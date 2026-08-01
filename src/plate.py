@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from . import akis
 from .config import Config
 from .evidence import kaydet as kanit_kaydet
 
@@ -180,7 +181,7 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
 
     alpr = _load_alpr(detector, ocr, cfg.get("device", "auto"))
 
-    cap = cv2.VideoCapture(source)
+    cap = akis.ac(source, cfg)
     if not cap.isOpened():
         raise FileNotFoundError(f"Video açılamadı: {source}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0

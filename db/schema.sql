@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS cameras (
     name        TEXT NOT NULL,
     source      TEXT NOT NULL,               -- rtsp://... veya dosya yolu
     url_sub     TEXT,                        -- analiz substream'i (varsa)
+    http_headers TEXT,                       -- kameraya özgü HTTP başlıkları (bazı HLS sağlayıcıları Referer şart koşar)
     enabled     BOOLEAN NOT NULL DEFAULT true,
     tasks       JSONB NOT NULL DEFAULT '{"count":true,"plate":false,"face":false}',
     detect_fps  SMALLINT NOT NULL DEFAULT 5,
