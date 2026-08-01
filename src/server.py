@@ -1176,9 +1176,17 @@ def api_events(limit: int = Query(50, ge=1, le=500), tur: str = "", kamera: str 
         raise HTTPException(422, "tur: count | plate | face")
     s = _store()
     try:
-        return s.recent_events(limit, tur, kamera)
+        olaylar = s.recent_events(limit, tur, kamera)
     finally:
         s.close()
+    # Yabancı plaka etiketi: TR formatı yapısal doğrulamadan geçer, yabancı
+    # plaka yalnız güven eşiğinden. Operatör aradaki farkı GÖRMELİ — ikisini
+    # aynı göstermek, olmayan bir güvence vermek olur.
+    from .plate import plaka_turu
+    for o in olaylar:
+        if o.get("type") == "plate" and o.get("detail"):
+            o["plaka_tur"] = plaka_turu(str(o["detail"]).split()[0])
+    return olaylar
 
 
 @app.get("/api/events/summary")
