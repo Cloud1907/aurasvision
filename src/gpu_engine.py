@@ -271,12 +271,13 @@ class _SecondStage:
                           self.cfg.get("device", "auto"))
         min_conf = self.cfg.get("plate.min_conf", 0.4)
         fmt = self.cfg.get("plate.format", "tr")
+        yabanci_conf = self.cfg.get("plate.foreign_min_conf", 0.75)
         reads = self.plate_reads.setdefault(cam_id, [])
         for pred in alpr.predict(bgr):
             ocr = getattr(pred, "ocr", None)
             text = getattr(ocr, "text", None) if ocr else None
             conf = _as_float_conf(getattr(ocr, "confidence", None) if ocr else None)
-            plate = accept_read(text, conf, min_conf, fmt)
+            plate = accept_read(text, conf, min_conf, fmt, yabanci_conf)
             if plate is None:
                 continue
             reads.append({"plate": plate, "confidence": conf,

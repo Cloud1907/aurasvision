@@ -67,21 +67,85 @@ def normalize_tr(text: str) -> str | None:
     return best
 
 
+# — Yabancı plakalar —
+# Türkiye'de yabancı plakalı araç sıradan: turist, TIR, sınır trafiği. Bunları
+# "TR formatına uymuyor" diye atmak, ihlal eden aracın hiç görünmemesi demek.
+#
+# Ama kapıyı öylece açamayız: TR doğrulaması OCR gürültüsünü eleyen ANA
+# savunmamız. "IL1O0" gibi bir çöp okuma, geçerli bir TR plakası kuramadığı
+# için reddediliyor. Yabancı plakada bu yapısal savunma yok — ülkelerin
+# formatları birbirinden farklı ve hepsini bilmiyoruz.
+#
+# Yerine iki şey konuyor:
+#   1) Daha yüksek güven eşiği (plate.foreign_min_conf) — yapı doğrulayamıyorsak
+#      OCR'ın kendine güvenine daha çok yaslanmak zorundayız
+#   2) Makullük kontrolü — uzunluk, karakter kümesi, en az bir harf VE bir rakam
+# Kabul edilen yabancı plaka UI'da ayrı etiketlenir; "doğrulanmış" gibi
+# görünmesi, olmadığı bir güvence verirdi.
+# Alt sınır 6: yapısal doğrulama yapamadığımız için tek elemede uzunluk kaldı.
+# Gerçek yabancı plakalar 6+ karakterdir (Bulgar CB1234AH=8, Alman BMW1234=7,
+# Gürcü AA123BB=7); OCR kırıntıları ("34O5", "IL1O0") 4-5 karakterde çıkar ve
+# harf/rakam karışımı oldukları için başka hiçbir kontrole takılmıyorlardı.
+# 6'dan kısa gerçek bir plakayı kaçırma pahasına, çöp okumayı kabul etmiyoruz.
+_YABANCI_MIN_UZUNLUK = 6
+_YABANCI_MAX_UZUNLUK = 10
+
+
+def normalize_yabanci(text: str) -> str | None:
+    """TR dışı plaka için makullük kapısı. Oturmuyorsa None.
+
+    Karakter DÜZELTMESİ yapmaz — hangi konumda harf, hangisinde rakam
+    beklendiğini bilmiyoruz; tahmin yürütmek yanlış plaka üretirdi.
+    """
+    t = text.replace(" ", "").replace("-", "").replace(".", "").upper()
+    if not (_YABANCI_MIN_UZUNLUK <= len(t) <= _YABANCI_MAX_UZUNLUK):
+        return None
+    if not t.isalnum() or not t.isascii():
+        return None
+    if not any(c.isdigit() for c in t):
+        return None
+    if not any(c.isalpha() for c in t):
+        return None
+    if len(set(t)) < 3:      # "AAAA111" tipi okumalar OCR takılmasıdır
+        return None
+    return t
+
+
+def plaka_turu(plate: str) -> str:
+    """Kabul edilmiş bir plakanın türü: 'tr' veya 'yabanci'."""
+    return "tr" if normalize_tr(plate) == plate else "yabanci"
+
+
 def accept_read(text: str | None, conf: float | None, min_conf: float,
-                fmt: str = "tr") -> str | None:
+                fmt: str = "tr", yabanci_min_conf: float | None = None) -> str | None:
     """Ham OCR okumasını kabul filtresi: normalize + güven eşiği + format.
 
     Kabul edilirse (düzeltilmiş) plaka metnini, edilmezse None döndürür.
     conf=None eşiği BYPASS ETMEZ — güvensiz okuma kritik sahada veri değildir.
     Tek doğruluk kapısı burasıdır; test ekranı da worker da bundan geçer.
+
+    fmt:
+      tr          — yalnız TR formatı (en sıkı; TR dışı araç GÖRÜNMEZ)
+      tr+yabanci  — önce TR denenir, olmazsa yabancı kapısından geçirilir
+      none        — ham metin (yalnız test/serbest saha)
     """
     if not text:
         return None
-    if (conf or 0.0) < min_conf:
+    c = conf or 0.0
+    if c < min_conf:
         return None
     plate = text.replace(" ", "").upper()
     if fmt == "tr":
         return normalize_tr(plate)
+    if fmt in ("tr+yabanci", "tr+foreign"):
+        tr = normalize_tr(plate)
+        if tr:
+            return tr
+        # Yapısal doğrulama yok → güven eşiği yükseliyor
+        esik = min_conf if yabanci_min_conf is None else yabanci_min_conf
+        if c < esik:
+            return None
+        return normalize_yabanci(plate)
     return plate
 
 
@@ -176,6 +240,7 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     ocr = cfg.get("plate.ocr", "global-plates-mobile-vit-v2-model")
     min_conf = cfg.get("plate.min_conf", 0.4)
     fmt = cfg.get("plate.format", "tr")
+    yabanci_conf = cfg.get("plate.foreign_min_conf", 0.75)
     vid_stride = cfg.get("detect.vid_stride", 1)
     camera_id = camera_id or Path(source).stem
 
@@ -216,7 +281,7 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
             ocr_res = getattr(pred, "ocr", None)
             text = getattr(ocr_res, "text", None) if ocr_res else None
             conf = _as_float_conf(getattr(ocr_res, "confidence", None) if ocr_res else None)
-            plate = accept_read(text, conf, min_conf, fmt)
+            plate = accept_read(text, conf, min_conf, fmt, yabanci_conf)
             if plate is None:
                 continue
             res.plates.add(plate)

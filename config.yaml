@@ -130,10 +130,16 @@ plate:
   # Karar ölçümle verilir: scripts/plate_eval.py ile saha görüntüsünde A/B yap.
   ocr: global-plates-mobile-vit-v2-model
   min_conf: 0.4
-  # Format doğrulama: tr = İL(01-81)+HARF(1-3)+RAKAM(2-4); pozisyon-bilinçli
-  # O↔0/I↔1/B↔8 düzeltmesi yapar, formata oturmayan okumayı REDDEDER.
-  # TR dışı saha veya serbest test için: none
-  format: tr
+  # Format doğrulama:
+  #   tr          İL(01-81)+HARF(1-3)+RAKAM(2-4); pozisyon-bilinçli O↔0/I↔1/B↔8
+  #               düzeltmesi yapar, oturmayan okumayı REDDEDER. TR dışı araç GÖRÜNMEZ.
+  #   tr+yabanci  önce TR denenir; olmazsa yabancı plaka kapısından geçirilir
+  #               (turist, TIR, sınır trafiği). VARSAYILAN.
+  #   none        ham metin — yalnız test/serbest saha
+  format: tr+yabanci
+  # Yabancı plakada yapısal doğrulama YAPILAMAZ (her ülkenin formatı farklı),
+  # bu yüzden güven eşiği daha yüksektir. Düşürmek yanlış okuma riskini artırır.
+  foreign_min_conf: 0.75
   # Kara/VIP liste alarmı için asgari okuma sayısı (oylama penceresinde).
   # Gerçek geçiş birden çok kare okutur; tek karelik eşleşme alarm olmaz.
   alert_min_reads: 2

@@ -17,7 +17,8 @@ from src.count import _ascii, _side
 from src.face import (_affinity, _best_reid, _calm_frac, _compact_gallery,
                       _dedup_tracks, _FaceTrack, _final_tracks, _iou,
                       _wander_ratio, run_face)
-from src.plate import _as_float_conf, _lev, _vote, accept_read, normalize_tr
+from src.plate import (_as_float_conf, _lev, _vote, accept_read, normalize_tr,
+                       normalize_yabanci, plaka_turu)
 from src.server import _slug
 from src.store import DEFAULT_TASKS, SqliteStore, merged_cameras
 from src.zones import IntrusionWatcher, point_in_poly, wanted_classes
@@ -686,3 +687,37 @@ class TestTekMakineKipi:
         st.add_count_event("giris", 1, "in", "", 1.0, 1)   # sonrası çalışmaya devam
         assert len(bus.store.recent_events(tur="count")) == 1
         bus.close()
+
+
+class TestYabanciPlaka:
+    """TR dışı plakalar (turist, TIR, sınır trafiği) görünmeli — ama TR kadar
+    güvenilir sayılmamalı: yapısal doğrulama yok, güven eşiği daha yüksek."""
+
+    def test_tr_plaka_yabanci_kipte_de_tr_kalir(self):
+        # TR öncelikli: düzeltme uygulanır, yabancı kapısına düşmez
+        assert accept_read("34ABC12", 0.9, 0.4, "tr+yabanci") == "34ABC12"
+        # TR şekline oturmayan KISA okuma yabancı kapısından da geçmemeli —
+        # gerçek plaka değil, OCR kırıntısıdır
+        assert accept_read("34O5", 0.9, 0.4, "tr+yabanci") is None
+
+    def test_yabanci_plaka_kabul(self):
+        for p in ("CB1234AH", "BG5678M", "AA123BB"):
+            assert accept_read(p, 0.9, 0.4, "tr+yabanci", 0.75) == p, p
+
+    def test_yabanci_dusuk_guvende_reddedilir(self):
+        # TR eşiğini geçiyor (0.5 > 0.4) ama yabancı eşiğini geçmiyor (0.5 < 0.75)
+        assert accept_read("CB1234AH", 0.5, 0.4, "tr+yabanci", 0.75) is None
+
+    def test_ocr_copu_yabanci_kipte_de_elenir(self):
+        assert accept_read("AAAA111", 0.99, 0.4, "tr+yabanci", 0.75) is None   # tek düze
+        assert accept_read("ABCDEF", 0.99, 0.4, "tr+yabanci", 0.75) is None    # rakam yok
+        assert accept_read("123456", 0.99, 0.4, "tr+yabanci", 0.75) is None    # harf yok
+        assert accept_read("AB", 0.99, 0.4, "tr+yabanci", 0.75) is None        # çok kısa
+        assert accept_read("AB*12/34", 0.99, 0.4, "tr+yabanci", 0.75) is None  # simge
+
+    def test_sadece_tr_kipi_yabanciyi_hala_reddeder(self):
+        assert accept_read("CB1234AH", 0.99, 0.4, "tr") is None
+
+    def test_tur_etiketi(self):
+        assert plaka_turu("34ABC12") == "tr"
+        assert plaka_turu("CB1234AH") == "yabanci"
