@@ -288,9 +288,18 @@ const IC={
 const svg=(n,s=19)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${IC[n]||''}</svg>`;
 document.getElementById('logo').innerHTML=svg('bolt',18);
 
-const NAV=[["live","Canlı","live"],["cams","Kameralar","cams"],["zones","Bölgeler","zones"],["test","Test","test"],["rec","Kayıtlar","play"],["events","Olaylar","events"],["lists","Listeler","lists"]];
-const TITLES={live:["Canlı görünüm","Tüm kameralar gerçek zamanlı"],cams:["Kameralar","IP / RTSP kaynakları"],zones:["Bölgeler ve çizgiler","Görüntüye çiz · sürükle düzelt · ✕ sil"],test:["Test ve çalıştır","Analizi çalıştır, sonucu ve videoyu gör"],rec:["Kayıtlar","Arşivde gezin — zaman çizelgesinden geçmişe git"],events:["Olaylar","Birleşik akış — sayım · plaka · yüz"],lists:["İzleme listeleri","Kara liste / VIP — eşleşince uyarı"]};
-let CAMS=[],active="live";
+/* Sekmeler görev gruplarına ayrıldı: operatör günlük işini (izleme) yönetim
+   işinden (kamera/bölge/liste ayarı) ayrı görür. Giriş ekranı artık PANEL —
+   önce "sistemde ne oluyor" özeti, sonra detay. */
+const NAV=[
+  ["panel","Panel","live","İZLEME"],["live","Canlı","cams"],["rec","Kayıtlar","play"],
+  ["events","Olaylar","events","OLAYLAR"],["lists","İzleme listeleri","lists"],
+  ["cams","Kameralar","cams","YÖNETİM"],["zones","Bölgeler","zones"],
+  ["test","Test","test"],["sys","Sistem","bolt"]];
+const TITLES={panel:["Panel","Sistemin son durumu tek ekranda"],
+  sys:["Sistem","Bileşen sağlığı, arşiv ve tanılama"],
+  live:["Canlı görünüm","Tüm kameralar gerçek zamanlı"],cams:["Kameralar","IP / RTSP kaynakları"],zones:["Bölgeler ve çizgiler","Görüntüye çiz · sürükle düzelt · ✕ sil"],test:["Test ve çalıştır","Analizi çalıştır, sonucu ve videoyu gör"],rec:["Kayıtlar","Arşivde gezin — zaman çizelgesinden geçmişe git"],events:["Olaylar","Birleşik akış — sayım · plaka · yüz"],lists:["İzleme listeleri","Kara liste / VIP — eşleşince uyarı"]};
+let CAMS=[],active="panel";
 let LIVE_COUNTS={},LIVE_ACTIVE=false;
 const $=s=>document.querySelector(s);
 /* XSS koruması: kullanıcı/OCR kaynaklı her değer innerHTML'e esc() ile girer */
@@ -414,7 +423,8 @@ function overviewStats(){
       : kutu("Canlı sayaç",`${giris} / ${cikis}`,`giriş / çıkış · ${canli} kamera`,"var(--accent)")}</div>`;
 }
 function render(){
-  $("#nav").innerHTML=`<div class="lbl">İzleme</div>`+NAV.slice(0,4).map(navHtml).join("")+`<div class="lbl">Kayıt</div>`+NAV.slice(4).map(navHtml).join("");
+  // Grup başlıkları NAV tanımından gelir — sekme eklerken menü kodu değişmesin
+  $("#nav").innerHTML=NAV.map(n=>(n[3]?`<div class="lbl">${n[3]}</div>`:"")+navHtml(n)).join("");
   clearInterval(window._liveTimer);clearInterval(window._tileTimer);
   const t=TITLES[active];$("#ttl").textContent=t[0];$("#tsub").textContent=t[1];$("#tact").innerHTML="";
   const c=$("#content");c.style.animation="none";void c.offsetWidth;c.style.animation="";
@@ -563,6 +573,86 @@ function watchTiles(){
 }
 
 const SCREENS={
+  /* Panel — giriş ekranı. Operatörün ilk sorusu "her şey yolunda mı", ikincisi
+     "dikkat isteyen ne var". Kamera duvarı bunları söylemiyordu. */
+  async panel(){
+    $("#tact").innerHTML=`<button class="btn" onclick="go('live')">${svg('cams',15)} Kamera duvarına git</button>`;
+    $("#content").innerHTML=`<div id="pn-ust" class="overview" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));">
+        <div class="stat"><div class="k">Yükleniyor</div><div class="v">—</div></div></div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(340px,1fr));">
+        <div class="card"><div style="padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;">Bekleyen uyarılar</div>
+          <div id="pn-uyari"><div class="empty">yükleniyor…</div></div></div>
+        <div class="card"><div style="padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;">Kamera durumu</div>
+          <div id="pn-kam"><div class="empty">yükleniyor…</div></div></div></div>`;
+    try{
+      const [st,uyari,ozet,ark]=await Promise.all([
+        api("/status"),api("/alerts?limit=8&pending=true"),
+        api("/events/summary?hours=24"),api("/recordings/stats")]);
+      const sorunlu=(st.bilesenler||[]).filter(b=>!b.ok);
+      const olay=(ozet.cameras||[]).reduce((n,c)=>n+c.count,0);
+      const gb=(ark.total_bytes||0)/(1024**3);
+      const kutu=(k,v,s,renk)=>`<div class="stat"><div class="k">${k}</div>
+        <div class="v"${renk?` style="color:${renk}"`:""}>${v}</div><div class="s">${s}</div></div>`;
+      $("#pn-ust").innerHTML=
+        kutu("Sistem",sorunlu.length?`${sorunlu.length} sorun`:"Sağlıklı",
+             sorunlu.length?esc(sorunlu.map(b=>b.ad).join(", ")):"tüm bileşenler çalışıyor",
+             sorunlu.length?"var(--danger)":"var(--ok)")+
+        kutu("Bekleyen uyarı",uyari.length,uyari.length?"operatör onayı bekliyor":"tümü kabul edildi",
+             uyari.length?"var(--danger)":"")+
+        kutu("Kamera",CAMS.length,`${(ark.cameras||[]).length} kamera kaydediliyor`)+
+        kutu("Son 24 saat",olay,"olay kaydedildi")+
+        kutu("Arşiv",gb<1?`${(gb*1024).toFixed(0)} MB`:`${gb.toFixed(1)} GB`,
+             `saklama ${ark.keep_days} gün`);
+      $("#pn-uyari").innerHTML=uyari.length?uyari.map(a=>`<div class="row">
+        <span class="av" style="background:var(--danger-soft);color:var(--danger);">${a.kind==='intrusion'?'⚠':'!'}</span>
+        <div style="flex:1;min-width:0;"><div style="font-weight:700;">${esc(a.ref)}</div>
+          <div class="mut-s">${esc(a.label||'')} · ${esc(gecenSure(a.time))}</div></div>
+        <button class="btn sm" onclick="ackAlert(${a.id});setTimeout(()=>SCREENS.panel(),400)">Kabul et</button></div>`).join("")
+        :`<div class="empty">Bekleyen uyarı yok.</div>`;
+      let hs={};try{(await api("/health")).forEach(h=>hs[h.camera_id]=h);}catch(e){}
+      $("#pn-kam").innerHTML=CAMS.map(c=>{
+        const h=hs[c.id],fps=h?+(h.fps||0):0;
+        const taze=h&&(Date.now()-new Date(String(h.time).replace(' ','T')+(String(h.time).includes('+')?'':'Z')))<15000;
+        const durum=!taze?["boşta","var(--ink-3)"]:fps>0.1?[`${fps.toFixed(1)} fps`,"var(--ok)"]:["kare yok","var(--danger)"];
+        return `<div class="row"><span class="av" style="background:var(--accent-soft);color:var(--accent);">${svg('cams',16)}</span>
+          <div style="flex:1;min-width:0;"><div style="font-weight:700;">${esc(c.name)}</div>
+            <div class="mut-s">${Object.entries(c.tasks||{}).filter(([,v])=>v).map(([k])=>({count:'Sayım',plate:'Plaka',face:'Yüz'}[k])).join(' · ')||'görev yok'}</div></div>
+          <span class="mut-s" style="color:${durum[1]};font-weight:700;">${durum[0]}</span></div>`}).join("");
+    }catch(e){$("#pn-ust").innerHTML=`<div class="stat"><div class="k">Hata</div><div class="v">—</div><div class="s">${esc(String(e))}</div></div>`;}
+  },
+  /* Sistem — bileşen sağlığı, arşiv ve tanılama tek yerde. Sorun çıktığında
+     kullanıcının bakacağı ekran; kenar çubuğundaki küçük gösterge yetmiyordu. */
+  async sys(){
+    $("#content").innerHTML=`<div id="sy-b"><div class="card"><div class="empty">yükleniyor…</div></div></div>`;
+    try{
+      const [st,ark]=await Promise.all([api("/status"),api("/recordings/stats")]);
+      const satir=b=>`<div class="row">
+        <span class="av" style="background:${b.ok?'var(--ok-soft)':'var(--danger-soft)'};color:${b.ok?'var(--ok)':'var(--danger)'};">${b.ok?'✓':'!'}</span>
+        <div style="flex:1;"><div style="font-weight:700;">${esc(b.ad)}</div>
+          <div class="mut-s">${esc(b.detay)}</div></div>
+        ${b.ms?`<span class="mut-s mono">${b.ms} ms</span>`:''}</div>`;
+      const kam=(ark.cameras||[]).map(c=>`<div class="row">
+        <div style="flex:1;"><b>${esc((CAMS.find(x=>x.id===c.camera_id)||{}).name||c.camera_id)}</b>
+          <div class="mut-s">${c.segments} segment · en eski ${esc(gecenSure(c.oldest))}</div></div>
+        <span class="mut-s mono">${(c.bytes/1048576).toFixed(0)} MB</span></div>`).join("");
+      $("#sy-b").innerHTML=`
+        <div class="card" style="margin-bottom:18px;">
+          <div style="padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;display:flex;gap:9px;align-items:center;">
+            Bileşen sağlığı <span class="chip" style="background:${st.ok?'var(--ok-soft)':'var(--danger-soft)'};color:${st.ok?'var(--ok)':'var(--danger)'};">${st.ok?'sağlıklı':'sorun var'}</span>
+            <button class="btn sm" style="margin-left:auto;" onclick="SCREENS.sys()">Yenile</button></div>
+          ${(st.bilesenler||[]).map(satir).join("")}</div>
+        <div class="card" style="margin-bottom:18px;">
+          <div style="padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;">
+            Kayıt arşivi <span class="mut-s" style="font-weight:400;">· toplam ${((ark.total_bytes||0)/1073741824).toFixed(2)} GB · saklama ${ark.keep_days} gün</span></div>
+          ${kam||'<div class="empty">Henüz kayıt yok.</div>'}</div>
+        <div class="card pad">
+          <div style="font-weight:700;margin-bottom:8px;">Tanılama</div>
+          <div class="mut-s" style="line-height:1.9;">Bir sorun bildirirken şunları iletin:<br>
+            • <span class="mono">output/logs/</span> klasörü (sunucu, worker, kayıt, ingestor günlükleri)<br>
+            • Bu ekranın görüntüsü<br>
+            • Sorunun hangi adımda çıktığı</div></div>`;
+    }catch(e){$("#sy-b").innerHTML=`<div class="card pad"><b style="color:var(--danger);">Sistem bilgisi alınamadı</b><div class="mut-s">${esc(String(e))}</div></div>`;}
+  },
   live(){
     // go2rtc varsa gerçek canlı akış (MSE), yoksa 5 sn'de bir snapshot
     // Duvarda substream (varsa): 100 karoyu tam çözünürlükte çözmek tarayıcıyı boğar.
