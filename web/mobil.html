@@ -15,14 +15,17 @@
      letter-spacing ve font-stretch ile yaklaşık olarak karşılanıyor. */
   /* Palet masaüstü paneliyle BİREBİR aynı — iki arayüz tek ürün gibi görünmeli.
      Kaynak: web/index.html html[data-theme=dark] */
+  /* Masaüstü panelle AYNI kontrol-odası paleti (index.html :root[dark]) —
+     mobil ayrı bir ürün gibi durmasın. Neon vurgu ve hap köşeler oradan da
+     söküldü; buradan da. */
   :root{
-    --bg:#070b12; --yuzey:#0e1521; --yuzey2:#172235; --cizgi:#1d2a3b;
-    --ink:#edf3fb; --ink2:#a8b4c7; --ink3:#6f7c91;
-    --vurgu:#38bdf8; --vurgu-soft:#102c3d;
-    --kritik:#fb7185; --kritik-soft:#30151d;
-    --uyari:#fbbf24; --uyari-soft:#2e2410;
-    --ok:#34d399; --ok-soft:#0c2a1d;
-    --r:8px; --r2:12px;
+    --bg:#0e0f11; --yuzey:#151719; --yuzey2:#1f2226; --cizgi:#24272b;
+    --ink:#e7e9ec; --ink2:#9aa1a8; --ink3:#6b7178;
+    --vurgu:#4e8cc9; --vurgu-soft:#16273a;
+    --kritik:#cf4a4a; --kritik-soft:#2c1515;
+    --uyari:#cf9b3d; --uyari-soft:#2a2210;
+    --ok:#3f9e63; --ok-soft:#12251a;
+    --r:5px; --r2:7px;
     --alt:calc(58px + env(safe-area-inset-bottom));
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -89,7 +92,7 @@
   .cipler{display:flex;gap:7px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none;}
   .cipler::-webkit-scrollbar{display:none;}
   .cip{flex-shrink:0;border:1px solid var(--cizgi);background:var(--yuzey);color:var(--ink2);
-    border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;white-space:nowrap;}
+    border-radius:4px;padding:5px 11px;font-size:12px;font-weight:600;white-space:nowrap;}
   .cip.on{background:var(--vurgu-soft);border-color:var(--vurgu);color:var(--vurgu);}
   .cip .sy{opacity:.7;margin-left:4px;}
 

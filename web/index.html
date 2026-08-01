@@ -1389,7 +1389,7 @@ function recCiz(){
     cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();}
   cx.globalAlpha=1;
   // kayıt blokları
-  cx.fillStyle=getComputedStyle(document.body).getPropertyValue("--accent")||"#38bdf8";
+  cx.fillStyle=getComputedStyle(document.body).getPropertyValue("--accent")||"#4e8cc9";
   REC.segler.forEach(r=>{
     const b=_recSaniye(r.start_time),g=Math.max(1,(+r.duration||0)/86400*W);
     cx.fillRect(b/86400*W,8,g,H-16);
