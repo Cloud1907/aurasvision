@@ -939,6 +939,13 @@ def _frame_pusher(job: dict, pace: float = 0.0):
             gecikme = state["t0"] + state["n"] * pace - time.monotonic()
             if gecikme > 0:
                 time.sleep(gecikme)
+            elif gecikme < -pace:
+                # Analiz takvimin GERİSİNE düştü (GPU başka işle meşgul, kare
+                # ağır geldi). Mutlak takvime yetişmeye çalışmak, biriken
+                # kareleri ardarda basmak demek — ekranda "dondu sonra hızlandı"
+                # olarak görünüyordu. Önizleme geri kalabilir, HIZLANAMAZ:
+                # başlangıcı şimdiye çekip yeni tempoyu buradan sürdür.
+                state["t0"] = time.monotonic() - state["n"] * pace
         # Canlı önizleme hatası analizi ASLA düşürmez (callback modül döngüsünde koşar;
         # istisna fırlarsa writer finalize edilmeden çıkılır)
         try:
