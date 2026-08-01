@@ -721,3 +721,42 @@ class TestYabanciPlaka:
     def test_tur_etiketi(self):
         assert plaka_turu("34ABC12") == "tr"
         assert plaka_turu("CB1234AH") == "yabanci"
+
+
+class TestPlakaGrupKapanisi:
+    """Aynı aracın OCR varyantları TEK satır olmalı.
+
+    Sahada görüldü: FL3599 ve FL3594 ayrı satır yazıldı. Sebep, grupların
+    plaka metnine göre kapanması ve varyantların son görülme anlarının
+    milisaniyelerle ayrılmasıydı — ayrı oylamalara düşüyorlardı.
+    """
+
+    def _kapatilanlar(self, bekleyen, simdi, gap=3.0):
+        """run_plate'teki _kapat seçim mantığı."""
+        kapanan = [pl for pl, d in bekleyen.items() if simdi - d["son"] > gap]
+        if not kapanan:
+            return []
+        for pl in list(bekleyen):
+            if pl in kapanan:
+                continue
+            if any(abs(len(pl) - len(k)) <= 1 and _lev(pl, k) <= 2 for k in kapanan):
+                kapanan.append(pl)
+        return kapanan
+
+    def test_varyantlar_birlikte_kapanir(self):
+        bekleyen = {"FL3599": {"son": 10.00}, "FL3594": {"son": 10.04}}
+        # FL3599'un süresi doldu, FL3594'ünki 0.04 sn sonra dolacak
+        kapanan = self._kapatilanlar(bekleyen, simdi=13.02)
+        assert set(kapanan) == {"FL3599", "FL3594"}
+
+    def test_varyantlar_tek_satira_iner(self):
+        okumalar = ([{"plate": "FL3599", "confidence": 0.754, "frame_idx": i,
+                      "ts_seconds": i / 25} for i in range(4)] +
+                    [{"plate": "FL3594", "confidence": 0.776, "frame_idx": i,
+                      "ts_seconds": i / 25} for i in range(4, 6)])
+        v = _vote(okumalar)
+        assert len(v) == 1 and v[0]["count"] == 6
+
+    def test_alakasiz_plaka_birlikte_kapanmaz(self):
+        bekleyen = {"FL3599": {"son": 10.0}, "34ABC123": {"son": 12.9}}
+        assert self._kapatilanlar(bekleyen, simdi=13.02) == ["FL3599"]

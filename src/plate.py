@@ -265,6 +265,17 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
                    if zorla or simdi - d["son"] > gecis_araligi]
         if not kapanan:
             return
+        # Aynı aracın OCR varyantları (FL3599 / FL3594) ayrı anahtarlarda durur ve
+        # son görülme anları milisaniyelerle ayrılır. Yalnız süresi dolanı kapatmak
+        # onları AYRI oylamalara düşürüp aynı aracı iki satır yazıyordu (sahada
+        # görüldü). Kapanan bir plakaya yakın olan grup, kendi sayacı dolmasa da
+        # birlikte kapanır — _vote'un varyant kümelemesi ancak böyle işler.
+        if not zorla:
+            for pl in list(bekleyen):
+                if pl in kapanan:
+                    continue
+                if any(abs(len(pl) - len(k)) <= 1 and _lev(pl, k) <= 2 for k in kapanan):
+                    kapanan.append(pl)
         okumalar: list[dict[str, Any]] = []
         for pl in kapanan:
             okumalar.extend(bekleyen.pop(pl)["reads"])
