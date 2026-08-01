@@ -987,6 +987,26 @@ def _pace_seconds(source: str) -> float:
     return max(1, int(cfg.get("detect.vid_stride", 1))) / fps
 
 
+class _SandboxStore:
+    """Test koşusu için olay YUTUCU — veritabanına hiçbir şey yazmaz.
+
+    Test ekranı eskiden gerçek tablolara yazıyor, her koşu öncesi de
+    clear_analysis() ile TÜMÜNÜ siliyordu (WHERE'siz DELETE). POC döneminde
+    tek yazan test olduğu için sorun değildi; worker sürekli GERÇEK olay
+    üretmeye başlayınca felakete dönüştü: operatörün tek test tıklaması tüm
+    kameraların olay arşivini (kanıt!) siliyordu — sahada yaşandı, abbey-road
+    verisi böyle gitti. Test artık kum havuzunda: sonuçlar job özetinde
+    gösterilir, arşive dokunulmaz.
+    """
+
+    def add_count_event(self, *a, **k): pass
+    def add_plate_event(self, *a, **k): pass
+    def add_face_event(self, *a, **k): pass
+    def add_alert(self, *a, **k): pass
+    def commit(self): pass
+    def close(self): pass
+
+
 def _run_analysis(job_id: str, p: "RunPayload") -> None:
     job = JOBS[job_id]
     cam = _camera(p.camera)
@@ -1007,8 +1027,8 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
                 job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
             return
         # store açılışı da try içinde: hata olursa kilit finally'de MUTLAKA bırakılır
-        s = _store()
-        s.clear_analysis()  # her test koşusu temiz başlar (önceki olaylar/uyarılar silinir)
+        s = _store()          # yalnız OKUMA için (izleme listeleri, kayıtlı çizgiler)
+        kum = _SandboxStore() # test olayları arşive DEĞİL buraya
         if p.kind in ("count", "analyze"):
             saved = _saved_lines(p.camera)
             ihlal = _saved_intrusions(p.camera)
@@ -1031,7 +1051,7 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
                     live.setdefault("intrusions", []).append(al)
                     live["intrusions"] = live["intrusions"][-20:]
                 s.start_run("count", source)
-                res = run_count(source, cfg, save_video=True, store=s, camera_id=p.camera,
+                res = run_count(source, cfg, save_video=True, store=kum, camera_id=p.camera,
                                 lines=saved, on_event=_on_count_event,
                                 on_frame=push_frame,
                                 should_stop=job["cancel"].is_set,
@@ -1050,7 +1070,7 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
             job["live"] = []   # okundukça canlı eklenir (UI aşağı akıtır)
             from .plate import run_plate
             s.start_run("plate", source)
-            res = run_plate(source, cfg, save_video=True, store=s, camera_id=p.camera,
+            res = run_plate(source, cfg, save_video=True, store=kum, camera_id=p.camera,
                             on_read=lambda pl, c, f, t: job["live"].append(
                                 {"plate": pl, "conf": round(c, 2) if c else None, "frame": f, "ts": t}),
                             on_frame=push_frame,
@@ -1060,8 +1080,9 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
             # Uyarı kapısı (ingestor ile aynı kural): tek okumalık eşleşme alarm olmaz
             amr = int(cfg.get("plate.alert_min_reads", 2))
             matches = s.match_plates([v["plate"] for v in voted if v["count"] >= amr])
-            for m in matches:
-                s.add_alert("plate", m["plate"], m["list_type"], m.get("label") or "", p.camera)
+            # Test alarmı ÜRETMEZ: eşleşme job özetinde gösterilir. Gerçek alarm
+            # yalnız worker'dan doğar — demo videodaki plaka, uyarı merkezini
+            # sahte kayıtla doldurmasın
             summary["plate"] = {"plates": plates, "total": res.total_reads,
                                 "voted": voted, "alerts": matches}
             videos.append(f"/media/{stem}_plate.mp4")
@@ -1077,11 +1098,10 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
                 job["face_live"] = data
             watch = s.faces_with_embedding()
             s.start_run("face", source)
-            res = run_face(source, cfg, save_video=True, store=s, camera_id=p.camera, watch=watch,
+            res = run_face(source, cfg, save_video=True, store=kum, camera_id=p.camera, watch=watch,
                            on_progress=_on_face_progress, on_frame=push_frame,
                            should_stop=job["cancel"].is_set)
-            for m in res.matches:
-                s.add_alert("face", m["name"], m["list_type"], m.get("label") or "", p.camera)
+            # yüz eşleşmeleri de özetle sınırlı (üstteki plaka gerekçesi)
             summary["face"] = {"detections": res.detections, "male": res.male, "female": res.female,
                                "avg_age": round(res.avg_age, 1), "alerts": res.matches}
             videos.append(f"/media/{stem}_face.mp4")
