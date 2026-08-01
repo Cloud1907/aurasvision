@@ -547,9 +547,11 @@ def api_status():
         from .bus import open_bus
         r = open_bus(cfg)
         if r is None:
-            return "yapılandırılmadı"
+            # Eksiklik değil, kurulum profili: tek makinede analiz servisi
+            # olayları doğrudan veritabanına yazar (ayrı ingestor yoktur).
+            return "tek makine — doğrudan yazım"
         r.ping()
-        return "bağlı"
+        return "Redis bağlı"
 
     def _go2rtc():
         import urllib.request

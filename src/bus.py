@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
 
 STREAM = "events"
 GROUP = "ingest"
@@ -30,6 +31,43 @@ def publish(r, type_: str, camera_id: str, payload: dict) -> None:
     r.xadd(STREAM, {"type": type_, "camera_id": camera_id,
                     "payload": json.dumps(payload)},
            maxlen=MAXLEN, approximate=True)
+
+
+class YerelBus:
+    """Redis'in yerine geçen tek-makine yolu — olayı doğrudan DB'ye yazar.
+
+    Redis + ingestor, olayları çok worker/çok makine arasında dağıtmak için var.
+    Tek kutuya kurulan sistemde bu ayrım net bir maliyet: müşteri makinesine
+    Docker Desktop kurmak, yeniden başlatma istemek ve lisans sorunu doğurmak.
+    Bu sınıf `xadd` arayüzünü taklit eder; `publish()` ve `BusStore` hiç
+    değişmeden çalışır, yalnız hedef değişir.
+
+    İş parçacığı güvenliği: worker her kamera için ayrı thread açar, bu nesne
+    paylaşılır. SqliteStore `check_same_thread=False` ile açılır, yazımlar
+    burada kilitle sıraya sokulur.
+    """
+
+    def __init__(self, cfg) -> None:
+        from .store import open_store
+        self.store = open_store(cfg)
+        self.alert_min_reads = int(cfg.get("plate.alert_min_reads", 2))
+        self._lock = threading.Lock()
+
+    def xadd(self, _stream, fields, **_kw) -> None:
+        from .olay import isle
+        payload = json.loads(fields.get("payload") or "{}")
+        with self._lock:
+            try:
+                isle(self.store, self.alert_min_reads, fields.get("type", ""),
+                     fields.get("camera_id", ""), payload)
+                self.store.commit()
+            except Exception as e:
+                # Tek olayın yazılamaması analizi durdurmasın (Redis yolunda da
+                # zehirli mesaj ack'lenip geçiliyor)
+                print(f"[bus] olay yazılamadı ({fields.get('type')}): {e}", flush=True)
+
+    def close(self) -> None:
+        self.store.close()
 
 
 class BusStore:

@@ -18,7 +18,7 @@ import os
 import threading
 import time
 
-from .bus import BusStore, open_bus, publish
+from .bus import BusStore, YerelBus, open_bus, publish
 from .config import apply_cv2_http_headers, load_config
 from .store import merged_cameras, open_store
 
@@ -139,9 +139,15 @@ def main() -> None:
     from .gunluk import kur as gunluk_kur
     gunluk_kur("worker", cfg)
     apply_cv2_http_headers(cfg)   # HLS/CDN kaynakları için ek başlıklar
+    # Redis yoksa TEK MAKİNE kipi: worker olayları doğrudan veritabanına yazar.
+    # Olay yolu çok worker'lı/çok makineli kurulum için vardır; tek kutuda Docker
+    # (dolayısıyla Redis) kurmaya zorlamak kurulumu gereksiz ağırlaştırıyordu.
+    # Bu kipte ingestor'a gerek yoktur.
     bus = open_bus(cfg)
     if bus is None:
-        raise SystemExit("REDIS_URL (veya config redis.url) gerekli — worker olay yolu olmadan çalışmaz")
+        bus = YerelBus(cfg)
+        print("[worker] Redis yok — tek makine kipi: olaylar doğrudan "
+              "veritabanına yazılacak (ingestor gerekmez)", flush=True)
     store = open_store(cfg)
     cams = [c for c in merged_cameras(cfg, store) if c.get("enabled", True)]
     store.close()

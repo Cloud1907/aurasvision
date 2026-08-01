@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.bus import BusStore
+from src.bus import BusStore, YerelBus, publish
 from src.config import Config
 from src.count import _ascii, _side
 from src.face import (_affinity, _best_reid, _calm_frac, _compact_gallery,
@@ -642,3 +642,47 @@ class TestSqliteStore:
         assert s.match_plates(["34abc123"]) != []
         assert s.match_plates(["06XXX00"]) == []
         s.close()
+
+
+class TestTekMakineKipi:
+    """Redis yoksa worker olayları doğrudan DB'ye yazar (YerelBus).
+
+    Docker'sız Windows kurulumunun temeli: Redis + ingestor olmadan da
+    olaylar ve alarmlar aynı kurallarla üretilmeli.
+    """
+
+    def _bus(self, tmp_path, monkeypatch):
+        # open_store önce DATABASE_URL'e bakar; test gerçek Postgres'e yazmasın
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        cfg = Config({"paths": {"db_path": str(tmp_path / "t.db")},
+                      "plate": {"alert_min_reads": 2}})
+        return YerelBus(cfg)
+
+    def test_olaylar_dogrudan_dbye_yazilir(self, tmp_path, monkeypatch):
+        bus = self._bus(tmp_path, monkeypatch)
+        st = BusStore(bus)
+        st.add_count_event("giris", 7, "in", "kapi", 12.5, 300)
+        publish(bus, "health", "giris", {"status": "ok", "fps": 24.0})
+        assert len(bus.store.recent_events(tur="count")) == 1
+        assert bus.store.latest_health()[0]["status"] == "ok"
+        bus.close()
+
+    def test_alarm_esigi_tek_makinede_de_gecerli(self, tmp_path, monkeypatch):
+        bus = self._bus(tmp_path, monkeypatch)
+        bus.store.add_watch_plate("34ABC123", "test aracı", "watch")
+        bus.store.commit()
+        st = BusStore(bus)
+        st.add_plate_event("otopark", "34ABC123", 0.9, 1, 20.0, 500)   # eşik altı
+        assert bus.store.recent_alerts() == []
+        st.add_plate_event("otopark", "34ABC123", 0.9, 3, 21.0, 520)   # eşik üstü
+        assert len(bus.store.recent_alerts()) == 1
+        bus.close()
+
+    def test_bozuk_olay_akisi_durdurmaz(self, tmp_path, monkeypatch):
+        bus = self._bus(tmp_path, monkeypatch)
+        # 'plate' anahtarı olmayan yük -> isle() KeyError verir, yutulmalı
+        publish(bus, "plate", "otopark", {"conf": 0.9})
+        st = BusStore(bus)
+        st.add_count_event("giris", 1, "in", "", 1.0, 1)   # sonrası çalışmaya devam
+        assert len(bus.store.recent_events(tur="count")) == 1
+        bus.close()

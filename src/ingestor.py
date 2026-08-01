@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from .bus import consume, open_bus
 from .config import load_config
+from .olay import isle
 from .store import open_store
 
 
@@ -29,34 +30,7 @@ def main() -> None:
     print("[ingest] dinleniyor — stream: events", flush=True)
 
     def handle(type_: str, camera_id: str, p: dict) -> None:
-        if type_ == "count":
-            store.add_count_event(camera_id, p.get("track_id"), p["direction"],
-                                  p.get("zone", ""), p.get("ts_seconds", 0.0),
-                                  p.get("frame_idx", 0))
-        elif type_ == "plate":
-            store.add_plate_event(camera_id, p["plate"], p.get("conf"), p.get("reads", 1),
-                                  p.get("ts_seconds", 0.0), p.get("frame_idx", 0),
-                                  track_id=p.get("track_id"))
-            if int(p.get("reads") or 1) >= alert_min_reads:
-                for m in store.match_plates([p["plate"]]):
-                    store.add_alert("plate", m["plate"], m["list_type"],
-                                    m.get("label") or "", camera_id)
-        elif type_ == "face":
-            store.add_face_event(camera_id, p.get("age"), p.get("gender"), p.get("conf"),
-                                 p.get("ts_seconds", 0.0), p.get("frame_idx", 0),
-                                 track_id=p.get("track_id"),
-                                 match_name=p.get("match_name"),
-                                 match_score=p.get("match_score"))
-            if p.get("match_name"):
-                store.add_alert("face", p["match_name"], p.get("list_type") or "watch",
-                                "", camera_id)
-        elif type_ == "alert":
-            # Worker'da doğan alarm (ihlal alanı) — DB yazımı burada
-            store.add_alert(p.get("kind", "intrusion"), p.get("ref", ""),
-                            p.get("list_type", ""), p.get("label", ""), camera_id)
-        elif type_ == "health":
-            store.add_camera_health(camera_id, p.get("fps"), p.get("dropped"),
-                                    p.get("status", "ok"))
+        isle(store, alert_min_reads, type_, camera_id, p)
 
     consume(bus, handle, on_batch=store.commit)
 

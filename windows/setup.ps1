@@ -4,7 +4,23 @@
 # Tasarım: TEKRAR ÇALIŞTIRILABİLİR. Var olanı bozmaz, eksik olanı tamamlar.
 # .env varsa dokunulmaz (erişim anahtarı yeniden üretilseydi tüm istemciler düşerdi).
 
-param([switch]$NoLaunch)   # kurulum sihirbazı içinden çağrılırken paneli açma
+param(
+    [switch]$NoLaunch,   # kurulum sihirbazı içinden çağrılırken paneli açma
+    [switch]$Buyuk       # 30+ kamera: PostgreSQL + Redis (Docker Desktop gerekir)
+)
+
+# İki kurulum profili var:
+#
+#   Tek makine (VARSAYILAN) — Docker YOK. Veritabanı SQLite, canlı izleme
+#     go2rtc'nin kendi .exe'si, olaylar worker'dan doğrudan veritabanına.
+#     Yeniden başlatma gerekmez, lisans sorunu yoktur, tek geçişte biter.
+#
+#   Büyük kurulum (-Buyuk) — Docker Desktop + PostgreSQL/TimescaleDB + Redis.
+#     Çok worker'a bölünebilir; 30+ kamerada gereklidir.
+#
+# Varsayılanın Docker olmaması bilinçli: Docker Desktop ilk kurulumda Windows'u
+# yeniden başlatmaya zorlar (kurulum ikiye bölünür) ve büyük şirketlerde ücretli
+# lisans ister. Küçük kurulumda ikisinin de karşılığı yok.
 
 $ErrorActionPreference = "Stop"
 $Kok = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -43,25 +59,48 @@ if (-not $py) {
     }
 }
 
-# ── 2. Docker ─────────────────────────────────────────────────────
-Bas "2/6  Docker Desktop"
+# ── 2. Altyapı ────────────────────────────────────────────────────
+Bas "2/6  Altyapı"
 $dockerVar = $false
-try { docker info 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $dockerVar = $true } } catch { }
-if ($dockerVar) {
-    Ye "Docker çalışıyor"
-} else {
-    if (Get-Command docker -ErrorAction SilentlyContinue) {
-        Uy "Docker kurulu ama ÇALIŞMIYOR — Docker Desktop'ı başlatın, sonra bu kurulumu tekrar çalıştırın"
+if ($Buyuk) {
+    try { docker info 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $dockerVar = $true } } catch { }
+    if ($dockerVar) {
+        Ye "Docker çalışıyor — PostgreSQL + Redis kullanılacak"
+    } elseif (Get-Command docker -ErrorAction SilentlyContinue) {
+        Uy "Docker kurulu ama çalışmıyor — Docker Desktop'ı başlatıp kurulumu tekrarlayın"
     } else {
-        Uy "Docker Desktop yok — kuruluyor (winget). Kurulum sonrası BİLGİSAYARI YENİDEN BAŞLATIN."
+        Uy "Docker Desktop kuruluyor. Kurulum bitince BİLGİSAYARI YENİDEN BAŞLATIN ve bu kurulumu tekrar çalıştırın."
         try {
             winget install -e --id Docker.DockerDesktop --accept-source-agreements --accept-package-agreements | Out-Null
-            Ye "Docker Desktop kuruldu — yeniden başlatıp bu kurulumu tekrar çalıştırın"
+            Ye "Docker Desktop kuruldu"
         } catch {
             Uy "Docker kurulamadı. Elle kurun: https://www.docker.com/products/docker-desktop/"
         }
     }
-    Uy "Docker olmadan veritabanı ve canlı izleme çalışmaz — kurulum yine de devam ediyor"
+    if (-not $dockerVar) { Uy "Docker hazır değil — kurulum tek makine profiline düşüyor" }
+}
+
+# Canlı izleme fan-out'u: go2rtc. Docker'lı kurulumda konteyner, tek makinede
+# kendi .exe'si (tek dosya, kurulum gerektirmez).
+$go2rtcExe = Join-Path $Kok "bin\go2rtc.exe"
+if (-not $dockerVar) {
+    if (Test-Path $go2rtcExe) {
+        Ye "Canlı izleme bileşeni mevcut"
+    } else {
+        New-Item -ItemType Directory -Force -Path (Join-Path $Kok "bin") | Out-Null
+        $zip = Join-Path $env:TEMP "go2rtc_win64.zip"
+        try {
+            Invoke-WebRequest -UseBasicParsing -OutFile $zip `
+                "https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_win64.zip"
+            Expand-Archive -Path $zip -DestinationPath (Join-Path $Kok "bin") -Force
+            Remove-Item $zip -ErrorAction SilentlyContinue
+            if (Test-Path $go2rtcExe) { Ye "Canlı izleme bileşeni kuruldu" }
+            else { Uy "Canlı izleme bileşeni açılamadı — anlık görüntü kipine düşülecek" }
+        } catch {
+            Uy "Canlı izleme bileşeni indirilemedi — anlık görüntü kipine düşülecek"
+        }
+    }
+    Ye "Profil: tek makine (SQLite · Docker gerekmez)"
 }
 
 # ── 3. Python ortamı ──────────────────────────────────────────────
@@ -83,7 +122,8 @@ if (Test-Path ".env") {
     $token = & $vpy -c "import secrets;print(secrets.token_urlsafe(24))"
     # Veritabanı seçimi Docker'ın GERÇEKTEN çalışmasına bağlı:
     #  * Docker var  → PostgreSQL + TimescaleDB + pgvector (konteynerde, ayrı kurulum yok)
-    #  * Docker yok  → satırlar YAZILMAZ; uygulama SQLite'a düşer (kurulum gerektirmez).
+    #  * Docker yok  → satırlar YAZILMAZ; uygulama SQLite'a, worker da tek makine
+    #                  kipine düşer (olayları doğrudan veritabanına yazar).
     # Adresi körlemesine yazmak, Docker yokken "bağlanamıyor" hatası demekti.
     if ($dockerVar) {
         @"
@@ -97,13 +137,14 @@ REDIS_URL=redis://localhost:6379/0
         @"
 # AurasVision — gizli bilgiler. Bu dosyayı paylaşmayın.
 AURAS_TOKEN=$token
-# Docker kurulu olmadığı için veritabanı SQLite (output\aurasvision.db).
-# Çok kameralı kurulumda Docker Desktop kurup aşağıdaki iki satırı açın:
+# Tek makine profili: veritabanı SQLite (output\aurasvision.db), olaylar
+# analiz servisinden doğrudan veritabanına yazılır.
+# 30+ kameraya çıkarken kurulumu -Buyuk ile tekrar çalıştırın; o zaman
+# aşağıdaki iki satır otomatik eklenir:
 # DATABASE_URL=postgresql://auras:auras@localhost:5433/auras
 # REDIS_URL=redis://localhost:6379/0
 "@ | Set-Content -Path ".env" -Encoding UTF8
         Ye "Erişim anahtarı üretildi · veritabanı: SQLite (kurulum gerektirmez)"
-        Uy "Sürekli analiz (worker) için Redis gerekir — Docker kurulunca etkinleşir"
     }
 }
 
@@ -134,26 +175,41 @@ if ($dockerVar) {
         Start-Sleep 2; Write-Host "." -NoNewline
     }
 } else {
-    Uy "Docker çalışmadığı için altyapı atlandı"
+    # Tek makine: ayrı servis yok. go2rtc uygulama ile birlikte başlar,
+    # veritabanı dosyası ilk açılışta kendini kurar.
+    Ye "Ek servis gerekmiyor — veritabanı ve canlı izleme uygulama ile başlar"
 }
 
 # ── 6. Başlatıcılar ───────────────────────────────────────────────
 Bas "6/6  Başlatma kısayolları"
-# Uygulamayı başlatan betik — kullanıcı bunu çift tıklar
+# Uygulamayı başlatan betik — kullanıcı bunu çift tıklar.
+# Hangi servislerin başlayacağı kurulum profiline bağlı:
+#   Docker'lı  → olay yolu Redis'te, ingestor gerekir; go2rtc konteynerde
+#   Tek makine → worker doğrudan veritabanına yazar; go2rtc kendi .exe'si
+if ($dockerVar) {
+    $olaylar  = 'start "AurasVision Olaylar" /min cmd /c ".venv\Scripts\python.exe -m src.ingestor 1>>output\logs\olaylar-konsol.log 2>&1"'
+    $canli    = ''
+} else {
+    $olaylar  = 'rem tek makine profili: olaylar analiz servisinden dogrudan veritabanina yazilir'
+    $canli    = @'
+if not exist go2rtc\go2rtc.yaml (mkdir go2rtc 2>nul & type nul > go2rtc\go2rtc.yaml)
+if exist bin\go2rtc.exe start "AurasVision Canli" /min cmd /c "bin\go2rtc.exe -config go2rtc\go2rtc.yaml 1>>output\logs\canli-konsol.log 2>&1"
+'@
+}
 @"
 @echo off
 title AurasVision
 cd /d "%~dp0.."
-for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
-    if not "%%a"=="" if not "%%a:~0,1%"=="#" set "%%a=%%b"
-)
-start "" http://127.0.0.1:8000/?token=$token
+rem .env'i Python kendisi okur (src/config.py load_env). Burada ayrica ayristirmak
+rem gereksiz ve riskliydi: yorum satirindaki bir parantez for blogunu erken kapatiyordu.
 if not exist output\logs mkdir output\logs
+$canli
+start "" http://127.0.0.1:8000/?token=$token
 start "AurasVision Sunucu" /min cmd /c ".venv\Scripts\python.exe -m src.server 1>>output\logs\sunucu-konsol.log 2>&1"
 timeout /t 3 >nul
 start "AurasVision Kayit" /min cmd /c ".venv\Scripts\python.exe -m src.recorder 1>>output\logs\kayit-konsol.log 2>&1"
 start "AurasVision Analiz" /min cmd /c ".venv\Scripts\python.exe -m src.worker 1>>output\logs\analiz-konsol.log 2>&1"
-start "AurasVision Olaylar" /min cmd /c ".venv\Scripts\python.exe -m src.ingestor 1>>output\logs\olaylar-konsol.log 2>&1"
+$olaylar
 echo AurasVision calisiyor. Bu pencereyi kapatabilirsiniz.
 timeout /t 5 >nul
 "@ | Set-Content -Path "windows\AurasVision-Baslat.bat" -Encoding ASCII
@@ -162,6 +218,7 @@ timeout /t 5 >nul
 @echo off
 title AurasVision Durdur
 taskkill /F /IM python.exe /FI "WINDOWTITLE eq AurasVision*" >nul 2>&1
+taskkill /F /IM go2rtc.exe >nul 2>&1
 echo AurasVision durduruldu.
 timeout /t 3 >nul
 "@ | Set-Content -Path "windows\AurasVision-Durdur.bat" -Encoding ASCII
@@ -214,7 +271,8 @@ Write-Host "  İlk adım: Kameralar -> Kamera ekle -> kamera IP/kullanıcı/şif
 Write-Host "  ─────────────────────────────────────────────" -ForegroundColor DarkGray
 Write-Host ""
 
-# Kurulum bitince paneli aç
-if ($dockerVar -and -not $NoLaunch) {
+# Kurulum bitince paneli aç. Docker'lı profilde Docker gerçekten çalışmıyorsa
+# başlatmak anlamsız (veritabanı yok); tek makine profilinde böyle bir koşul yok.
+if ((-not $Buyuk -or $dockerVar) -and -not $NoLaunch) {
     Start-Process (Join-Path $Kok "windows\AurasVision-Baslat.bat")
 }
