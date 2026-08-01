@@ -1301,15 +1301,15 @@ def mobil_manifest():
         "name": "AurasVision", "short_name": "AurasVision",
         "description": "Güvenlik kamerası izleme ve alarm merkezi",
         "start_url": "/m", "scope": "/m", "display": "standalone",
-        "orientation": "portrait", "background_color": "#0B1015",
-        "theme_color": "#0B1015", "lang": "tr",
+        "orientation": "portrait", "background_color": "#070b12",
+        "theme_color": "#070b12", "lang": "tr",
         # Simge gömülü SVG: dış dosya bağımlılığı yok (çevrimdışı kurulum)
         "icons": [{
             "src": ("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' "
-                    "viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230B1015'/>"
-                    "<g fill='none' stroke='%2320C4D9' stroke-width='3' stroke-linecap='round'>"
+                    "viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23070b12'/>"
+                    "<g fill='none' stroke='%2338bdf8' stroke-width='3' stroke-linecap='round'>"
                     "<circle cx='32' cy='32' r='18'/><path d='M32 8v10M32 46v10M8 32h10M46 32h10'/></g>"
-                    "<circle cx='32' cy='32' r='6' fill='%2320C4D9'/></svg>"),
+                    "<circle cx='32' cy='32' r='6' fill='%2338bdf8'/></svg>"),
             "sizes": "any", "type": "image/svg+xml", "purpose": "any"}],
     }
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<meta name="theme-color" content="#0B1015"/>
+<meta name="theme-color" content="#070b12"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <link rel="manifest" href="/m/manifest.json"/>
@@ -13,13 +13,15 @@
      Yazı tipi sistem yığını — IBM Plex yerel dosya olmadan CDN'den çekilirdi;
      çevrimdışı kurulumda dış bağımlılık istemiyoruz. Sıkı başlık görünümü
      letter-spacing ve font-stretch ile yaklaşık olarak karşılanıyor. */
+  /* Palet masaüstü paneliyle BİREBİR aynı — iki arayüz tek ürün gibi görünmeli.
+     Kaynak: web/index.html html[data-theme=dark] */
   :root{
-    --bg:#0B1015; --yuzey:#121A21; --yuzey2:#182229; --cizgi:#1F2C35;
-    --ink:#E8F1F5; --ink2:#93A5B1; --ink3:#5E7382;
-    --vurgu:#20C4D9; --vurgu-soft:#0E3B44;
-    --kritik:#F0455F; --kritik-soft:#3A1620;
-    --uyari:#F2A93B; --uyari-soft:#3A2A12;
-    --ok:#35C77F; --ok-soft:#0F3325;
+    --bg:#070b12; --yuzey:#0e1521; --yuzey2:#172235; --cizgi:#1d2a3b;
+    --ink:#edf3fb; --ink2:#a8b4c7; --ink3:#6f7c91;
+    --vurgu:#38bdf8; --vurgu-soft:#102c3d;
+    --kritik:#fb7185; --kritik-soft:#30151d;
+    --uyari:#fbbf24; --uyari-soft:#2e2410;
+    --ok:#34d399; --ok-soft:#0c2a1d;
     --r:8px; --r2:12px;
     --alt:calc(58px + env(safe-area-inset-bottom));
   }
