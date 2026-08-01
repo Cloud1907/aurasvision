@@ -88,9 +88,12 @@ def _sync_go2rtc() -> None:
     lines = ["# Otomatik üretilir (src/server.py) — kamera eklendikçe yenilenir.",
              "streams:"]
 
-    def _go2rtc_src(src: str) -> str:
+    def _go2rtc_src(src: str, kamera_basliklari: str = "") -> str:
         if src.startswith(("http://", "https://")):
-            basliklar = (cfg.get("stream.http_headers", "") or "").strip()
+            # Kameraya özgü başlık varsa genel ayarı EZER — farklı sağlayıcılar
+            # kendi Referer'ını şart koşar, yanlışı 403 döndürür
+            basliklar = (kamera_basliklari
+                         or cfg.get("stream.http_headers", "") or "").strip()
             if basliklar:
                 # go2rtc'nin http istemcisi özel başlık göndermez → ffmpeg ile besle
                 # -follow_redirects ffmpeg CLI'da yok (yalnız demuxer seçeneği); başlık
@@ -111,12 +114,13 @@ def _sync_go2rtc() -> None:
     for c in _cameras():
         # Değer JSON ile alıntılanır: içinde ": " geçen kaynak (ör. -headers "Referer: ...")
         # alıntısız yazılınca go2rtc'nin YAML ayrıştırıcısı TÜM config'i reddediyor.
-        lines.append(f"  {c['id']}: {json.dumps(_go2rtc_src(str(c['source'])))}")
+        _hdr = str(c.get("http_headers") or "")
+        lines.append(f"  {c['id']}: {json.dumps(_go2rtc_src(str(c['source']), _hdr))}")
         # Kamera duvarı substream'i: IP kameraların düşük çözünürlüklü ikinci akışı.
         # Duvarda 100 kareyi tam çözünürlükte çözmek tarayıcıyı boğar; tam çözünürlük
         # yalnız tek-kamera görünümü ve analiz içindir.
         if c.get("url_sub"):
-            lines.append(f"  {c['id']}{SUB_SUFFIX}: {json.dumps(_go2rtc_src(str(c['url_sub'])))}")
+            lines.append(f"  {c['id']}{SUB_SUFFIX}: {json.dumps(_go2rtc_src(str(c['url_sub']), _hdr))}")
     yeni = "\n".join(lines) + "\n"
     if path.exists() and path.read_text(encoding="utf-8") == yeni:
         return   # değişiklik yok → çalışan akışları kesme
@@ -184,6 +188,7 @@ class CameraPatch(BaseModel):
     name: str | None = None
     source: str | None = None
     source_sub: str | None = None
+    http_headers: str | None = None
 
 
 @app.patch("/api/cameras/{cid}")
@@ -202,7 +207,11 @@ def api_update_camera(cid: str, p: CameraPatch):
                      (p.name or cam["name"]).strip(),
                      (p.source if p.source is not None else cam["source"]).strip(),
                      (p.source_sub if p.source_sub is not None
-                      else (cam.get("url_sub") or "")).strip())
+                      else (cam.get("url_sub") or "")).strip(),
+                     # add_camera upsert'tir: geçilmeyen alan NULL'a düşer.
+                     # Başlığı taşımazsak düzenleme onu SİLER.
+                     (p.http_headers if p.http_headers is not None
+                      else (cam.get("http_headers") or "")).strip())
         # Görevlere dokunulmaz: add_camera'nın upsert'i tasks sütununu yazmaz.
         _sync_go2rtc()
         return {"ok": True, "id": cid}
