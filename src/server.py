@@ -1294,6 +1294,46 @@ def mobil():
     return FileResponse(WEB_DIR / "mobil.html", headers={"Cache-Control": "no-cache"})
 
 
+def _yerel_ip() -> str:
+    """Telefonun ulaşabileceği yerel IP — 127.0.0.1 telefonda İŞE YARAMAZ.
+
+    Dışa bağlantı açmadan (UDP soketi paket göndermez) işletim sisteminin
+    varsayılan arayüzünü sorar.
+    """
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+@app.get("/api/mobil-qr")
+def api_mobil_qr(host: str = ""):
+    """Mobil arayüzü telefonda açan QR kod (SVG) + adres.
+
+    Operatör IP ve uzun erişim anahtarını elle yazmaz: QR'ı okutur, mobil
+    doğrudan yetkili şekilde açılır. Adres olarak MAKİNENİN YEREL IP'si
+    kullanılır — panel 127.0.0.1'de açık olsa bile telefon oraya ulaşamaz.
+    """
+    import segno
+
+    ip = (host or _yerel_ip()).strip()
+    port = int(cfg.get("server.port", 8000))
+    adres = f"http://{ip}:{port}/m"
+    if API_TOKEN:
+        adres += f"?token={API_TOKEN}"
+    qr = segno.make(adres, error="m")
+    svg = qr.svg_inline(scale=6, dark="#0e1521", light="#ffffff", border=2)
+    return {"adres": adres, "ip": ip, "port": port, "svg": svg,
+            "uyari": ("Bu adres yalnız aynı yerel ağdan çalışır. Dışarıdan erişim için "
+                      "VPN gerekir; erişim anahtarı şifresiz HTTP üzerinden gider.")}
+
+
 @app.get("/m/manifest.json")
 def mobil_manifest():
     """PWA tanımı — telefona kurulabilmesi ve tam ekran açılması için."""

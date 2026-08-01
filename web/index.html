@@ -648,6 +648,10 @@ const SCREENS={
           <div style="padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;">
             Kayıt arşivi <span class="mut-s" style="font-weight:400;">· toplam ${((ark.total_bytes||0)/1073741824).toFixed(2)} GB · saklama ${ark.keep_days} gün</span></div>
           ${kam||'<div class="empty">Henüz kayıt yok.</div>'}</div>
+        <div class="card pad" style="margin-bottom:18px;">
+          <div style="font-weight:700;margin-bottom:4px;">Mobil erişim</div>
+          <div class="mut-s" style="margin-bottom:12px;">Telefonla QR'ı okutun; mobil arayüz yetkili şekilde açılır, adres ve anahtar yazmanız gerekmez.</div>
+          <div id="sy-qr"><button class="btn" onclick="mobilQR()">${svg('cams',15)} QR kodu göster</button></div></div>
         <div class="card pad">
           <div style="font-weight:700;margin-bottom:8px;">Tanılama</div>
           <div class="mut-s" style="line-height:1.9;">Bir sorun bildirirken şunları iletin:<br>
@@ -1380,6 +1384,22 @@ async function disaAktar(){
     document.body.appendChild(m);
     m.onclick=e=>{if(e.target===m)m.remove();};
   }catch(e){toast("Dışa aktarma başarısız: "+e,"err");}
+}
+/* Mobil bağlantı QR'ı: adres + erişim anahtarı kodun içinde. Operatörün uzun
+   anahtarı telefona elle yazması hataya açık ve yavaştı. */
+async function mobilQR(){
+  const el=$("#sy-qr");if(!el)return;
+  el.innerHTML=`<div class="skel" style="height:150px;border-radius:var(--r);"></div>`;
+  try{
+    const r=await api("/mobil-qr");
+    el.innerHTML=`<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;">
+      <div style="background:#fff;padding:10px;border-radius:var(--r-lg);line-height:0;">${r.svg}</div>
+      <div style="flex:1;min-width:220px;">
+        <div class="mono mut-s" style="word-break:break-all;">${esc(r.adres.split("?")[0])}</div>
+        <div class="mut-s" style="margin-top:10px;line-height:1.7;">${esc(r.uyari)}</div>
+        <button class="btn sm" style="margin-top:10px;" onclick="navigator.clipboard?.writeText('${esc(r.adres)}');toast('Adres kopyalandı')">Adresi kopyala</button>
+      </div></div>`;
+  }catch(e){el.innerHTML=`<div class="mut-s">QR üretilemedi: ${esc(String(e))}</div>`;}
 }
 /* Kanıt görüntüsünü tam boy aç — operatör okumayı gözle doğrulayabilsin */
 function kanitAc(yol){

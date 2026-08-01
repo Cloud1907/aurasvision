@@ -33,3 +33,4 @@ redis>=5.0
 # --- Kamera keşfi (ONVIF) ---
 onvif-zeep-async>=3.1     # kameranın kendi bildirdiği akış adresleri (ana + substream)
 wsdiscovery>=2.0          # yerel ağda ONVIF cihaz keşfi (WS-Discovery multicast)
+segno>=1.6                # mobil bağlantı QR kodu (saf Python, ek bağımlılık yok)
