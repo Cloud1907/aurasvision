@@ -1,0 +1,18 @@
+# Gizli bilgi taraması — gitleaks yapılandırması.
+# Workflow --config ile bu dosyayı şart koşuyor; dosya yokken gitleaks hata
+# veriyordu ve secret_scan hiç çalışmadan kırılıyordu.
+[extend]
+useDefault = true   # gitleaks'in tüm varsayılan kuralları geçerli
+
+[allowlist]
+description = "Bilinen zararsızlar"
+paths = [
+    '''data/videos/.*''',       # demo videolar (ikili içerik, yanlış pozitif üretir)
+    '''\.venv/.*''',
+    '''output/.*''',
+]
+# Belgelerdeki ÖRNEK adresler (gerçek kimlik bilgisi değil, yer tutucu):
+regexes = [
+    '''postgresql://auras:auras@localhost''',   # compose'un yerel geliştirme şifresi
+    '''rtsp://kullanıcı:şifre@''',              # README örnek satırı
+]
