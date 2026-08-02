@@ -263,6 +263,34 @@ class BaseStore:
         self.commit()
         return bool(getattr(cur, "rowcount", 0))
 
+    # ── Kullanıcılar (RBAC — docs/rbac-tasarim.md) ──
+    # Hash'leme burada DEĞİL src/kimlik.py'de: store yalnız saklar/karşılaştırmaz.
+
+    def kullanici_sayisi(self) -> int:
+        return int(self._all("SELECT COUNT(*) AS n FROM kullanicilar")[0]["n"])
+
+    def kullanici_bul(self, ad: str) -> dict[str, Any] | None:
+        rows = self._all("SELECT id, ad, parola_hash, rol FROM kullanicilar"
+                         " WHERE ad=?", (ad,))
+        return rows[0] if rows else None
+
+    def kullanici_listele(self) -> list[dict[str, Any]]:
+        rows = self._all("SELECT id, ad, rol, created_at FROM kullanicilar ORDER BY id")
+        for r in rows:   # parola_hash BİLEREK yok — liste UI'a gider
+            r["created_at"] = str(r["created_at"])
+        return rows
+
+    def kullanici_ekle(self, ad: str, parola_hash: str, rol: str) -> None:
+        self._x("INSERT INTO kullanicilar (ad, parola_hash, rol) VALUES (?, ?, ?)"
+                " ON CONFLICT(ad) DO UPDATE SET parola_hash=excluded.parola_hash,"
+                " rol=excluded.rol", (ad, parola_hash, rol))
+        self.commit()
+
+    def kullanici_sil(self, ad: str) -> bool:
+        cur = self._x("DELETE FROM kullanicilar WHERE ad=?", (ad,))
+        self.commit()
+        return bool(getattr(cur, "rowcount", 0))
+
     def count_totals(self) -> list[dict[str, Any]]:
         return self._all("SELECT camera_id, "
                          "SUM(CASE WHEN direction='in' THEN 1 ELSE 0 END) AS in_count, "
@@ -337,6 +365,10 @@ CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL DEFAULT (datetime('now')),
     camera_id TEXT, kind TEXT NOT NULL, ref TEXT NOT NULL, list_type TEXT, label TEXT,
     acked_by TEXT, acked_at TEXT, snapshot TEXT);
+CREATE TABLE IF NOT EXISTS kullanicilar (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ad TEXT NOT NULL UNIQUE,
+    parola_hash TEXT NOT NULL, rol TEXT NOT NULL DEFAULT 'izleyici',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')));
 """
 
 
@@ -501,6 +533,10 @@ class PgStore(BaseStore):
                               " ON nesne_vektor (camera_id, time DESC)")
             self.conn.execute("CREATE INDEX IF NOT EXISTS ix_nv_vec ON nesne_vektor"
                               " USING hnsw (vec vector_cosine_ops)")
+            self.conn.execute("""CREATE TABLE IF NOT EXISTS kullanicilar (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, ad TEXT NOT NULL UNIQUE,
+                parola_hash TEXT NOT NULL, rol TEXT NOT NULL DEFAULT 'izleyici',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
             self.conn.commit()
             return
         schema_path = _ROOT / "db" / "schema.sql"

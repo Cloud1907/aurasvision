@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import akis
+from . import akis, kimlik
 from .config import apply_cv2_http_headers, http_options, load_config
 from .store import DEFAULT_TASKS, merged_cameras, open_store
 
@@ -46,20 +46,75 @@ app = FastAPI(title="AurasVision")
 # Substream go2rtc'de ayrı bir akış olarak yayınlanır: "<kamera-id><SUB_SUFFIX>"
 SUB_SUFFIX = "-sub"
 
-# Erişim anahtarı: AURAS_TOKEN env set edilirse /api ve /media korunur.
-# UI 401 alınca anahtar sorar (localStorage). Set edilmezse (yerel demo) auth kapalı.
+# Erişim modeli (docs/rbac-tasarim.md):
+#   1) AURAS_TOKEN — makine anahtarı (script, exporter, mobil QR). Geriye uyum:
+#      her zaman geçerli, yonetici yetkisinde.
+#   2) Kullanıcı/rol — kullanicilar tablosu doluysa parola girişi + imzalı çerez;
+#      yazma uçları rol matrisinden (kimlik.yetkili) geçer.
+#   3) İkisi de yoksa auth kapalı (yerel demo) — eski davranış.
 API_TOKEN = os.environ.get("AURAS_TOKEN", "")
+
+# Kullanıcılar her istekte DB'ye sorulmaz — 10 sn önbellek; kullanıcı
+# ekleme/silme ucu önbelleği anında düşürür (_kullanici_cache_sifirla)
+_KUL_CACHE: dict = {"roller": None, "t": 0.0}
+
+
+def _kullanici_rolleri() -> dict:
+    """ad → rol sözlüğü (10 sn önbellek).
+
+    Çerez yalnız KİMLİĞİ kanıtlar; ROL buradan okunur. Aksi hâlde silinen
+    kullanıcının çerezi 12 saat geçerli kalır, rol düşürme de oturum bitene
+    dek işlemezdi — denetim açısından kabul edilemez.
+    """
+    if _KUL_CACHE["roller"] is None or time.time() - _KUL_CACHE["t"] > 10:
+        s = _store()
+        try:
+            _KUL_CACHE["roller"] = {u["ad"]: u["rol"] for u in s.kullanici_listele()}
+        except Exception:
+            _KUL_CACHE["roller"] = {}
+        finally:
+            s.close()
+        _KUL_CACHE["t"] = time.time()
+    return _KUL_CACHE["roller"]
+
+
+def _kullanici_var() -> bool:
+    return bool(_kullanici_rolleri())
+
+
+def _kullanici_cache_sifirla() -> None:
+    _KUL_CACHE["roller"] = None
 
 
 @app.middleware("http")
 async def _auth(request: Request, call_next):
     p = request.url.path
-    if API_TOKEN and (p.startswith("/api") or p.startswith("/media")):
-        tok = request.headers.get("authorization", "")
-        tok = tok[7:] if tok.lower().startswith("bearer ") else request.query_params.get("token", "")
-        if not secrets.compare_digest(tok, API_TOKEN):
-            return JSONResponse({"detail": "yetkisiz"}, status_code=401)
-    return await call_next(request)
+    request.state.kullanici = None
+    if not (p.startswith("/api") or p.startswith("/media")):
+        return await call_next(request)
+    if p in ("/api/giris", "/api/health"):
+        return await call_next(request)   # giriş kapısı ve canlılık her zaman açık
+    tok = request.headers.get("authorization", "")
+    tok = tok[7:] if tok.lower().startswith("bearer ") else request.query_params.get("token", "")
+    if API_TOKEN and tok and secrets.compare_digest(tok, API_TOKEN):
+        request.state.kullanici = {"ad": "sistem", "rol": "yonetici"}
+        return await call_next(request)
+    oturum = kimlik.coz(request.cookies.get(kimlik.OTURUM_CEREZ, ""))
+    if oturum:
+        rol = _kullanici_rolleri().get(oturum["ad"])
+        if rol is None:
+            oturum = None   # kullanıcı silinmiş → çerez artık kimlik değil
+        else:
+            oturum["rol"] = rol   # rol değişikliği yeni oturum beklemeden işler
+            request.state.kullanici = oturum
+            if not kimlik.yetkili(rol, request.method, p):
+                return JSONResponse({"detail": "Bu işlem için yetkiniz yok"}, status_code=403)
+            return await call_next(request)
+    if _kullanici_var():
+        return JSONResponse({"detail": "yetkisiz", "giris": "parola"}, status_code=401)
+    if API_TOKEN:
+        return JSONResponse({"detail": "yetkisiz", "giris": "token"}, status_code=401)
+    return await call_next(request)   # auth kapalı (yerel demo)
 
 
 def _store():
@@ -152,6 +207,114 @@ def _sync_go2rtc() -> None:
 
 def _camera(camera_id: str) -> dict | None:
     return next((c for c in _cameras() if c.get("id") == camera_id), None)
+
+
+# ─────────────────────────── Kimlik / RBAC ───────────────────────────
+
+class GirisPayload(BaseModel):
+    ad: str
+    parola: str
+
+
+class KullaniciPayload(BaseModel):
+    ad: str
+    parola: str
+    rol: str = "izleyici"
+
+
+def _istek_kullanicisi(request: Request) -> dict | None:
+    return getattr(request.state, "kullanici", None)
+
+
+def _yonetici_gerekli(request: Request) -> None:
+    """Çerezle gelen ama yonetici olmayan isteği reddeder.
+
+    Kimliksiz istek buraya yalnız auth tamamen kapalıyken düşer (middleware
+    aksi hâlde 401 döndürür) — o kipte engel yok (yerel demo).
+    """
+    k = _istek_kullanicisi(request)
+    if k and k.get("rol") != "yonetici":
+        raise HTTPException(403, "Bu işlem yönetici yetkisi ister")
+
+
+@app.post("/api/giris")
+def api_giris(p: GirisPayload):
+    s = _store()
+    try:
+        k = s.kullanici_bul(p.ad.strip())
+    finally:
+        s.close()
+    if not k or not kimlik.parola_dogru(p.parola, k["parola_hash"]):
+        # Ad mı parola mı yanlış söylenmez (kullanıcı adı taraması yemesin)
+        raise HTTPException(401, "Kullanıcı adı veya parola hatalı")
+    resp = JSONResponse({"ok": True, "ad": k["ad"], "rol": k["rol"]})
+    resp.set_cookie(kimlik.OTURUM_CEREZ, kimlik.imzala(k["ad"], k["rol"]),
+                    max_age=kimlik.OTURUM_SANIYE, httponly=True, samesite="lax")
+    return resp
+
+
+@app.post("/api/cikis")
+def api_cikis():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(kimlik.OTURUM_CEREZ)
+    return resp
+
+
+@app.get("/api/ben")
+def api_ben(request: Request):
+    """UI'nin kim olduğunu ve giriş kipini öğrendiği uç."""
+    k = _istek_kullanicisi(request) or {}
+    return {"ad": k.get("ad"), "rol": k.get("rol"),
+            "kullanici_tanimli": _kullanici_var()}
+
+
+@app.get("/api/kullanicilar")
+def api_kullanicilar(request: Request):
+    _yonetici_gerekli(request)
+    s = _store()
+    try:
+        return s.kullanici_listele()
+    finally:
+        s.close()
+
+
+@app.post("/api/kullanicilar")
+def api_kullanici_ekle(p: KullaniciPayload, request: Request):
+    _yonetici_gerekli(request)
+    ad = p.ad.strip()
+    if not ad or len(ad) > 40:
+        raise HTTPException(400, "Kullanıcı adı 1-40 karakter olmalı")
+    if len(p.parola) < 6:
+        raise HTTPException(400, "Parola en az 6 karakter olmalı")
+    rol = p.rol if p.rol in kimlik.ROLLER else "izleyici"
+    s = _store()
+    try:
+        if s.kullanici_sayisi() == 0:
+            rol = "yonetici"   # ilk kullanıcı kilidi: sistem yöneticisiz kalamaz
+        s.kullanici_ekle(ad, kimlik.parola_hashle(p.parola), rol)
+    finally:
+        s.close()
+    _kullanici_cache_sifirla()
+    return {"ok": True, "ad": ad, "rol": rol}
+
+
+@app.delete("/api/kullanicilar/{ad}")
+def api_kullanici_sil(ad: str, request: Request):
+    _yonetici_gerekli(request)
+    s = _store()
+    try:
+        hedef = s.kullanici_bul(ad)
+        if not hedef:
+            raise HTTPException(404, "Kullanıcı bulunamadı")
+        if hedef["rol"] == "yonetici":
+            kalan = sum(1 for u in s.kullanici_listele() if u["rol"] == "yonetici")
+            if kalan <= 1:
+                raise HTTPException(400, "Son yönetici silinemez — önce başka yönetici ekleyin")
+        s.kullanici_sil(ad)
+    finally:
+        s.close()
+    _kullanici_cache_sifirla()
+    return {"ok": True}
 
 
 @app.get("/api/cameras")
@@ -504,7 +667,7 @@ class ExportPayload(BaseModel):
 
 
 @app.post("/api/export")
-def api_export(p: ExportPayload):
+def api_export(p: ExportPayload, request: Request):
     """Zaman aralığını tek mp4 + SHA-256 imzalı manifest olarak dışa aktarır.
 
     Kanıt zinciri: manifest hem birleşik dosyanın hem kaynak segmentlerin
@@ -518,7 +681,9 @@ def api_export(p: ExportPayload):
     finally:
         s.close()
     try:
-        return disa_aktar(cfg, p.camera, segler)
+        # Kanıt manifestindeki "isteyen" artık gerçek kullanıcı (denetim izi)
+        kim = (_istek_kullanicisi(request) or {}).get("ad") or "operatör"
+        return disa_aktar(cfg, p.camera, segler, isteyen=kim)
     except ValueError as e:
         raise HTTPException(404, str(e))
     except Exception as e:
@@ -836,8 +1001,13 @@ async def api_stream(ws: WebSocket):
     from urllib.parse import quote
 
     q = ws.query_params
-    # HTTP middleware'i WebSocket kapsamına uygulanmaz → yetki burada kontrol edilir
-    if API_TOKEN and not secrets.compare_digest(q.get("token", ""), API_TOKEN):
+    # HTTP middleware'i WebSocket kapsamına uygulanmaz → yetki burada kontrol edilir.
+    # Kabul sırası middleware ile aynı: makine token'ı → oturum çerezi → auth kapalı.
+    oturum = kimlik.coz(ws.cookies.get(kimlik.OTURUM_CEREZ, ""))
+    izinli = (API_TOKEN and secrets.compare_digest(q.get("token", ""), API_TOKEN)) \
+        or (oturum is not None and oturum["ad"] in _kullanici_rolleri()) \
+        or (not API_TOKEN and not _kullanici_var())
+    if not izinli:
         await ws.close(code=1008)   # policy violation
         return
     src = q.get("src", "")
@@ -1425,15 +1595,16 @@ def api_alerts(limit: int = Query(20, ge=1, le=500), pending: bool = False):
 
 
 @app.post("/api/alerts/{alert_id}/ack")
-def api_ack_alert(alert_id: int):
+def api_ack_alert(alert_id: int, request: Request):
     """Uyarıyı kabul eder — operatör gördü, işlem yapıldı.
 
     Kabul edilen uyarı bekleyen listesinden ve menü rozetinden düşer; kayıt silinmez
     (kim ne zaman kabul etti bilgisi denetim izi olarak kalır).
     """
+    kim = (_istek_kullanicisi(request) or {}).get("ad") or "operatör"
     s = _store()
     try:
-        if not s.ack_alert(alert_id):
+        if not s.ack_alert(alert_id, by=kim):
             raise HTTPException(404, "Uyarı bulunamadı veya zaten kabul edilmiş")
         return {"ok": True}
     finally:

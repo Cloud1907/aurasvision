@@ -853,3 +853,118 @@ class TestKarakterUzlasma:
         # konumunda geçersiz → normalize_tr 34ABO123'e düzeltir, uzlaşma metni
         # ham haliyle yapıya oturmadığı için baskın GEÇERLİ metin korunur
         assert v[0]["plate"] in ("34ABC123", "34ABO123")
+
+
+# ── RBAC: rol matrisi + parola + oturum çerezi (docs/rbac-tasarim.md) ──
+class TestRolMatrisi:
+    """Middleware'in tek sorduğu fonksiyon — matris burada sabitlenir."""
+
+    def test_okuma_herkese_acik(self):
+        from src.kimlik import yetkili
+        for rol in ("yonetici", "operator", "izleyici"):
+            assert yetkili(rol, "GET", "/api/events")
+            assert yetkili(rol, "GET", "/api/cameras")
+
+    def test_izleyici_yazamaz(self):
+        from src.kimlik import yetkili
+        assert not yetkili("izleyici", "POST", "/api/cameras")
+        assert not yetkili("izleyici", "POST", "/api/alerts/3/ack")
+        assert not yetkili("izleyici", "DELETE", "/api/cameras/k1")
+        assert not yetkili("izleyici", "POST", "/api/export")
+
+    def test_operator_isini_yapar_ayar_degistiremez(self):
+        from src.kimlik import yetkili
+        # yapabildikleri: olay kabulü, kanıt dışa aktarma, test koşusu
+        assert yetkili("operator", "POST", "/api/alerts/3/ack")
+        assert yetkili("operator", "POST", "/api/export")
+        assert yetkili("operator", "POST", "/api/run")
+        # yapamadıkları: kamera/bölge/liste/kullanıcı yönetimi
+        assert not yetkili("operator", "POST", "/api/cameras")
+        assert not yetkili("operator", "DELETE", "/api/cameras/k1")
+        assert not yetkili("operator", "POST", "/api/zones")
+        assert not yetkili("operator", "POST", "/api/lists")
+        assert not yetkili("operator", "POST", "/api/kullanicilar")
+
+    def test_yonetici_her_seyi_yapar(self):
+        from src.kimlik import yetkili
+        assert yetkili("yonetici", "POST", "/api/cameras")
+        assert yetkili("yonetici", "DELETE", "/api/kullanicilar/x")
+
+    def test_arama_sorgudur_herkes_kullanir(self):
+        """POST /api/search yazma değil sorgu — izleyici de arayabilmeli."""
+        from src.kimlik import yetkili
+        assert yetkili("izleyici", "POST", "/api/search")
+
+    def test_giris_cikis_rolsuz_erisilir(self):
+        from src.kimlik import yetkili
+        assert yetkili("", "POST", "/api/giris")
+        assert yetkili("izleyici", "POST", "/api/cikis")
+
+
+class TestKimlik:
+    def test_parola_dogrulama(self):
+        from src.kimlik import parola_dogru, parola_hashle
+        h = parola_hashle("gizli123")
+        assert parola_dogru("gizli123", h)
+        assert not parola_dogru("gizli124", h)
+        assert not parola_dogru("gizli123", "bozuk-kayit")
+        # aynı parola iki hash'te farklı tuz üretmeli
+        assert h != parola_hashle("gizli123")
+
+    def test_oturum_imza_ve_sure(self, monkeypatch):
+        from src import kimlik
+        monkeypatch.setenv("AURAS_TOKEN", "test-anahtar")
+        t = kimlik.imzala("melih", "yonetici")
+        v = kimlik.coz(t)
+        assert v == {"ad": "melih", "rol": "yonetici"}
+        # süresi geçmiş token reddedilir
+        assert kimlik.coz(kimlik.imzala("melih", "yonetici", saniye=-1)) is None
+        # imzası oynanmış token reddedilir
+        govde, imza = t.split(".")
+        assert kimlik.coz(govde + ".AAAA" + imza[4:]) is None
+        # başka anahtarla imzalanmış token reddedilir
+        monkeypatch.setenv("AURAS_TOKEN", "baska-anahtar")
+        assert kimlik.coz(t) is None
+
+    def test_bilinmeyen_rol_reddedilir(self, monkeypatch):
+        from src import kimlik
+        monkeypatch.setenv("AURAS_TOKEN", "test-anahtar")
+        import base64
+        import hashlib as hl
+        import hmac as hm
+        import json as js
+        import time as tm
+        govde = base64.urlsafe_b64encode(js.dumps(
+            {"ad": "x", "rol": "tanri", "exp": int(tm.time()) + 99}).encode()).decode().rstrip("=")
+        imza = base64.urlsafe_b64encode(hm.new(b"oturum:test-anahtar", govde.encode(),
+                                               hl.sha256).digest()).decode().rstrip("=")
+        assert kimlik.coz(govde + "." + imza) is None
+
+
+class TestKullaniciStore:
+    def test_ekle_bul_listele_sil(self, tmp_path):
+        s = SqliteStore(tmp_path / "t.db")
+        assert s.kullanici_sayisi() == 0
+        s.kullanici_ekle("melih", "tuz$hash", "yonetici")
+        s.kullanici_ekle("vardiya", "tuz$hash2", "operator")
+        assert s.kullanici_sayisi() == 2
+        assert s.kullanici_bul("melih")["rol"] == "yonetici"
+        assert s.kullanici_bul("yok") is None
+        adlar = [u["ad"] for u in s.kullanici_listele()]
+        assert adlar == ["melih", "vardiya"]
+        # liste UI'a gider — hash sızmamalı
+        assert all("parola_hash" not in u for u in s.kullanici_listele())
+        assert s.kullanici_sil("vardiya")
+        assert not s.kullanici_sil("vardiya")
+        assert s.kullanici_sayisi() == 1
+        s.close()
+
+    def test_ayni_ad_upsert(self, tmp_path):
+        """Aynı adla ikinci ekleme parola/rol günceller (parola sıfırlama yolu)."""
+        s = SqliteStore(tmp_path / "t.db")
+        s.kullanici_ekle("melih", "h1", "izleyici")
+        s.kullanici_ekle("melih", "h2", "yonetici")
+        assert s.kullanici_sayisi() == 1
+        k = s.kullanici_bul("melih")
+        assert k["parola_hash"] == "h2" and k["rol"] == "yonetici"
+        s.close()

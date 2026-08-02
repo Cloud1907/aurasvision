@@ -190,3 +190,14 @@ CREATE TABLE IF NOT EXISTS nesne_vektor (
 );
 CREATE INDEX IF NOT EXISTS ix_nv_cam_time ON nesne_vektor (camera_id, time DESC);
 CREATE INDEX IF NOT EXISTS ix_nv_vec ON nesne_vektor USING hnsw (vec vector_cosine_ops);
+
+-- Kullanıcılar (RBAC, docs/rbac-tasarim.md): hash scrypt (src/kimlik.py),
+-- roller yonetici|operator|izleyici. Kullanıcı yokken AURAS_TOKEN eski
+-- davranışıyla geçerlidir (geriye uyum).
+CREATE TABLE IF NOT EXISTS kullanicilar (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  ad TEXT NOT NULL UNIQUE,
+  parola_hash TEXT NOT NULL,
+  rol TEXT NOT NULL DEFAULT 'izleyici',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
