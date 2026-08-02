@@ -901,9 +901,57 @@ def api_status():
         with urllib.request.urlopen(f"{base}/api/streams", timeout=3) as r:
             return f"{len(json.loads(r.read()))} akış"
 
+    def _ingestor():
+        """Olay işleyici birikmesi — kuyruk büyüyorsa olaylar DB'ye GEÇMİYOR demektir.
+
+        Sahada yaşandı: ingestor ölünce 11k+ olay stream'de birikti, panel
+        "sağlıklı" gösterdi. Artık consumer group'un gecikmesi ölçülür.
+        """
+        from .bus import GROUP, STREAM, open_bus
+        r = open_bus(cfg)
+        if r is None:
+            return "tek makine — ayrı işleyici yok"
+        gruplar = {g.get("name"): g for g in r.xinfo_groups(STREAM)}
+        g = gruplar.get(GROUP)
+        if g is None:
+            raise RuntimeError("olay işleyici hiç bağlanmamış (consumer group yok)")
+        bekleyen = int(g.get("pending") or 0)
+        lag = g.get("lag")   # Redis 7+: hiç teslim edilmemiş mesaj sayısı
+        birikme = bekleyen + int(lag or 0)
+        if birikme > 1000:
+            raise RuntimeError(f"{birikme} olay kuyrukta birikti — ingestor yetişmiyor/ölü")
+        return "birikme yok" if birikme == 0 else f"{birikme} olay işleniyor"
+
+    def _disk():
+        """Arşiv diski — dolarsa kayıt DA analiz DE sessizce durur."""
+        import shutil
+        kok = ROOT / cfg.get("paths.output_dir", "output") / cfg.get("record.dir", "rec")
+        d = shutil.disk_usage(kok if kok.exists() else ROOT)
+        bos_gb = d.free / (1024 ** 3)
+        detay = f"boş {bos_gb:.0f} GB / toplam {d.total / (1024 ** 3):.0f} GB"
+        if bos_gb < 10 or d.free / d.total < 0.05:
+            raise RuntimeError(f"disk doluyor — {detay}")
+        return detay
+
+    def _arama():
+        if not cfg.get("arama.enabled", True):
+            return "kapalı"
+        s = _store()
+        try:
+            rows = s._all("SELECT COUNT(*) AS n, MAX(time) AS son FROM nesne_vektor")
+        finally:
+            s.close()
+        n, son = int(rows[0]["n"] or 0), rows[0].get("son")
+        if not n:
+            return "henüz vektör yok (nesne görülünce başlar)"
+        return f"{n:,} nesne dizinde · son yazım {str(son)[:19]}".replace(",", ".")
+
     olc("Veritabanı", _db)
     olc("Olay yolu", _redis)
+    olc("Olay işleyici", _ingestor)
     olc("Canlı akış", _go2rtc)
+    olc("Disk alanı", _disk)
+    olc("Arama dizini", _arama)
 
     # Worker sağlığı: heartbeat TAZE olması yetmez — kare de ÜRETİYOR olmalı.
     # Ölü bir kamerayı işlemeye çalışan worker canlı heartbeat atar ama 0 fps
