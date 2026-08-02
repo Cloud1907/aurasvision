@@ -542,6 +542,82 @@ def api_recordings_stats():
         s.close()
 
 
+@app.get("/api/rapor")
+def api_rapor(start: str = Query(...), end: str = Query(...), camera: str = ""):
+    """Kamera bazlı günlük faaliyet raporu (TRASSIR sınıfı raporlama).
+
+    Satır = kamera × gün: giriş/çıkış, plaka okuma + benzersiz plaka, yüz,
+    alarm, kayıt kapsaması (dk). Tarihler yerel gün olarak yorumlanır — UI
+    ISO (UTC) çevirip gönderir; kayıtlardaki gün kayması dersinin aynısı.
+    """
+    s = _store()
+    try:
+        def _g(sql, *p):
+            try:
+                return s._all(sql, p)
+            except Exception:
+                return []
+        oz: dict = {}
+        def _al(anahtar):
+            def ekle(rows, ad):
+                for r in rows:
+                    k = (str(r["gun"])[:10], r["camera_id"])
+                    oz.setdefault(k, {})[ad] = r["n"]
+            return ekle
+        kos = " AND camera_id=?" if camera else ""
+        ek = (camera,) if camera else ()
+        ekle = _al(oz)
+        ekle(_g(f"SELECT date(time) gun, camera_id, count(*) n FROM count_events"
+                f" WHERE time>=? AND time<=? AND direction='in'{kos}"
+                f" GROUP BY 1,2", start, end, *ek), "giris")
+        ekle(_g(f"SELECT date(time) gun, camera_id, count(*) n FROM count_events"
+                f" WHERE time>=? AND time<=? AND direction='out'{kos}"
+                f" GROUP BY 1,2", start, end, *ek), "cikis")
+        ekle(_g(f"SELECT date(time) gun, camera_id, count(*) n FROM plate_events"
+                f" WHERE time>=? AND time<=?{kos} GROUP BY 1,2", start, end, *ek), "plaka")
+        ekle(_g(f"SELECT date(time) gun, camera_id, count(DISTINCT plate) n FROM plate_events"
+                f" WHERE time>=? AND time<=?{kos} GROUP BY 1,2", start, end, *ek), "benzersiz_plaka")
+        ekle(_g(f"SELECT date(time) gun, camera_id, count(*) n FROM face_events"
+                f" WHERE time>=? AND time<=?{kos} GROUP BY 1,2", start, end, *ek), "yuz")
+        ekle(_g(f"SELECT date(time) gun, camera_id, count(*) n FROM alerts"
+                f" WHERE time>=? AND time<=?{kos} GROUP BY 1,2", start, end, *ek), "alarm")
+        ekle(_g(f"SELECT date(start_time) gun, camera_id,"
+                f" CAST(sum(duration)/60 AS INTEGER) n FROM recordings"
+                f" WHERE start_time>=? AND start_time<=?{kos} GROUP BY 1,2",
+                start, end, *ek), "kayit_dk")
+        satirlar = [{"gun": g, "camera_id": c, **v} for (g, c), v in sorted(oz.items())]
+        return {"satirlar": satirlar}
+    finally:
+        s.close()
+
+
+@app.get("/api/rapor.xlsx")
+def api_rapor_xlsx(start: str = Query(...), end: str = Query(...), camera: str = ""):
+    """Aynı rapor, Excel dosyası olarak (openpyxl — saf Python, CDN'siz)."""
+    veri = api_rapor(start, end, camera)["satirlar"]
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    wb = Workbook(); ws = wb.active; ws.title = "Faaliyet"
+    basliklar = ["Gün", "Kamera", "Giriş", "Çıkış", "Plaka", "Benzersiz plaka",
+                 "Yüz", "Alarm", "Kayıt (dk)"]
+    ws.append(basliklar)
+    for h in ws[1]: h.font = Font(bold=True)
+    adlar = {c["id"]: c["name"] for c in _cameras()}
+    for r in veri:
+        ws.append([r["gun"], adlar.get(r["camera_id"], r["camera_id"]),
+                   r.get("giris", 0), r.get("cikis", 0), r.get("plaka", 0),
+                   r.get("benzersiz_plaka", 0), r.get("yuz", 0),
+                   r.get("alarm", 0), r.get("kayit_dk", 0)])
+        for i, b in enumerate(basliklar, 1):
+            ws.column_dimensions[ws.cell(1, i).column_letter].width = max(11, len(b) + 3)
+    buf = io.BytesIO(); wb.save(buf)
+    return Response(buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="aurasvision-rapor-{start[:10]}-{end[:10]}.xlsx"'})
+
+
 class SearchPayload(BaseModel):
     q: str
     camera: str = ""

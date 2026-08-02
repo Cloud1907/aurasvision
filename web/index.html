@@ -288,6 +288,7 @@ const IC={
   cams:'<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/>',
   zones:'<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   test:'<path d="M7 5v14l11-7z" fill="currentColor" stroke="none"/>',
+  report:'<path d="M4 4h16v16H4z"/><path d="M8 12v5M12 9v8M16 14v3"/>',
   events:'<path d="M6 9a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.5 21a1.5 1.5 0 0 0 3 0"/>',
   lists:'<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
   sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
@@ -309,12 +310,12 @@ document.getElementById('logo').innerHTML=
    önce "sistemde ne oluyor" özeti, sonra detay. */
 const NAV=[
   ["panel","Panel","live","İZLEME"],["live","Canlı","cams"],["rec","Kayıtlar","play"],["arama","Arama","search"],
-  ["events","Olaylar","events","OLAYLAR"],["lists","Tanıma listeleri","lists"],
+  ["events","Olaylar","events","OLAYLAR"],["rapor","Raporlar","report"],["lists","Tanıma listeleri","lists"],
   ["cams","Kameralar","cams","YÖNETİM"],["zones","Bölgeler","zones"],
   ["test","Test","test"],["sys","Sistem","bolt"]];
 const TITLES={panel:["Panel","Sistem özeti"],
   sys:["Sistem","Bileşen durumu ve arşiv"],
-  live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım çizgisi ve ihlal alanı"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],arama:["Arama","Arşivde serbest metinle nesne bul"],events:["Olaylar","Sayım, plaka ve yüz"],lists:["Tanıma listeleri","Plaka ve yüz tanıma · kara liste, VIP, izinli"]};
+  live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım çizgisi ve ihlal alanı"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],arama:["Arama","Arşivde serbest metinle nesne bul"],rapor:["Raporlar","Kamera bazlı günlük faaliyet"],events:["Olaylar","Sayım, plaka ve yüz"],lists:["Tanıma listeleri","Plaka ve yüz tanıma · kara liste, VIP, izinli"]};
 let CAMS=[],active="panel";
 let LIVE_COUNTS={},LIVE_ACTIVE=false;
 const $=s=>document.querySelector(s);
@@ -799,6 +800,40 @@ const SCREENS={
           <span class="mut-s" style="margin-left:auto;font-weight:400;">Satır üstüne gelince görüntüde vurgulanır</span></div>
         <div id="zlist"></div></div>`;
     await initEditor(camId);
+  },
+  async rapor(){
+    const st=window._rp||(window._rp={bas:new Date(Date.now()-6*864e5).toISOString().slice(0,10),
+                                      bit:new Date().toISOString().slice(0,10),kamera:""});
+    const adOf=id=>(CAMS.find(c=>c.id===id)||{}).name||id;
+    // Yerel gün → UTC aralık (kayıtlar ekranındaki gün kayması dersi)
+    const q=`start=${encodeURIComponent(new Date(st.bas+"T00:00:00").toISOString())}`+
+            `&end=${encodeURIComponent(new Date(st.bit+"T23:59:59").toISOString())}`+
+            (st.kamera?`&camera=${encodeURIComponent(st.kamera)}`:"");
+    $("#tact").innerHTML=`<a class="btn" href="/api/rapor.xlsx?${q}${tokq()}" download>${svg('play',15)} Excel indir</a>`;
+    $("#content").innerHTML=`
+      <div class="card" style="margin-bottom:16px;"><div style="display:flex;gap:9px;padding:12px;flex-wrap:wrap;align-items:center;">
+        <input type="date" value="${st.bas}" onchange="window._rp.bas=this.value;SCREENS.rapor()"/>
+        <span class="mut-s">—</span>
+        <input type="date" value="${st.bit}" onchange="window._rp.bit=this.value;SCREENS.rapor()"/>
+        <select onchange="window._rp.kamera=this.value;SCREENS.rapor()">
+          <option value="">Tüm kameralar</option>
+          ${CAMS.map(c=>`<option value="${esc(c.id)}" ${st.kamera===c.id?'selected':''}>${esc(c.name)}</option>`).join("")}</select></div></div>
+      <div class="card" style="overflow-x:auto;" id="rp-tablo"><div class="empty">yükleniyor…</div></div>`;
+    try{
+      const r=await api("/rapor?"+q);
+      const satir=r.satirlar||[];
+      if(active!=="rapor")return;
+      $("#rp-tablo").innerHTML=satir.length?`<table><thead><tr>
+          <th>Gün</th><th>Kamera</th><th>Giriş</th><th>Çıkış</th><th>Plaka</th>
+          <th>Benzersiz plaka</th><th>Yüz</th><th>Alarm</th><th>Kayıt</th></tr></thead><tbody>
+        ${satir.map(x=>`<tr><td class="mono">${esc(x.gun)}</td><td style="font-weight:650;">${esc(adOf(x.camera_id))}</td>
+          <td>${x.giris||0}</td><td>${x.cikis||0}</td><td>${x.plaka||0}</td>
+          <td>${x.benzersiz_plaka||0}</td><td>${x.yuz||0}</td>
+          <td${x.alarm?' style="color:var(--danger);font-weight:700;"':''}>${x.alarm||0}</td>
+          <td class="mut-s">${x.kayit_dk?Math.floor(x.kayit_dk/60)+"s "+(x.kayit_dk%60)+"dk":"—"}</td></tr>`).join("")}
+        </tbody></table>`
+        :`<div class="empty">Bu aralıkta veri yok.</div>`;
+    }catch(e){$("#rp-tablo").innerHTML=`<div class="empty">Rapor alınamadı: ${esc(String(e))}</div>`;}
   },
   arama(){
     const st=window._aq||(window._aq={q:"",kamera:"",sonuc:null,bekliyor:false});
