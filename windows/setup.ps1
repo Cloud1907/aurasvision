@@ -1,4 +1,4 @@
-# AurasVision — Windows kurulum betiği.
+﻿# AurasVision — Windows kurulum betiği.
 # Kullanıcı bunu doğrudan çalıştırmaz; AurasVision-Kurulum.bat çift tıklanır.
 #
 # Tasarım: TEKRAR ÇALIŞTIRILABİLİR. Var olanı bozmaz, eksik olanı tamamlar.
