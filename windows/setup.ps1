@@ -31,6 +31,14 @@ $ErrorActionPreference = "Stop"
 $Kok = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Kok
 
+# Her kurulum girişimi dosyaya loglanır — sihirbaz penceresi kapanınca hata
+# kaybolmasın; destek "kurulum-log.txt'yi gönderin" diyebilsin.
+try { Start-Transcript -Path (Join-Path $Kok "kurulum-log.txt") -Append | Out-Null } catch { }
+
+# Eski Windows Server'da PowerShell 5.1 varsayılanı TLS 1.0 — python.org ve
+# GitHub indirmeleri "Could not create SSL/TLS secure channel" ile ölür
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
+
 function Ye($m) { Write-Host "  [OK] $m" -ForegroundColor Green }
 function Uy($m) { Write-Host "  [!]  $m" -ForegroundColor Yellow }
 function Ha($m) { Write-Host "  [X]  $m" -ForegroundColor Red }
@@ -51,15 +59,37 @@ foreach ($aday in @("python", "python3", "py")) {
     } catch { }
 }
 if (-not $py) {
-    Uy "Python 3.11+ bulunamadı — otomatik kuruluyor (winget)"
+    # winget her Windows'ta yok (özellikle Windows SERVER sürümlerinde gelmez).
+    # Yokken resmî kurucu doğrudan python.org'dan indirilir — sessiz kurulum.
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Uy "Python 3.11+ bulunamadı — otomatik kuruluyor (winget)"
+        try {
+            winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements | Out-Null
+        } catch { Uy "winget kurulumu başarısız — doğrudan indirme denenecek" }
+    }
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+        Uy "Python resmî kurucuyla indiriliyor (python.org)"
+        try {
+            $pyKur = Join-Path $env:TEMP "python-kurulum.exe"
+            Invoke-WebRequest -UseBasicParsing -OutFile $pyKur `
+                "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
+            Start-Process -Wait $pyKur -ArgumentList `
+                "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0"
+            Remove-Item $pyKur -ErrorAction SilentlyContinue
+        } catch {
+            Ha "Python indirilemedi/kurulamadı: $($_.Exception.Message)"
+            Ha "Elle kurun: https://www.python.org/downloads/ ('Add to PATH' işaretleyin), sonra kurulumu tekrarlayın"
+            exit 1
+        }
+    }
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                [Environment]::GetEnvironmentVariable("Path", "User")
     try {
-        winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements | Out-Null
-        $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-                    [Environment]::GetEnvironmentVariable("Path", "User")
-        $py = "python"
-        Ye "Python kuruldu"
-    } catch {
-        Ha "Python kurulamadı. Elle kurun: https://www.python.org/downloads/ (kurulumda 'Add to PATH' işaretleyin)"
+        $s = & python -c "import sys;print('%d.%d'%sys.version_info[:2])" 2>$null
+        if ($s -and [version]$s -ge [version]"3.11") { $py = "python"; Ye "Python $s kuruldu" }
+    } catch { }
+    if (-not $py) {
+        Ha "Python kurulumu doğrulanamadı. Bilgisayarı yeniden başlatıp kurulumu tekrarlayın."
         exit 1
     }
 }
