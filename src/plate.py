@@ -374,6 +374,37 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     camera_id = camera_id or Path(source).stem
 
     alpr = _load_alpr(detector, ocr, cfg.get("device", "auto"))
+    # Araç kırpması (worker'ın nvdec yolundakiyle aynı gerekçe): tam karede
+    # uzak plaka dedektörün 384px girişinde kaybolur. Test ekranı bu yüzden
+    # worker satır yazarken "hiç plaka yok" gösteriyordu — iki yol aynı
+    # güçte olmalı. Araç dedektörü açılamazsa tam kareye düşülür.
+    arac_yolo = None
+    if bool(cfg.get("plate.crop_vehicles", True)):
+        try:
+            from .detect import load_yolo
+            arac_yolo = load_yolo(cfg.get("detect.model", "yolo11n.pt"),
+                                  cfg.get("device", "auto"), instance_key="plate-crop")
+        except Exception as e:
+            print(f"[plate] araç dedektörü açılamadı ({e}) — tam kare ile devam", flush=True)
+
+    def _parcalar(frame):
+        h, w = frame.shape[:2]
+        if arac_yolo is None:
+            return [(frame, 0, 0)]
+        try:
+            res = arac_yolo.predict(frame, conf=0.35, verbose=False)[0]
+            kutular = [tuple(map(float, b)) for b, c in
+                       zip(res.boxes.xyxy.tolist(), res.boxes.cls.tolist())
+                       if int(c) in (2, 3, 5, 7)]
+        except Exception:
+            return [(frame, 0, 0)]
+        out = []
+        for x1, y1, x2, y2 in sorted(kutular, key=lambda b: -(b[2]-b[0])*(b[3]-b[1]))[:4]:
+            kx1 = max(0, int(x1 - (x2-x1)*0.15)); ky1 = max(0, int(y1 - (y2-y1)*0.15))
+            kx2 = min(w, int(x2 + (x2-x1)*0.15)); ky2 = min(h, int(y2 + (y2-y1)*0.15))
+            if kx2 - kx1 > 40 and ky2 - ky1 > 30:
+                out.append((frame[ky1:ky2, kx1:kx2], kx1, ky1))
+        return out   # araç yoksa OCR hiç koşmaz (boş kare için doğru davranış)
 
     cap = akis.ac(source, cfg)
     if not cap.isOpened():
@@ -424,7 +455,8 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
         res.frames += 1
         ts = frame_idx / fps
 
-        for pred in alpr.predict(frame):
+        for parca, _ox, _oy in _parcalar(frame):
+          for pred in alpr.predict(parca):
             ocr_res = getattr(pred, "ocr", None)
             text = getattr(ocr_res, "text", None) if ocr_res else None
             conf = _as_float_conf(getattr(ocr_res, "confidence", None) if ocr_res else None)
@@ -453,7 +485,8 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
                 snap = onceki[1]
             else:
                 snap = kanit_kaydet(cfg, frame, camera_id, "plate",
-                                    box=(bb.x1, bb.y1, bb.x2, bb.y2) if bb is not None else None,
+                                    box=((bb.x1 + _ox, bb.y1 + _oy, bb.x2 + _ox, bb.y2 + _oy)
+                                         if bb is not None else None),
                                     etiket=f"{plate}  ({conf:.2f})  kare {frame_idx}"
                                            if conf is not None else f"{plate}  kare {frame_idx}")
                 kanit_gorulen[plate] = ((conf or 0.0), snap)
@@ -462,7 +495,8 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
                      "snapshot": snap}
             res.reads.append(okuma)
             takip.ekle(okuma,
-                       (bb.x1, bb.y1, bb.x2, bb.y2) if bb is not None else (0, 0, 1, 1),
+                       ((bb.x1 + _ox, bb.y1 + _oy, bb.x2 + _ox, bb.y2 + _oy)
+                        if bb is not None else (_ox, _oy, _ox + 1, _oy + 1)),
                        ts)
             if on_read:
                 on_read(plate, conf, frame_idx, round(ts, 2))
