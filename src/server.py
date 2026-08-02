@@ -317,6 +317,42 @@ def api_kullanici_sil(ad: str, request: Request):
     return {"ok": True}
 
 
+# ─────────────────────────── PTZ (ONVIF) ───────────────────────────
+
+class PtzPayload(BaseModel):
+    pan: float = 0.0
+    tilt: float = 0.0
+    zoom: float = 0.0
+    dur: bool = False
+
+
+@app.get("/api/ptz/{cid}")
+def api_ptz_yetenek(cid: str):
+    """PTZ destek sorgusu — UI pedi yalnız destek varsa çizer (önbellekli)."""
+    c = _camera(cid)
+    if not c:
+        raise HTTPException(404, "Kamera bulunamadı")
+    from . import ptz as ptz_mod
+    return ptz_mod.destekliyor_mu(cid, c)
+
+
+@app.post("/api/ptz/{cid}")
+def api_ptz_komut(cid: str, p: PtzPayload):
+    """Sürekli hareket başlat (pan/tilt/zoom -1..1) veya dur=true ile kes."""
+    c = _camera(cid)
+    if not c:
+        raise HTTPException(404, "Kamera bulunamadı")
+    from . import ptz as ptz_mod
+    try:
+        if p.dur:
+            ptz_mod.dur(c)
+        else:
+            ptz_mod.hareket(c, p.pan, p.tilt, p.zoom)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(502, f"PTZ komutu iletilemedi: {str(e)[:120]}")
+
+
 @app.get("/api/cameras")
 def api_cameras():
     return _cameras()
@@ -368,6 +404,8 @@ def api_update_camera(cid: str, p: CameraPatch):
     POST /api/cameras yalnız EKLER (aynı id gelirse yeni id türetir); kurulumdan
     sonra adres/substream değiştirmek için düzenleme ucu gerekir.
     """
+    from . import ptz as ptz_mod
+    ptz_mod.yetenek_unut(cid)   # kaynak değişmiş olabilir → PTZ desteği yeniden sorulur
     cam = _camera(cid)
     if not cam:
         raise HTTPException(404, "Kamera bulunamadı")
@@ -462,6 +500,8 @@ def api_del_camera(cid: str):
     try:
         s.delete_camera(cid)
         _sync_go2rtc()
+        from . import ptz as ptz_mod
+        ptz_mod.yetenek_unut(cid)   # aynı id'yle farklı kamera eklenebilir
         return {"ok": True}
     finally:
         s.close()

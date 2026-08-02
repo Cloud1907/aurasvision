@@ -49,6 +49,13 @@
   .rail-foot{border-top:1px solid var(--rail-2);padding-top:14px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
   .ubar{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--rail-2);border-radius:5px;margin-bottom:10px;font-size:12.5px;}
   .ubar .uad{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  /* PTZ pedi — tek kamera görünümünde, yalnız destekli kamerada */
+  .ptzped{position:absolute;right:14px;bottom:14px;display:grid;gap:5px;z-index:5;
+    grid-template-areas:". u zi" "l d r" ". . zo";}
+  .ptzped button{width:36px;height:36px;border-radius:4px;border:1px solid rgba(255,255,255,.16);
+    background:rgba(13,16,20,.74);color:#dfe5ec;font-size:14px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;user-select:none;touch-action:none;}
+  .ptzped button:active{background:rgba(78,140,201,.5);border-color:rgba(78,140,201,.8);}
   /* Sistem durumu — sabit "aktif" yazısı yerine gerçek bileşen sağlığı */
   .sysbtn{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--rail-ink-2);font-weight:700;background:transparent;border:0;cursor:pointer;padding:4px 6px;border-radius:8px;transition:background var(--t),color var(--t);}
   .sysbtn:hover{background:var(--rail-2);color:#fff;}
@@ -621,6 +628,34 @@ function openCam(id,ad){
   m.querySelector("#cv-x").onclick=kapat;
   m.onclick=e=>{if(e.target===m)kapat();};
   mountStreams();   // yeni auras-stream'i bağlar
+  ptzPed(m,id);     // kamera destekliyorsa yönlendirme pedi ekler
+}
+/* --- PTZ pedi ---
+   Yalnız PTZ destekli kamerada görünür (yetenek sorgusu önbelleklidir, PTZ'siz
+   kameralar için tek sefer sorulur). Bas-tut → sürekli hareket, bırak → dur. */
+window._ptzCaps={};
+async function ptzPed(mask,id){
+  try{
+    if(!(id in window._ptzCaps))window._ptzCaps[id]=await api("/ptz/"+encodeURIComponent(id));
+    if(!window._ptzCaps[id].destek)return;
+  }catch(e){window._ptzCaps[id]={destek:false};return;}
+  const tile=mask.querySelector(".tile");if(!tile)return;
+  const ped=document.createElement("div");ped.className="ptzped";ped.onclick=e=>e.stopPropagation();
+  const tus=(k,l,pan,tilt,zoom)=>`<button data-p="${pan}" data-t="${tilt}" data-z="${zoom}" style="grid-area:${k};" title="${l}">${l}</button>`;
+  ped.innerHTML=`
+    ${tus("u","▲",0,0.5,0)}${tus("l","◀",-0.5,0,0)}${tus("r","▶",0.5,0,0)}${tus("d","▼",0,-0.5,0)}
+    ${tus("zi","+",0,0,0.5)}${tus("zo","−",0,0,-0.5)}`;
+  tile.appendChild(ped);
+  let aktif=false;
+  const gonder=b=>fetch("/api/ptz/"+encodeURIComponent(id),{method:"POST",
+    headers:Object.assign({"Content-Type":"application/json"},TOKEN?{Authorization:'Bearer '+TOKEN}:{}),
+    body:JSON.stringify(b)}).catch(()=>{});
+  ped.querySelectorAll("button").forEach(b=>{
+    const bas=e=>{e.preventDefault();aktif=true;
+      gonder({pan:+b.dataset.p,tilt:+b.dataset.t,zoom:+b.dataset.z});};
+    const birak=()=>{if(!aktif)return;aktif=false;gonder({dur:true});};
+    b.onpointerdown=bas;b.onpointerup=birak;b.onpointerleave=birak;b.onpointercancel=birak;
+  });
 }
 /* Karo durumu OLAYDAN değil gerçek ilerlemeden okunur: soket açık kaldığı hâlde
    görüntü donabilir (kamera/kodlayıcı takılması) — olay tabanlı tespit bunu kaçırır,

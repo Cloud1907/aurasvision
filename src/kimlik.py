@@ -106,9 +106,10 @@ def coz(token: str) -> dict | None:
 _HERKESE = ("/api/giris", "/api/cikis", "/api/ben")
 # POST ama hiçbir şey yazmaz — sorgu gövdesi taşıyan salt-okuma ucu
 _SALT_OKUMA_POST = ("/api/search",)
-# Operatörün işi: olay kabulü, kanıt dışa aktarma, test koşusu, arşiv klasörü
+# Operatörün işi: olay kabulü, kanıt dışa aktarma, test koşusu, arşiv klasörü,
+# kamera yönlendirme (PTZ — ayar değil, günlük operasyon)
 _OPERATOR_YAZAR = ("/api/alerts", "/api/export", "/api/run",
-                   "/api/recordings/open-folder")
+                   "/api/recordings/open-folder", "/api/ptz")
 
 
 def yetkili(rol: str, method: str, path: str) -> bool:

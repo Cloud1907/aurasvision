@@ -874,10 +874,12 @@ class TestRolMatrisi:
 
     def test_operator_isini_yapar_ayar_degistiremez(self):
         from src.kimlik import yetkili
-        # yapabildikleri: olay kabulü, kanıt dışa aktarma, test koşusu
+        # yapabildikleri: olay kabulü, kanıt dışa aktarma, test koşusu, PTZ
         assert yetkili("operator", "POST", "/api/alerts/3/ack")
         assert yetkili("operator", "POST", "/api/export")
         assert yetkili("operator", "POST", "/api/run")
+        assert yetkili("operator", "POST", "/api/ptz/kapi")
+        assert not yetkili("izleyici", "POST", "/api/ptz/kapi")
         # yapamadıkları: kamera/bölge/liste/kullanıcı yönetimi
         assert not yetkili("operator", "POST", "/api/cameras")
         assert not yetkili("operator", "DELETE", "/api/cameras/k1")
@@ -968,3 +970,21 @@ class TestKullaniciStore:
         k = s.kullanici_bul("melih")
         assert k["parola_hash"] == "h2" and k["rol"] == "yonetici"
         s.close()
+
+
+class TestPtzBaglanti:
+    def test_rtsp_kaynagindan_cikarim(self):
+        from src.ptz import baglanti_bilgisi
+        b = baglanti_bilgisi({"source": "rtsp://admin:g%40izli@192.168.1.20:554/Streaming/Channels/101"})
+        assert b == {"ip": "192.168.1.20", "port": 80, "user": "admin", "password": "g@izli"}
+
+    def test_onvif_bloku_kaynagi_ezer(self):
+        from src.ptz import baglanti_bilgisi
+        b = baglanti_bilgisi({"source": "rtsp://x:y@1.2.3.4/s",
+                              "onvif": {"ip": "1.2.3.9", "port": 8080, "user": "u", "password": "p"}})
+        assert b["ip"] == "1.2.3.9" and b["port"] == 8080
+
+    def test_dosya_ve_hls_kaynaginda_yok(self):
+        from src.ptz import baglanti_bilgisi
+        assert baglanti_bilgisi({"source": "data/videos/x.mp4"}) is None
+        assert baglanti_bilgisi({"source": "https://cdn.example.com/hls/live.m3u8"}) is None
