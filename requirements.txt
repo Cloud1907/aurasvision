@@ -26,9 +26,17 @@ psycopg[binary]>=3.1        # DATABASE_URL yoksa SQLite fallback (ek paket gerek
 # --- Olay veri yolu (worker → ingestor) ---
 redis>=5.0
 
+# --- Kayıt (src/recorder.py) ---
+# ZORUNLU, isteğe bağlı değil: recorder hem segment remux'unda hem süre
+# ölçümünde koşulsuz `import av` yapar (konakta ffprobe olmayabildiği için
+# harici ikiliye bilinçli olarak bağlanılmıyor). Uzun süre yalnızca aşağıdaki
+# GPU bloğunda yorum satırı olarak durdu; sonuç: GPU'suz Windows kurulumlarında
+# kayıt servisi her 5 saniyede "No module named 'av'" verip hiç çalışmadı.
+av>=15.0
+
 # --- GPU pipeline motoru (worker.engine: nvdec — GB10/CUDA makineler, ADR-0003) ---
 # pynvvideocodec>=2.1   # NVDEC decode (aarch64 wheel PyPI'da mevcut)
-# av>=15.0              # GIL-dostu demux (PyNvVideoCodec demuxer'ı canlı akışta GIL tutuyor)
+# (av yukarıda çekirdek bağımlılık olarak zaten kurulu — GIL-dostu demux için de o kullanılır)
 
 # --- Kamera keşfi (ONVIF) ---
 onvif-zeep-async>=3.1     # kameranın kendi bildirdiği akış adresleri (ana + substream)
