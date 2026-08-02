@@ -32,4 +32,4 @@ playwright-report/
 allure-results/
 allure-report/
 .schemathesis/
-windows/AurasVision-Kurulum.exe
+# windows/AurasVision-Kurulum.exe — artık repoda: sunucular farklı ağdan indirebilsin (5 MB)
