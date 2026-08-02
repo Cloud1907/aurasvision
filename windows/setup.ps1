@@ -3,6 +3,11 @@
 #
 # Tasarım: TEKRAR ÇALIŞTIRILABİLİR. Var olanı bozmaz, eksik olanı tamamlar.
 # .env varsa dokunulmaz (erişim anahtarı yeniden üretilseydi tüm istemciler düşerdi).
+#
+# Adım sırası bilinçli: yapılandırma ve başlatma kısayolları ÖNCE, ağır/kırılgan
+# bağımlılık kurulumu SONRA. İlk saha denemesinde pip adımı yarıda kalınca
+# masaüstü kısayolu var olmayan bir .bat'a işaret ediyordu — kısayolun hedefi
+# artık her koşulda üretiliyor ve kurulum eksikse kullanıcıya bunu söylüyor.
 
 param(
     [switch]$NoLaunch,   # kurulum sihirbazı içinden çağrılırken paneli açma
@@ -103,23 +108,17 @@ if (-not $dockerVar) {
     Ye "Profil: tek makine (SQLite · Docker gerekmez)"
 }
 
-# ── 3. Python ortamı ──────────────────────────────────────────────
-Bas "3/6  Bağımlılıklar"
-if (-not (Test-Path ".venv")) { & $py -m venv .venv }
-$vpy = Join-Path $Kok ".venv\Scripts\python.exe"
-if (-not (Test-Path $vpy)) { Ha "Sanal ortam kurulamadı"; exit 1 }
-& $vpy -m pip install -q -U pip
-& $vpy -m pip install -q -r requirements.txt
-if ($LASTEXITCODE -ne 0) { Ha "Bağımlılıklar kurulamadı"; exit 1 }
-Ye "Bağımlılıklar kuruldu"
-
-# ── 4. Yapılandırma ───────────────────────────────────────────────
-Bas "4/6  Yapılandırma"
+# ── 3. Yapılandırma ───────────────────────────────────────────────
+Bas "3/6  Yapılandırma"
 if (Test-Path ".env") {
     Ye ".env mevcut — dokunulmadı (erişim anahtarı korunuyor)"
     $token = (Select-String -Path ".env" -Pattern '^AURAS_TOKEN=(.*)$').Matches.Groups[1].Value
 } else {
-    $token = & $vpy -c "import secrets;print(secrets.token_urlsafe(24))"
+    # Anahtar PowerShell'in kendi kripto RNG'siyle üretilir — Python'a bağımlı
+    # değil; sanal ortam kurulamasa bile yapılandırma tamamlanır.
+    $rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::new()
+    $b = New-Object byte[] 24; $rng.GetBytes($b)
+    $token = ([Convert]::ToBase64String($b)) -replace '[+/=]', ''
     # Veritabanı seçimi Docker'ın GERÇEKTEN çalışmasına bağlı:
     #  * Docker var  → PostgreSQL + TimescaleDB + pgvector (konteynerde, ayrı kurulum yok)
     #  * Docker yok  → satırlar YAZILMAZ; uygulama SQLite'a, worker da tek makine
@@ -162,27 +161,10 @@ if ($gpu) {
         Set-Content "config.yaml" -Encoding UTF8
 }
 
-# ── 5. Altyapı ────────────────────────────────────────────────────
-Bas "5/6  Altyapı servisleri"
-if ($dockerVar) {
-    docker compose up -d db redis go2rtc | Out-Null
-    Ye "Veritabanı, olay yolu ve canlı izleme başlatıldı"
-    Write-Host "     veritabanı bekleniyor..." -NoNewline
-    for ($i = 0; $i -lt 30; $i++) {
-        $env:DATABASE_URL = "postgresql://auras:auras@localhost:5433/auras"
-        & $vpy -c "import sys;sys.path.insert(0,'.');from src.config import load_config;from src.store import open_store;s=open_store(load_config());s.latest_health();s.close()" 2>$null
-        if ($LASTEXITCODE -eq 0) { Write-Host ""; Ye "Veritabanı hazır"; break }
-        Start-Sleep 2; Write-Host "." -NoNewline
-    }
-} else {
-    # Tek makine: ayrı servis yok. go2rtc uygulama ile birlikte başlar,
-    # veritabanı dosyası ilk açılışta kendini kurar.
-    Ye "Ek servis gerekmiyor — veritabanı ve canlı izleme uygulama ile başlar"
-}
-
-# ── 6. Başlatıcılar ───────────────────────────────────────────────
-Bas "6/6  Başlatma kısayolları"
-# Uygulamayı başlatan betik — kullanıcı bunu çift tıklar.
+# ── 4. Başlatıcılar ───────────────────────────────────────────────
+# BİLEREK bağımlılık kurulumundan ÖNCE: pip yarıda kalsa bile masaüstü kısayolu
+# çalışır bir hedefe işaret eder; hedef, kurulum eksikse bunu kullanıcıya söyler.
+Bas "4/6  Başlatma kısayolları"
 # Hangi servislerin başlayacağı kurulum profiline bağlı:
 #   Docker'lı  → olay yolu Redis'te, ingestor gerekir; go2rtc konteynerde
 #   Tek makine → worker doğrudan veritabanına yazar; go2rtc kendi .exe'si
@@ -202,6 +184,15 @@ title AurasVision
 cd /d "%~dp0.."
 rem .env'i Python kendisi okur (src/config.py load_env). Burada ayrica ayristirmak
 rem gereksiz ve riskliydi: yorum satirindaki bir parantez for blogunu erken kapatiyordu.
+if not exist ".venv\Scripts\python.exe" (
+  echo.
+  echo  AurasVision kurulumu tamamlanmamis gorunuyor: Python ortami eksik.
+  echo  Lutfen kurulumu tekrar calistirin:
+  echo    windows\AurasVision-Kurulum.bat  ^(sag tik - Yonetici olarak calistir^)
+  echo.
+  pause
+  exit /b 1
+)
 if not exist output\logs mkdir output\logs
 $canli
 start "" http://127.0.0.1:8000/?token=$token
@@ -245,6 +236,42 @@ try {
         Ye "Açılışta otomatik başlatma tanımlandı"
     } else { Ye "Açılış görevi zaten tanımlı" }
 } catch { Uy "Otomatik başlatma tanımlanamadı — panel elle başlatılacak" }
+
+# ── 5. Python ortamı ──────────────────────────────────────────────
+# En kırılgan ve en uzun adım (torch ~2 GB iner). Bu yüzden en sonda:
+# buraya gelene kadar yapılandırma ve kısayollar çoktan hazır.
+Bas "5/6  Bağımlılıklar (en uzun adım — torch dahil, sabır)"
+if (-not (Test-Path ".venv")) { & $py -m venv .venv }
+$vpy = Join-Path $Kok ".venv\Scripts\python.exe"
+if (-not (Test-Path $vpy)) { Ha "Sanal ortam kurulamadı"; exit 1 }
+& $vpy -m pip install -q -U pip
+& $vpy -m pip install -q -r requirements.txt
+if ($LASTEXITCODE -ne 0) {
+    Ha "Bağımlılıklar kurulamadı."
+    Uy "İnternet bağlantısını kontrol edin ve kurulumu tekrar çalıştırın:"
+    Uy "  windows\AurasVision-Kurulum.bat (sağ tık → Yönetici olarak çalıştır)"
+    Uy "Sorun sürerse bu penceredeki hata satırını destek için kaydedin."
+    exit 1
+}
+Ye "Bağımlılıklar kuruldu"
+
+# ── 6. Altyapı servisleri ─────────────────────────────────────────
+Bas "6/6  Altyapı servisleri"
+if ($dockerVar) {
+    docker compose up -d db redis go2rtc | Out-Null
+    Ye "Veritabanı, olay yolu ve canlı izleme başlatıldı"
+    Write-Host "     veritabanı bekleniyor..." -NoNewline
+    for ($i = 0; $i -lt 30; $i++) {
+        $env:DATABASE_URL = "postgresql://auras:auras@localhost:5433/auras"
+        & $vpy -c "import sys;sys.path.insert(0,'.');from src.config import load_config;from src.store import open_store;s=open_store(load_config());s.latest_health();s.close()" 2>$null
+        if ($LASTEXITCODE -eq 0) { Write-Host ""; Ye "Veritabanı hazır"; break }
+        Start-Sleep 2; Write-Host "." -NoNewline
+    }
+} else {
+    # Tek makine: ayrı servis yok. go2rtc uygulama ile birlikte başlar,
+    # veritabanı dosyası ilk açılışta kendini kurar.
+    Ye "Ek servis gerekmiyor — veritabanı ve canlı izleme uygulama ile başlar"
+}
 
 # ── Özet ──────────────────────────────────────────────────────────
 Write-Host ""
