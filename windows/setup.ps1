@@ -138,6 +138,35 @@ if (-not $dockerVar) {
     Ye "Profil: tek makine (SQLite · Docker gerekmez)"
 }
 
+# Visual C++ 2015-2022 çalışma zamanı. torch'un c10.dll'i buna bağlıdır ve
+# temiz bir Windows'ta KURULU DEĞİLDİR. Eksikse pip sorunsuz biter, kurulum
+# "TAMAMLANDI" der, ama uygulama açılmaz:
+#   OSError: [WinError 126] ... c10.dll or one of its dependencies
+# Sahada bu yaşandı; sessiz başarısızlık en pahalı hata biçimi olduğu için
+# burada baştan kurulur.
+if (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" -ErrorAction SilentlyContinue) {
+    Ye "Visual C++ çalışma zamanı mevcut"
+} else {
+    Uy "Visual C++ çalışma zamanı eksik — kuruluyor (torch bunsuz açılmaz)"
+    try {
+        $vcKur = Join-Path $env:TEMP "vc_redist.x64.exe"
+        Invoke-WebRequest -UseBasicParsing -OutFile $vcKur `
+            "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        $vcp = Start-Process -FilePath $vcKur -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
+        Remove-Item $vcKur -ErrorAction SilentlyContinue
+        # 0 = kuruldu · 3010 = kuruldu (yeniden başlatma önerilir) · 1638 = zaten var
+        if ($vcp.ExitCode -in 0, 3010, 1638) {
+            Ye "Visual C++ çalışma zamanı kuruldu"
+        } else {
+            Uy "Visual C++ kurulumu $($vcp.ExitCode) kodu döndü — analiz servisi açılmazsa elle kurun:"
+            Uy "  https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        }
+    } catch {
+        Uy "Visual C++ çalışma zamanı kurulamadı: $($_.Exception.Message)"
+        Uy "Elle kurun: https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    }
+}
+
 # ── 3. Yapılandırma ───────────────────────────────────────────────
 Bas "3/6  Yapılandırma"
 if (Test-Path ".env") {
@@ -185,10 +214,19 @@ if ($gpu) {
     Uy "TensorRT motoru bu makinede üretilmeli: .venv\Scripts\yolo export model=yolo11s.pt format=engine half=True dynamic=True batch=32"
 } else {
     Uy "GPU yok — CPU modeline geçiliyor (yavaş ama çalışır)"
-    (Get-Content "config.yaml") `
-        -replace '^(\s*)model: yolo11s\.engine', '$1model: yolo11n.pt' `
-        -replace '^(\s*)engine: nvdec', '$1engine: ultralytics' |
-        Set-Content "config.yaml" -Encoding UTF8
+    # Kodlama AÇIKÇA belirtilir. Windows PowerShell 5.1'de Get-Content dosyayı
+    # ANSI (TR'de cp1254) okur: UTF-8 Türkçe karakterler yanlış çözülüp tekrar
+    # UTF-8 yazılınca çift kodlanır (ş→ÅŸ) ve araya YAML'ın reddettiği C1
+    # kontrol karakteri girer. Sonuç: config.yaml bir daha yüklenemez
+    # ("ReaderError: unacceptable character #x009e") — uygulama hiç açılmaz.
+    # Bu blok yalnız GPU'suz makinelerde çalıştığı için uzun süre fark edilmedi.
+    # BOM da yazılmaz ($false): PyYAML dosya başındaki BOM'dan hoşlanmıyor.
+    $yamlYol = Join-Path $Kok "config.yaml"
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $yaml = [IO.File]::ReadAllText($yamlYol, $utf8)
+    $yaml = $yaml -replace '(?m)^(\s*)model: yolo11s\.engine', '${1}model: yolo11n.pt'
+    $yaml = $yaml -replace '(?m)^(\s*)engine: nvdec',          '${1}engine: ultralytics'
+    [IO.File]::WriteAllText($yamlYol, $yaml, $utf8)
 }
 
 # ── 4. Başlatıcılar ───────────────────────────────────────────────
@@ -295,6 +333,20 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 Ye "Bağımlılıklar kuruldu"
+
+# Duman testi: pip'in "başarılı" demesi paketlerin AÇILDIĞI anlamına gelmez.
+# torch, C çalışma zamanına bağlı DLL'ler yükler; av (PyAV) ffmpeg ikililerini.
+# İkisi de kurulumda değil ilk çalıştırmada patlar — yani kullanıcı "kurulum
+# tamam" görüp uygulamanın açılmamasıyla baş başa kalırdı. Burada yakalanır.
+& $vpy -c "import torch, av, ultralytics" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Ha "Bağımlılıklar kuruldu ancak yüklenemiyor (torch / av / ultralytics açılmıyor)."
+    Uy "En sık neden: Visual C++ çalışma zamanı eksik. Kurup kurulumu tekrarlayın:"
+    Uy "  https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    Uy "Ayrıntı için: & '.venv\Scripts\python.exe' -c 'import torch'"
+    exit 1
+}
+Ye "Duman testi geçti — paketler yüklenebiliyor"
 
 # ── 6. Altyapı servisleri ─────────────────────────────────────────
 Bas "6/6  Altyapı servisleri"
