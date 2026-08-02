@@ -250,14 +250,18 @@ class _SecondStage:
         self.face_next_tid: dict[str, int] = {}
         self.busy: set[tuple[str, str]] = set()
 
-    def maybe_submit(self, kind: str, cam_id: str, bgr_cpu, ts: float, frame_idx: int) -> None:
+    def maybe_submit(self, kind: str, cam_id: str, bgr_cpu, ts: float, frame_idx: int,
+                     kutular=None) -> None:
         key = (cam_id, kind)
         if ts - self.last_run.get(key, -1e9) < self.min_interval or key in self.busy:
             return
         self.last_run[key] = ts
         self.busy.add(key)
-        fn = self._run_plate if kind == "plate" else self._run_face
-        self.pool.submit(self._guard, fn, key, cam_id, bgr_cpu, ts, frame_idx)
+        if kind == "plate":
+            self.pool.submit(self._guard, self._run_plate, key, cam_id, bgr_cpu,
+                             ts, frame_idx, kutular)
+        else:
+            self.pool.submit(self._guard, self._run_face, key, cam_id, bgr_cpu, ts, frame_idx)
 
     def _guard(self, fn, key, *args) -> None:
         try:
@@ -268,7 +272,8 @@ class _SecondStage:
             self.busy.discard(key)
 
     # — plaka: okumaları biriktir, aralıklarla oylayıp TEK olay yaz —
-    def _run_plate(self, cam_id: str, bgr, ts: float, frame_idx: int) -> None:
+    def _run_plate(self, cam_id: str, bgr, ts: float, frame_idx: int,
+                   kutular=None) -> None:
         from .plate import _as_float_conf, _load_alpr, accept_read
 
         alpr = _load_alpr(self.cfg.get("plate.detector", "yolo-v9-t-384-license-plate-end2end"),
@@ -280,19 +285,38 @@ class _SecondStage:
         takip = self.plate_takip.setdefault(
             cam_id, PlakaTakip(kayip_sn=self.plate_kayip, dirilme_sn=self.plate_dirilme,
                                tek_okuma_min_conf=self.plate_tek_conf))
-        for pred in alpr.predict(bgr):
-            ocr = getattr(pred, "ocr", None)
-            text = getattr(ocr, "text", None) if ocr else None
-            conf = _as_float_conf(getattr(ocr, "confidence", None) if ocr else None)
-            plate = accept_read(text, conf, min_conf, fmt, yabanci_conf)
-            if plate is None:
-                continue
-            det = getattr(pred, "detection", None)
-            bb = getattr(det, "bounding_box", None)
-            takip.ekle({"plate": plate, "confidence": conf,
-                        "frame_idx": frame_idx, "ts_seconds": round(ts, 2)},
-                       (bb.x1, bb.y1, bb.x2, bb.y2) if bb is not None else (0, 0, 1, 1),
-                       ts)
+        # OCR'a TAM KARE değil araç kırpması verilir: 1080p karede uzak plaka
+        # ~30 px'tir ve dedektör 384'e küçültürken kaybolur; araç kutusuna
+        # kırpınca plaka aynı modelde ~4-6 kat büyük görünür. Kutu yoksa
+        # (eski çağrı yolu / tespit gecikmesi) tam kare ile devam edilir.
+        h, w = bgr.shape[:2]
+        parcalar = [(bgr, 0, 0)]
+        if kutular:
+            parcalar = []
+            for (x1, y1, x2, y2) in sorted(kutular, key=lambda b: -(b[2]-b[0])*(b[3]-b[1]))[:4]:
+                kx1 = max(0, int(x1 - (x2 - x1) * 0.15)); ky1 = max(0, int(y1 - (y2 - y1) * 0.15))
+                kx2 = min(w, int(x2 + (x2 - x1) * 0.15)); ky2 = min(h, int(y2 + (y2 - y1) * 0.15))
+                if kx2 - kx1 > 40 and ky2 - ky1 > 30:
+                    parcalar.append((bgr[ky1:ky2, kx1:kx2], kx1, ky1))
+            if not parcalar:
+                parcalar = [(bgr, 0, 0)]
+        for parca, ox, oy in parcalar:
+            for pred in alpr.predict(parca):
+                ocr = getattr(pred, "ocr", None)
+                text = getattr(ocr, "text", None) if ocr else None
+                conf = _as_float_conf(getattr(ocr, "confidence", None) if ocr else None)
+                plate = accept_read(text, conf, min_conf, fmt, yabanci_conf)
+                if plate is None:
+                    continue
+                det = getattr(pred, "detection", None)
+                bb = getattr(det, "bounding_box", None)
+                # iz konumu TAM KARE koordinatında tutulur (kırpma kaynaklı sahte
+                # "yeni konum" olmasın diye ofset geri eklenir)
+                kutu = ((bb.x1 + ox, bb.y1 + oy, bb.x2 + ox, bb.y2 + oy)
+                        if bb is not None else (ox, oy, ox + 1, oy + 1))
+                takip.ekle({"plate": plate, "confidence": conf,
+                            "frame_idx": frame_idx, "ts_seconds": round(ts, 2)},
+                           kutu, ts)
         for v in takip.kapat(ts):
             self.store.add_plate_event(cam_id, v["plate"], v["conf"], v["count"],
                                        v["ts_seconds"], v["frame_idx"])
@@ -530,7 +554,11 @@ def run_gpu_worker(cams: list[dict], cfg, bus) -> None:
                     if want_plate or want_face:
                         bgr_cpu = _nv12_to_bgr(nv12, w, h).cpu().numpy()
                         if want_plate:
-                            stage2.maybe_submit("plate", cid, bgr_cpu, ts, st["frame_idx"])
+                            arac_kutulari = [tuple(float(v) for v in xyxy[i])
+                                             for i in range(len(cls))
+                                             if int(cls[i]) in _VEHICLE_CLASSES]
+                            stage2.maybe_submit("plate", cid, bgr_cpu, ts,
+                                                st["frame_idx"], arac_kutulari)
                         if want_face:
                             stage2.maybe_submit("face", cid, bgr_cpu, ts, st["frame_idx"])
 

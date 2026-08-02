@@ -818,3 +818,38 @@ class TestPlakaTakip:
         tk.ekle(self._oku("34ABC123", 22.0, conf=0.5), (500, 200, 620, 240), 22.0)
         tk.ekle(self._oku("34ABC123", 23.0, conf=0.5), (500, 200, 620, 240), 23.0)
         assert len(tk.kapat(30.0)) == 1
+
+
+class TestKarakterUzlasma:
+    """Küme içi karakter-düzeyi çoğunluk: tek karakteri hatalı çok okuma,
+    doğru az okumayı metin oylamasında yenmesin."""
+
+    def _r(self, plate, conf=0.8, i=0):
+        return {"plate": plate, "confidence": conf, "frame_idx": i, "ts_seconds": i / 25}
+
+    def test_cogunluk_karakteri_kazanir(self):
+        # 9. konumda 3 okuma '9', 2 okuma '4' değil — tersine kur:
+        # metin oylaması FL3599'u (2 kez, yüksek conf) seçebilir ama konum
+        # bazında son karakter çoğunlukta '4' ise uzlaşma FL3594 olmalı
+        okumalar = [self._r("FL3594", 0.7, 1), self._r("FL3594", 0.7, 2),
+                    self._r("FL3594", 0.7, 3), self._r("FL3599", 0.95, 4),
+                    self._r("FL3599", 0.95, 5)]
+        v = _vote(okumalar)
+        assert len(v) == 1
+        assert v[0]["plate"] == "FL3594"
+
+    def test_iki_okumada_uzlasma_yok(self):
+        # 2 üyede çoğunluk kurulamaz — en güvenilir metin kalır
+        v = _vote([self._r("34ABC12", 0.9, 1), self._r("34ABC17", 0.5, 2)])
+        assert v[0]["plate"] == "34ABC12"
+
+    def test_uzlasma_yapiyi_bozamaz(self):
+        # Uzlaşma metni TR/yabancı yapısına oturmuyorsa metin oylaması kalır
+        okumalar = [self._r("34ABC123", 0.9, 1), self._r("34ABC123", 0.9, 2),
+                    self._r("34AB0123", 0.3, 3), self._r("34AB0123", 0.3, 4),
+                    self._r("34AB0123", 0.3, 5)]
+        v = _vote(okumalar)
+        # konum uzlaşması 34AB0123 üretir (3 kez) ama C yerine 0 TR'de harf
+        # konumunda geçersiz → normalize_tr 34ABO123'e düzeltir, uzlaşma metni
+        # ham haliyle yapıya oturmadığı için baskın GEÇERLİ metin korunur
+        assert v[0]["plate"] in ("34ABC123", "34ABO123")

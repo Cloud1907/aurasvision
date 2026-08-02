@@ -257,7 +257,7 @@
 <body>
 <div class="app">
   <aside class="rail">
-    <div class="brand"><span class="logo" id="logo"></span><div><b>AURASVISION</b><span>Güvenlik Sistemi</span></div></div>
+    <div class="brand"><span class="logo" id="logo"></span><div><b>AURASVISION</b><span>Görüntü Analitiği</span></div></div>
     <nav class="nav" id="nav"></nav>
     <div class="rail-foot">
       <button class="sysbtn" id="sysbtn" onclick="toggleSys()" title="Sistem durumu">
@@ -299,12 +299,12 @@ document.getElementById('logo').innerHTML=
    önce "sistemde ne oluyor" özeti, sonra detay. */
 const NAV=[
   ["panel","Panel","live","İZLEME"],["live","Canlı","cams"],["rec","Kayıtlar","play"],
-  ["events","Olaylar","events","OLAYLAR"],["lists","İzleme listeleri","lists"],
+  ["events","Olaylar","events","OLAYLAR"],["lists","Tanıma listeleri","lists"],
   ["cams","Kameralar","cams","YÖNETİM"],["zones","Bölgeler","zones"],
   ["test","Test","test"],["sys","Sistem","bolt"]];
 const TITLES={panel:["Panel","Sistem özeti"],
   sys:["Sistem","Bileşen durumu ve arşiv"],
-  live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım çizgisi ve ihlal alanı"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],events:["Olaylar","Sayım, plaka ve yüz"],lists:["İzleme listeleri","Kara liste ve VIP"]};
+  live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım çizgisi ve ihlal alanı"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],events:["Olaylar","Sayım, plaka ve yüz"],lists:["Tanıma listeleri","Plaka ve yüz tanıma · kara liste, VIP, izinli"]};
 let CAMS=[],active="panel";
 let LIVE_COUNTS={},LIVE_ACTIVE=false;
 const $=s=>document.querySelector(s);

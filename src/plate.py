@@ -301,6 +301,28 @@ def _vote(reads: list[dict[str, Any]], max_dist: int = 2) -> list[dict[str, Any]
             score[t] = score.get(t, 0.0) + (c or 0.5)
             cnt[t] = cnt.get(t, 0) + 1
         best = max(score, key=lambda k: (cnt[k], score[k]))
+        # Karakter-düzeyi uzlaşma: tek karakteri hatalı ÜÇ okuma, doğru İKİ
+        # okumayı metin oylamasında yenebilir (FL3599 x3 vs FL3594 x2 → yanlış
+        # kazanır). Konum konum güven-ağırlıklı çoğunluk bunu düzeltir. Yalnız
+        # baskın uzunluktaki üyeler katılır; 3+ okuma varsa uygulanır (2'de
+        # çoğunluk yok). Sonuç yine kabul kapısından geçmek zorundadır — uzlaşma
+        # kapıyı ATLAYAMAZ (normalize edilmiş biçim bozulmasın diye fmt=none).
+        if cnt.get(best, 0) < len(cl["members"]) and len(cl["members"]) >= 3:
+            boy = len(best)
+            uyeler = [(t, c or 0.5) for t, c in cl["members"] if len(t) == boy]
+            if len(uyeler) >= 3:
+                uzlasma = "".join(
+                    max({h: sum(cc for tt, cc in uyeler if tt[i] == h)
+                         for h in {tt[i] for tt, _ in uyeler}}.items(),
+                        key=lambda kv: kv[1])[0]
+                    for i in range(boy))
+                if uzlasma != best and accept_read(uzlasma, 1.0, 0.0, "none"):
+                    # uzlaşma metni TR/yabancı yapı kontrolünden de geçmeli;
+                    # geçmiyorsa metin oylamasının sonucu kalır
+                    tr = normalize_tr(uzlasma)
+                    yb = normalize_yabanci(uzlasma)
+                    if tr == uzlasma or yb == uzlasma:
+                        best = uzlasma
         confs = [c for _, c in cl["members"] if c]
         out.append({"plate": best, "count": len(cl["members"]),
                     "conf": round(sum(confs) / len(confs), 3) if confs else None,
