@@ -271,9 +271,20 @@ try {
 # En kırılgan ve en uzun adım (torch ~2 GB iner). Bu yüzden en sonda:
 # buraya gelene kadar yapılandırma ve kısayollar çoktan hazır.
 Bas "5/6  Bağımlılıklar (en uzun adım — torch dahil, sabır)"
-if (-not (Test-Path ".venv")) { & $py -m venv .venv }
+try { Ye ("Kullanılan Python: " + (Get-Command $py).Source) } catch { }
 $vpy = Join-Path $Kok ".venv\Scripts\python.exe"
-if (-not (Test-Path $vpy)) { Ha "Sanal ortam kurulamadı"; exit 1 }
+# Önceki yarım kalmış denemeden bozuk .venv kalmış olabilir (klasör var ama
+# python.exe yok) — "varsa dokunma" bozuğu onarmaz; silip yeniden kur.
+if ((Test-Path ".venv") -and -not (Test-Path $vpy)) {
+    Uy "Yarım kalmış sanal ortam bulundu — silinip yeniden kuruluyor"
+    Remove-Item -Recurse -Force ".venv" -ErrorAction SilentlyContinue
+}
+if (-not (Test-Path ".venv")) { & $py -m venv .venv }
+if (-not (Test-Path $vpy)) {
+    Ha "Sanal ortam kurulamadı — yukarıdaki venv çıktısı nedeni söyler (kurulum-log.txt'e de yazıldı)."
+    Uy "Sık neden: antivirüs Program Files içinde python.exe oluşturulmasını engelliyor."
+    exit 1
+}
 & $vpy -m pip install -q -U pip
 & $vpy -m pip install -q -r requirements.txt
 if ($LASTEXITCODE -ne 0) {
