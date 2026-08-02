@@ -51,7 +51,9 @@ Section "AurasVision" SecMain
   File /r "..\db"
   File /r "..\deploy"
   File /r /x __pycache__ "..\scripts"
-  File /r "..\windows"
+  ; /x *.exe: bir önceki kurulum paketi kendi içine gömülmesin (her derlemede
+  ; katlanarak büyüyordu: 15→21→26 MB)
+  File /r /x "AurasVision-Kurulum.exe" "..\windows"
   File "..\config.yaml"
   File "..\requirements.txt"
   File "..\docker-compose.yml"
