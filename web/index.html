@@ -137,21 +137,7 @@
   .camview .tile:hover{transform:none;}
   .subpill{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:3px;background:var(--accent-soft);color:var(--accent);}
   /* --- Kamera envanteri --- */
-  .camgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:18px;}
-  .camcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow);overflow:hidden;transition:transform var(--t),box-shadow var(--t),border-color var(--t);}
-  .camcard:hover{border-color:var(--ink-3);}
-  .camthumb{position:relative;aspect-ratio:16/9;background:#0c131f;overflow:hidden;}
-  .camthumb img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .3s ease;}
-  .camthumb img.loaded{opacity:1;}
-  .camthumb .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#46536a;}
-  .camstat{position:absolute;right:10px;top:10px;display:inline-flex;align-items:center;gap:6px;background:rgba(8,9,11,.88);color:#d6d9dd;font-size:10px;font-weight:700;padding:4px 8px;border-radius:3px;letter-spacing:.06em;border:1px solid rgba(255,255,255,.08);}
-  .camstat i{width:6px;height:6px;border-radius:50%;background:#94a3b8;}
-  .camstat.ok i{background:var(--ok);}
-  .camstat.err i{background:#ef4444;}
-  .cambody{padding:15px 16px 13px;}
   .camname{font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-  .camsrc{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--ink-3);margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .camfoot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 16px;border-top:1px solid var(--line);background:var(--panel-2);}
   .chipbtn{border:1px solid var(--line-2);background:var(--panel);color:var(--ink-3);border-radius:4px;padding:4px 10px;font-size:11.5px;font-weight:600;cursor:pointer;transition:all var(--t);}
   .chipbtn:hover{border-color:var(--ink-3);color:var(--ink-2);}
   .chipbtn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);}
@@ -297,6 +283,7 @@
 <script>
 /* ---- ikonlar (inline svg, bağımsız) ---- */
 const IC={
+  search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   live:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/>',
   cams:'<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/>',
   zones:'<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
@@ -321,13 +308,13 @@ document.getElementById('logo').innerHTML=
    işinden (kamera/bölge/liste ayarı) ayrı görür. Giriş ekranı artık PANEL —
    önce "sistemde ne oluyor" özeti, sonra detay. */
 const NAV=[
-  ["panel","Panel","live","İZLEME"],["live","Canlı","cams"],["rec","Kayıtlar","play"],
+  ["panel","Panel","live","İZLEME"],["live","Canlı","cams"],["rec","Kayıtlar","play"],["arama","Arama","search"],
   ["events","Olaylar","events","OLAYLAR"],["lists","Tanıma listeleri","lists"],
   ["cams","Kameralar","cams","YÖNETİM"],["zones","Bölgeler","zones"],
   ["test","Test","test"],["sys","Sistem","bolt"]];
 const TITLES={panel:["Panel","Sistem özeti"],
   sys:["Sistem","Bileşen durumu ve arşiv"],
-  live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım çizgisi ve ihlal alanı"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],events:["Olaylar","Sayım, plaka ve yüz"],lists:["Tanıma listeleri","Plaka ve yüz tanıma · kara liste, VIP, izinli"]};
+  live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım çizgisi ve ihlal alanı"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],arama:["Arama","Arşivde serbest metinle nesne bul"],events:["Olaylar","Sayım, plaka ve yüz"],lists:["Tanıma listeleri","Plaka ve yüz tanıma · kara liste, VIP, izinli"]};
 let CAMS=[],active="panel";
 let LIVE_COUNTS={},LIVE_ACTIVE=false;
 const $=s=>document.querySelector(s);
@@ -769,7 +756,7 @@ const SCREENS={
       ${CAMS.some(c=>Object.values(c.tasks||{}).some(Boolean))?workerUyarisi():""}
       <div class="section-head"><b>Kamera envanteri</b>
         <span class="searchbar"><input id="cam-ara" placeholder="Ara" oninput="filtreCam(this.value)"/></span></div>
-      ${CAMS.length?`<div class="card camlist-wrap"><table class="camlist" id="camgrid">
+      ${CAMS.length?`<div class="card camlist-wrap"><table class="camlist" id="camlist">
         <thead><tr><th style="width:96px;">Önizleme</th><th>Kamera</th><th>Adres</th><th>Durum</th><th>Görevler</th><th style="width:1%;"></th></tr></thead>
         <tbody>${CAMS.map(satir).join("")}</tbody></table></div>`
         :`<div class="card"><div class="empty">Henüz kamera yok.<br><span class="mut-s">Sağ üstteki <b>Kamera ekle</b> ile başlayın.</span></div></div>`}`;
@@ -813,6 +800,36 @@ const SCREENS={
         <div id="zlist"></div></div>`;
     await initEditor(camId);
   },
+  arama(){
+    const st=window._aq||(window._aq={q:"",kamera:"",sonuc:null,bekliyor:false});
+    const adOf=id=>(CAMS.find(c=>c.id===id)||{}).name||id;
+    const govde=()=>{
+      if(st.bekliyor)return `<div class="empty">aranıyor…</div>`;
+      if(!st.sonuc)return `<div class="empty">Ne aradığınızı yazın — örn. "kırmızı ceketli adam", "white van", "bebek arabası".<br>
+        <span class="mut-s">İngilizce sorgular genelde daha isabetlidir. Sonuca tıklayınca kayıt o ana gider.</span></div>`;
+      if(!st.sonuc.length)return `<div class="empty">Sonuç yok. Arama, özellik açıldığından beri izlenen nesnelerde yapılır — eski kayıtlar dizinli değildir.</div>`;
+      return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;padding:12px;">
+        ${st.sonuc.map(r=>{
+          const d=new Date(String(r.time).replace(" ","T"));
+          const gun=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+          const sn=d.getHours()*3600+d.getMinutes()*60+d.getSeconds();
+          return `<div style="border:1px solid var(--line);border-radius:5px;overflow:hidden;cursor:pointer;background:var(--panel-2);"
+            title="Kayıtta bu ana git" onclick="window._rc='${esc(r.camera_id)}';window._rg='${gun}';window._rseek=${sn};go('rec')">
+          <img src="/media/${esc(r.kucuk)}${tokq().replace('&','?')}" style="width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#0b0c0e;" loading="lazy"/>
+          <div style="padding:7px 9px;">
+            <div style="font-weight:650;font-size:12px;">${esc(adOf(r.camera_id))}</div>
+            <div class="mut-s" style="display:flex;justify-content:space-between;">
+              <span>${esc(gecenSure(r.time))}</span><span class="mono">${(r.skor*100).toFixed(0)}</span></div></div></div>`}).join("")}</div>`;
+    };
+    $("#content").innerHTML=`
+      <div class="card" style="margin-bottom:16px;"><div style="display:flex;gap:9px;padding:12px;flex-wrap:wrap;">
+        <input id="aq" style="flex:1;min-width:220px;" placeholder='örn. "person in red jacket", "white van"'
+               value="${esc(st.q)}" onkeydown="if(event.key==='Enter')aramaYap()"/>
+        <select id="akam"><option value="">Tüm kameralar</option>
+          ${CAMS.map(c=>`<option value="${esc(c.id)}" ${st.kamera===c.id?'selected':''}>${esc(c.name)}</option>`).join("")}</select>
+        <button class="btn pri" onclick="aramaYap()">${svg('search',15)} Ara</button></div></div>
+      <div class="card" id="asonuc">${govde()}</div>`;
+  },
   test(){
     const preferred=CAMS.find(c=>c.tasks&&(c.tasks.face||c.tasks.count||c.tasks.plate))||CAMS[0]||{};
     const camId=window._tc||preferred.id;window._tc=camId;
@@ -825,7 +842,10 @@ const SCREENS={
     const acik=["count","plate","face"].filter(k=>(cam.tasks||{})[k]);
     const etiket={count:"Sayım",plate:"Plaka",face:"Yüz"};
     $("#tact").innerHTML=`<button class="btn pri" onclick="runTest()">${svg('play',15)} Analizi çalıştır</button>`;
-    $("#content").innerHTML=`
+    $("#content").innerHTML=`<div class="card pad" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;">
+        <span class="av" style="background:var(--warn-soft);color:var(--warn);">i</span>
+        <div class="mut-s">Bu ekran <b>deneme</b> içindir: sonuçlar arşive ve uyarılara YAZILMAZ.
+          Sürekli analiz, Kameralar ekranındaki görev tikleriyle çalışır ve araç başına tek olay yazar.</div></div>`+`
       <div class="card pad" style="margin-bottom:18px;">
         <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-end;">
           <div class="field" style="margin:0;min-width:220px;flex:1;">
@@ -1389,7 +1409,8 @@ async function recYukle(cam,gun){
     else if(e.key==="ArrowRight"){e.preventDefault();recAtla(e.shiftKey?60:10);}
     else if(e.key===" "){e.preventDefault();recDurdurBaslat();}
   };
-  if(REC.segler.length)recOynat(_recSaniye(REC.segler[0].start_time));
+  if(window._rseek!=null){const t=window._rseek;window._rseek=null;recOynat(t,"geri");}
+  else if(REC.segler.length)recOynat(_recSaniye(REC.segler[0].start_time));
 }
 const recSaatYaz=t=>{const x=Math.max(0,Math.round(t));
   return `${String(Math.floor(x/3600)).padStart(2,"0")}:${String(Math.floor(x%3600/60)).padStart(2,"0")}:${String(x%60).padStart(2,"0")}`;};
@@ -1406,6 +1427,20 @@ function recHiz(h,btn){
   REC.hiz=h;
   const v=$("#recvid");if(v)v.playbackRate=h;
   document.querySelectorAll("#rhiz button").forEach(b=>b.classList.toggle("on",b===btn));
+}
+async function aramaYap(){
+  const st=window._aq;st.q=$("#aq").value.trim();st.kamera=$("#akam").value;
+  if(st.q.length<2){toast("Aramak için bir şey yazın","warn");return;}
+  st.bekliyor=true;SCREENS.arama();
+  try{
+    const r=await api("/search",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({q:st.q,camera:st.kamera,limit:24})});
+    st.sonuc=r.sonuc||[];
+  }catch(e){st.sonuc=[];toast("Arama başarısız: "+e,"err");}
+  st.bekliyor=false;
+  // Kullanıcı yanıt gelmeden başka ekrana geçtiyse (örn. sonuca tıklayıp
+  // kayda atladıysa) Arama'yı ÜSTÜNE boyama — kayıt ekranı siliniyordu
+  if(active==="arama")SCREENS.arama();
 }
 async function klasorAc(cam,gun){
   try{
@@ -1562,7 +1597,7 @@ function kaynakBilgi(s){
 }
 function filtreCam(q){
   q=(q||"").toLowerCase().trim();
-  document.querySelectorAll("#camgrid [data-ara]").forEach(el=>{
+  document.querySelectorAll("#camlist [data-ara]").forEach(el=>{
     el.style.display=!q||el.dataset.ara.includes(q)?"":"none";});
 }
 /* Onay diyaloğu — geri alınamaz işlem (kamera silme) sessizce yapılmaz */
