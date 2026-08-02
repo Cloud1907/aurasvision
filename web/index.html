@@ -651,8 +651,12 @@ const SCREENS={
             <button class="btn sm" style="margin-left:auto;" onclick="SCREENS.sys()">Yenile</button></div>
           ${(st.bilesenler||[]).map(satir).join("")}</div>
         <div class="card" style="margin-bottom:18px;">
-          <div style="padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;">
-            Kayıt arşivi <span class="mut-s" style="font-weight:400;">· toplam ${((ark.total_bytes||0)/1073741824).toFixed(2)} GB · saklama ${ark.keep_days} gün</span></div>
+          <div style="padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            Kayıt arşivi <span class="mut-s" style="font-weight:400;">· toplam ${((ark.total_bytes||0)/1073741824).toFixed(2)} GB · saklama ${ark.keep_days} gün</span>
+            <span style="margin-left:auto;display:inline-flex;gap:7px;align-items:center;">
+              <span class="mono mut-s" id="ark-yol" title="Arşiv kök klasörü">…</span>
+              <button class="btn sm" onclick="yolKopyala()" title="Yolu panoya kopyala">Kopyala</button>
+              <button class="btn sm" onclick="klasorAc()" title="Sunucu makinesinde dosya yöneticisinde açar">Klasörü aç</button></span></div>
           ${kam||'<div class="empty">Henüz kayıt yok.</div>'}</div>
         <div class="card pad" style="margin-bottom:18px;">
           <div style="font-weight:700;margin-bottom:4px;">Mobil erişim</div>
@@ -664,6 +668,7 @@ const SCREENS={
             • <span class="mono">output/logs/</span> klasörü (sunucu, worker, kayıt, ingestor günlükleri)<br>
             • Bu ekranın görüntüsü<br>
             • Sorunun hangi adımda çıktığı</div></div>`;
+      api("/recordings/root").then(r=>{const el=$("#ark-yol");if(el)el.textContent=r.path;}).catch(()=>{});
     }catch(e){$("#sy-b").innerHTML=`<div class="card pad"><b style="color:var(--danger);">Sistem bilgisi alınamadı</b><div class="mut-s">${esc(String(e))}</div></div>`;}
   },
   live(){
@@ -834,6 +839,8 @@ const SCREENS={
             <button title="60 sn ileri (Shift+→)" onclick="recAtla(60)">+60</button></div>
           <div class="seg" id="rhiz">${[0.5,1,2,4,8].map(h=>`<button class="${h===1?'on':''}" onclick="recHiz(${h},this)">${h}×</button>`).join("")}</div>
           <button class="btn sm" title="Günün son kaydına git" onclick="recSonaGit()">Son kayıt</button>
+          <button class="btn sm" title="İzlenen segment dosyasını indir" onclick="recIndir()">İndir</button>
+          <button class="btn sm" title="Bu kameranın/günün klasörünü sunucuda açar" onclick="klasorAc(REC.cam,REC.gun)">Klasör</button>
           <span class="mono" id="rsaat" style="margin-left:auto;font-size:15px;font-weight:700;">--:--:--</span></div>
         <div style="margin-top:12px;">
           <canvas id="rtl" height="54" style="width:100%;height:54px;border-radius:10px;border:1px solid var(--line-2);cursor:crosshair;background:var(--panel-2);"></canvas>
@@ -1370,6 +1377,25 @@ function recHiz(h,btn){
   REC.hiz=h;
   const v=$("#recvid");if(v)v.playbackRate=h;
   document.querySelectorAll("#rhiz button").forEach(b=>b.classList.toggle("on",b===btn));
+}
+async function klasorAc(cam,gun){
+  try{
+    const q=cam?`?camera=${encodeURIComponent(cam)}${gun?`&gun=${encodeURIComponent(gun)}`:''}`:'';
+    const r=await api("/recordings/open-folder"+q,{method:"POST"});
+    toast(r.ok?`Klasör açıldı: ${r.path}`:`${r.detail||'Açılamadı'} — ${r.path}`,r.ok?"":"warn");
+  }catch(e){toast("Klasör açılamadı","err");}
+}
+async function yolKopyala(){
+  const el=$("#ark-yol");if(!el)return;
+  try{await navigator.clipboard.writeText(el.textContent);toast("Yol kopyalandı");}
+  catch(e){toast(el.textContent,"warn");}
+}
+function recIndir(){
+  if(!REC.aktif){toast("Önce bir kayıt oynatın","warn");return;}
+  const a=document.createElement("a");
+  a.href=`/media/rec/${REC.aktif.path}${tokq().replace("&","?")}`;
+  a.download=REC.aktif.path.split("/").pop();
+  document.body.appendChild(a);a.click();a.remove();
 }
 function recSonaGit(){
   if(!REC.segler.length)return;

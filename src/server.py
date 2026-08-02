@@ -542,6 +542,46 @@ def api_recordings_stats():
         s.close()
 
 
+@app.get("/api/recordings/root")
+def api_recordings_root():
+    """Arşiv kök klasörünün tam yolu — operatör dosyalara elle erişebilsin."""
+    from .recorder import kayit_kok
+    return {"path": str(kayit_kok(cfg))}
+
+
+@app.post("/api/recordings/open-folder")
+def api_recordings_open(camera: str = "", gun: str = ""):
+    """Arşiv klasörünü SUNUCU makinesinin dosya yöneticisinde açar.
+
+    Tek makine kurulumunda operatör panelin koştuğu bilgisayardadır — "dosyaya
+    nasıl erişirim" sorusunun doğrudan cevabı. Uzak erişimde pencere sunucuda
+    açılır; UI bu yüzden tam yolu da gösterir (kopyalanabilir).
+    """
+    import subprocess, sys
+    from .recorder import kayit_kok
+    kok = kayit_kok(cfg)
+    hedef = kok
+    if camera:
+        aday = kok / camera if not gun else kok / camera / gun
+        if aday.is_dir():
+            hedef = aday
+    if not hedef.is_dir():
+        raise HTTPException(404, "Arşiv klasörü henüz yok")
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", str(hedef)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(hedef)])
+        else:
+            subprocess.Popen(["xdg-open", str(hedef)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"ok": True, "path": str(hedef)}
+    except FileNotFoundError:
+        # masaüstü ortamı yok (headless sunucu) — yol yine döner, UI gösterir
+        return {"ok": False, "path": str(hedef),
+                "detail": "Dosya yöneticisi bulunamadı — yolu kopyalayıp elle açın"}
+
+
 @app.get("/api/status")
 def api_status():
     """Sistem bileşenlerinin GERÇEK durumu (sidebar göstergesi buradan beslenir).
