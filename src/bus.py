@@ -50,6 +50,7 @@ class YerelBus:
     def __init__(self, cfg) -> None:
         from .store import open_store
         self.store = open_store(cfg)
+        self.cfg = cfg
         self.alert_min_reads = int(cfg.get("plate.alert_min_reads", 2))
         self._lock = threading.Lock()
 
@@ -59,7 +60,7 @@ class YerelBus:
         with self._lock:
             try:
                 isle(self.store, self.alert_min_reads, fields.get("type", ""),
-                     fields.get("camera_id", ""), payload)
+                     fields.get("camera_id", ""), payload, cfg=self.cfg)
                 self.store.commit()
             except Exception as e:
                 # Tek olayın yazılamaması analizi durdurmasın (Redis yolunda da

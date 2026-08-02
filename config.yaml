@@ -159,6 +159,11 @@ plate:
   # Gerçek geçiş birden çok kare okutur; tek karelik eşleşme alarm olmaz.
   alert_min_reads: 2
 
+bildirim:
+  # Alarm webhook'u: doluysa her alarm bu adrese JSON POST edilir (3 sn zaman
+  # aşımı, ayrı iş parçacığı — analiz hattı beklemez). Santral/SIEM/n8n köprüsü.
+  webhook_url: ""
+
 arama:
   # Görünüm araması (SigLIP, Apache-2.0): izlenen nesne kırpmaları vektörlenir,
   # arşivde serbest metinle aranır. NVIDIA LocateAnything DEĞİL — onun lisansı

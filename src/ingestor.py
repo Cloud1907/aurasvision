@@ -30,7 +30,7 @@ def main() -> None:
     print("[ingest] dinleniyor — stream: events", flush=True)
 
     def handle(type_: str, camera_id: str, p: dict) -> None:
-        isle(store, alert_min_reads, type_, camera_id, p)
+        isle(store, alert_min_reads, type_, camera_id, p, cfg=cfg)
 
     consume(bus, handle, on_batch=store.commit)
 
