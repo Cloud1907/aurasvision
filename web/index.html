@@ -141,9 +141,20 @@
   .tile.clickable{cursor:zoom-in;}
   /* Tek kamera görünümü — duvarda substream, burada TAM çözünürlük */
   .camview{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-lg);width:min(1280px,96vw);overflow:hidden;}
+  /* Tam ekran tek kamera: 16:9 karo, başlık + veri şeridiyle birlikte ekrana sığar */
+  .camview.full{width:min(96vw,calc((100vh - 170px)*1.7778));}
   .camview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);}
   .camview .tile{aspect-ratio:16/9;border-radius:0;border:0;box-shadow:none;}
   .camview .tile:hover{transform:none;}
+  /* Canlı veri şeridi — o an görülen plaka/yüz/sayım tek satırda */
+  .camstrip{display:flex;align-items:center;gap:14px;padding:10px 18px;border-top:1px solid var(--line);
+    font-size:13px;white-space:nowrap;overflow:hidden;min-height:41px;}
+  .camstrip .lbl{font-size:10.5px;letter-spacing:.8px;color:var(--ink-3);font-weight:700;}
+  .camstrip .ayr{width:1px;height:16px;background:var(--line);flex:none;}
+  .camstrip .pl{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;letter-spacing:1px;
+    padding:2px 9px;border:1px solid var(--line);border-radius:4px;font-variant-numeric:tabular-nums;}
+  .camstrip .pl.taze{color:var(--ok);border-color:var(--ok);}
+  .camstrip b{font-variant-numeric:tabular-nums;}
   .subpill{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:3px;background:var(--accent-soft);color:var(--accent);}
   /* --- Kamera envanteri --- */
   .camname{font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
@@ -613,22 +624,58 @@ function mountStreams(){
    Aynı karo/rozet mantığı kullanılır (mountStreams + watchTiles bu düğümü de görür). */
 function openCam(id,ad){
   const m=document.createElement("div");m.className="mask";
-  m.innerHTML=`<div class="camview">
+  m.innerHTML=`<div class="camview full">
     <div class="camview-head"><b>${esc(ad)}</b>
       <span style="display:flex;gap:10px;align-items:center;"><span class="mut-s">tam çözünürlük</span>
       <button class="btn sm ico" id="cv-x" title="kapat">${svg('x',15)}</button></span></div>
     <div class="tile" data-state="wait">
       <div class="skel"></div><auras-stream data-src="${esc(id)}"></auras-stream>
       <span class="nosig">${svg('cams',17)} Sinyal yok</span>
-      <span class="live"><i></i> <b>BAĞLANIYOR</b></span></div></div>`;
+      <span class="live"><i></i> <b>BAĞLANIYOR</b></span></div>
+    <div class="camstrip" id="cv-strip"><span class="mut-s">canlı veri bekleniyor…</span></div></div>`;
   document.body.appendChild(m);
-  const kapat=()=>{m.remove();document.removeEventListener("keydown",onkey);};
+  const strip=m.querySelector("#cv-strip");
+  stripGuncelle(id,strip);
+  const strTimer=setInterval(()=>stripGuncelle(id,strip),2000);
+  const kapat=()=>{clearInterval(strTimer);m.remove();document.removeEventListener("keydown",onkey);};
   const onkey=e=>{if(e.key==="Escape")kapat();};
   document.addEventListener("keydown",onkey);
   m.querySelector("#cv-x").onclick=kapat;
   m.onclick=e=>{if(e.target===m)kapat();};
   mountStreams();   // yeni auras-stream'i bağlar
   ptzPed(m,id);     // kamera destekliyorsa yönlendirme pedi ekler
+}
+/* Canlı veri şeridi — tek kamera görünümünün altındaki tek satır.
+   Yalnız AÇIK görevlerin verisi gösterilir (kapalı görev için "okuma yok"
+   yazmak gürültü olurdu). 15 sn'den taze plaka yeşil yanar: "o an görülen". */
+async function stripGuncelle(id,el){
+  if(!el||!document.body.contains(el))return;
+  try{
+    const ev=await api("/events?limit=40&kamera="+encodeURIComponent(id));
+    const t=(CAMS.find(c=>c.id===id)||{}).tasks||{};
+    const yas=z=>{const s=String(z).replace(" ","T");return (Date.now()-Date.parse(s.includes("+")||s.endsWith("Z")?s:s+"Z"))/1000;};
+    const once=d=>!isFinite(d)?"":d<6?"şimdi":d<60?`${Math.round(d)} sn önce`:d<3600?`${Math.round(d/60)} dk önce`:`${Math.round(d/3600)} sa önce`;
+    const par=[];
+    if(t.plate){
+      const p=ev.find(e=>e.type==="plate");
+      if(p){const d=yas(p.time);
+        par.push(`<span class="lbl">PLAKA</span><span class="pl ${d<15?'taze':''}">${esc(String(p.detail||"").split(" ")[0])}</span>`+
+          `<span class="mut-s">${p.plaka_tur==="yabanci"?"yabancı · ":""}${once(d)}</span>`);}
+      else par.push(`<span class="lbl">PLAKA</span><span class="mut-s">henüz okuma yok</span>`);
+    }
+    if(t.face){
+      const f=ev.find(e=>e.type==="face");
+      if(f)par.push(`<span class="lbl">YÜZ</span><b>${esc(f.detail||"")}</b><span class="mut-s">${once(yas(f.time))}</span>`);
+      else par.push(`<span class="lbl">YÜZ</span><span class="mut-s">henüz tespit yok</span>`);
+    }
+    if(t.count){
+      const c=LIVE_COUNTS[id],g=ev.find(e=>e.type==="count");
+      const say=c?`<b>${c.in}</b><span class="mut-s">giriş</span> <b>${c.out}</b><span class="mut-s">çıkış</span>`:`<span class="mut-s">—</span>`;
+      par.push(`<span class="lbl">SAYIM</span>${say}${g?`<span class="mut-s">· son geçiş ${once(yas(g.time))}</span>`:""}`);
+    }
+    el.innerHTML=par.length?par.join(`<span class="ayr"></span>`)
+      :`<span class="mut-s">Bu kamerada analiz görevi kapalı — Kameralar ekranından Sayım/Plaka/Yüz açabilirsiniz.</span>`;
+  }catch(e){}
 }
 /* --- PTZ pedi ---
    Yalnız PTZ destekli kamerada görünür (yetenek sorgusu önbelleklidir, PTZ'siz
@@ -844,7 +891,7 @@ const SCREENS={
     const gridStyle=duzen==="auto"?"":`--cols:${duzen};`;
     $("#content").innerHTML=`<div class="${gridCls}" style="${gridStyle}">${CAMS.map(c=>`
       <div class="tile ${SYS.go2rtc?'clickable':''}" data-state="${SYS.go2rtc?'wait':'live'}"
-           ${SYS.go2rtc?`onclick="openCam('${esc(c.id)}',this.querySelector('.nm').textContent.trim())"`:''}>
+           ${SYS.go2rtc?`onclick="openCam('${esc(c.id)}','${esc(c.name)}')"`:''}>
         ${inner(c)}
         <div class="grad"></div>
         <span class="nosig">${svg('cams',17)} Sinyal yok</span>
