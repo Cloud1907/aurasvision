@@ -455,6 +455,7 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
         res.frames += 1
         ts = frame_idx / fps
 
+        cizimler = []   # (x1,y1,x2,y2, etiket) — bu karede kabul edilen okumalar
         for parca, _ox, _oy in _parcalar(frame):
           for pred in alpr.predict(parca):
             ocr_res = getattr(pred, "ocr", None)
@@ -498,6 +499,10 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
                        ((bb.x1 + _ox, bb.y1 + _oy, bb.x2 + _ox, bb.y2 + _oy)
                         if bb is not None else (_ox, _oy, _ox + 1, _oy + 1)),
                        ts)
+            if bb is not None:
+                cizimler.append((int(bb.x1 + _ox), int(bb.y1 + _oy),
+                                 int(bb.x2 + _ox), int(bb.y2 + _oy),
+                                 f"{plate} {conf:.2f}" if conf else plate))
             if on_read:
                 on_read(plate, conf, frame_idx, round(ts, 2))
 
@@ -505,9 +510,17 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
         _yaz(takip.kapat(ts))
 
         if writer is not None or on_frame is not None:
-            drawn = alpr.draw_predictions(frame)
-            # fast-alpr sürümüne göre ndarray veya .image taşıyan nesne dönebilir
-            img = getattr(drawn, "image", drawn)
+            # Kendi çizimimiz: kabul edilen okumalar kırpmalardan gelir;
+            # alpr.draw_predictions tam kareyi YENİDEN tarıyordu ve kırpma
+            # okumalarını göremediği için ekranda hiç kutu çıkmıyordu
+            # ("test plakaları seçmiyor" şikayetinin görsel yarısı).
+            img = frame if not cizimler else frame.copy()
+            for x1, y1, x2, y2, etiket in cizimler:
+                cv2.rectangle(img, (x1, y1), (x2, y2), (80, 220, 90), 2)
+                (tw, th), _ = cv2.getTextSize(etiket, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                cv2.rectangle(img, (x1, y1 - th - 10), (x1 + tw + 8, y1), (80, 220, 90), -1)
+                cv2.putText(img, etiket, (x1 + 4, y1 - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (10, 25, 12), 2)
             if writer is not None:
                 writer.write(img)
             if on_frame is not None:
