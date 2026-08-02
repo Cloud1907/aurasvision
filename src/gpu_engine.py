@@ -280,6 +280,7 @@ class _SecondStage:
                           self.cfg.get("plate.ocr", "global-plates-mobile-vit-v2-model"),
                           self.cfg.get("device", "auto"))
         min_conf = self.cfg.get("plate.min_conf", 0.4)
+        min_gen = float(self.cfg.get("plate.min_plate_width_px", 65))
         fmt = self.cfg.get("plate.format", "tr")
         yabanci_conf = self.cfg.get("plate.foreign_min_conf", 0.75)
         takip = self.plate_takip.setdefault(
@@ -305,11 +306,15 @@ class _SecondStage:
                 ocr = getattr(pred, "ocr", None)
                 text = getattr(ocr, "text", None) if ocr else None
                 conf = _as_float_conf(getattr(ocr, "confidence", None) if ocr else None)
+                det = getattr(pred, "detection", None)
+                bb = getattr(det, "bounding_box", None)
+                # Küçük plaka OKUNMAZ, uydurulur (config'teki ölçüm) — güven
+                # skoruna bakılmaksızın atılır
+                if bb is not None and (bb.x2 - bb.x1) < min_gen:
+                    continue
                 plate = accept_read(text, conf, min_conf, fmt, yabanci_conf)
                 if plate is None:
                     continue
-                det = getattr(pred, "detection", None)
-                bb = getattr(det, "bounding_box", None)
                 # iz konumu TAM KARE koordinatında tutulur (kırpma kaynaklı sahte
                 # "yeni konum" olmasın diye ofset geri eklenir)
                 kutu = ((bb.x1 + ox, bb.y1 + oy, bb.x2 + ox, bb.y2 + oy)

@@ -150,6 +150,11 @@ plate:
   # okumalar tesadüfen TR şekline oturup 0.4'lük eşikten sızıyordu; gerçek
   # geçiş ya çok okuma üretir ya yüksek güvenli tek okuma.
   single_read_min_conf: 0.65
+  # OCR'a girecek plaka kutusunun asgari piksel genişliği. Ölçüm (gündüz,
+  # abbey-road): 25-56 px'lik plakalardan 0.6-0.8 güvenli HALÜSİNASYON çıkıyor
+  # ('2TC508' gibi) — okunabilirlik ~65 px altında yoktur, güven skoru yalan
+  # söyler. Araç kırpması dedektörü uzak plakalara eriştirince şart oldu.
+  min_plate_width_px: 65
   # Kara/VIP liste alarmı için asgari okuma sayısı (oylama penceresinde).
   # Gerçek geçiş birden çok kare okutur; tek karelik eşleşme alarm olmaz.
   alert_min_reads: 2

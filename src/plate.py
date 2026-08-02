@@ -367,6 +367,7 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
     detector = cfg.get("plate.detector", "yolo-v9-t-384-license-plate-end2end")
     ocr = cfg.get("plate.ocr", "global-plates-mobile-vit-v2-model")
     min_conf = cfg.get("plate.min_conf", 0.4)
+    min_gen = float(cfg.get("plate.min_plate_width_px", 65))
     fmt = cfg.get("plate.format", "tr")
     yabanci_conf = cfg.get("plate.foreign_min_conf", 0.75)
     vid_stride = cfg.get("detect.vid_stride", 1)
@@ -427,6 +428,10 @@ def run_plate(source: str, cfg: Config, save_video: bool = False,
             ocr_res = getattr(pred, "ocr", None)
             text = getattr(ocr_res, "text", None) if ocr_res else None
             conf = _as_float_conf(getattr(ocr_res, "confidence", None) if ocr_res else None)
+            _det = getattr(pred, "detection", None)
+            _bb = getattr(_det, "bounding_box", None)
+            if _bb is not None and (_bb.x2 - _bb.x1) < min_gen:
+                continue   # küçük plaka okunmaz, uydurulur (config'teki ölçüm)
             plate = accept_read(text, conf, min_conf, fmt, yabanci_conf)
             if plate is None:
                 continue
