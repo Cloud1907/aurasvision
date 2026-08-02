@@ -74,6 +74,9 @@ Section "AurasVision" SecMain
     DetailPrint "UYARI: ortam kurulumu tamamlanamadı (kod: $0)."
     DetailPrint "Uygulama dosyaları kuruldu. Kurulum klasöründeki"
     DetailPrint "windows\AurasVision-Kurulum.bat dosyasını yönetici olarak çalıştırıp tekrar deneyin."
+    ; Kapanış sayfası her durumda "tamamlandı" derdi — kullanıcı başarısızlığı
+    ; ancak logdan görüyordu (sahada yaşandı). Artık açık uyarı penceresi çıkar.
+    MessageBox MB_ICONEXCLAMATION "Uygulama dosyalari kopyalandi ANCAK ortam kurulumu TAMAMLANAMADI.$\r$\n$\r$\nAyrinti: kurulum klasorundeki kurulum-log.txt$\r$\n$\r$\nDuzeltme icin: windows\AurasVision-Kurulum.bat dosyasini yonetici olarak tekrar calistirin."
   ${EndIf}
 
   ; Kısayollar
