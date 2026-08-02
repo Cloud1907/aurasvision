@@ -306,6 +306,11 @@ def main() -> None:
             if sayac >= 300:   # 5 dakikada bir saklama/kota kontrolü
                 sayac = 0
                 temizlik(cfg, list(guncel.values()))
+                try:   # arama küçük görüntüleri de süreli (KVKK) — vektörler kalır
+                    from .arama import temizle as arama_temizle
+                    arama_temizle(cfg)
+                except Exception:
+                    pass
     except KeyboardInterrupt:
         pass
     finally:

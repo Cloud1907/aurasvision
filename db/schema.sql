@@ -177,3 +177,16 @@ DO $$ BEGIN
       start_offset => INTERVAL '1 hour', end_offset => INTERVAL '1 minute',
       schedule_interval => INTERVAL '5 minutes', if_not_exists => true);
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'aggregate politikasi atlandi: %', SQLERRM; END $$;
+
+-- Görünüm araması (SigLIP, src/arama.py): izlenen nesne kırpmalarının vektörleri
+CREATE TABLE IF NOT EXISTS nesne_vektor (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  camera_id TEXT NOT NULL,
+  time TIMESTAMPTZ NOT NULL DEFAULT now(),
+  sinif SMALLINT,          -- COCO sınıfı (0 kişi, 2/3/5/7 araç)
+  kutu TEXT,               -- tam kare koordinatında bbox (json)
+  kucuk TEXT,              -- sonuç listesi küçük görüntüsü (output'a göreli; süreli silinir)
+  vec vector(768) NOT NULL -- ViT-B-16-SigLIP, L2-normalize
+);
+CREATE INDEX IF NOT EXISTS ix_nv_cam_time ON nesne_vektor (camera_id, time DESC);
+CREATE INDEX IF NOT EXISTS ix_nv_vec ON nesne_vektor USING hnsw (vec vector_cosine_ops);

@@ -34,3 +34,7 @@ redis>=5.0
 onvif-zeep-async>=3.1     # kameranın kendi bildirdiği akış adresleri (ana + substream)
 wsdiscovery>=2.0          # yerel ağda ONVIF cihaz keşfi (WS-Discovery multicast)
 segno>=1.6                # mobil bağlantı QR kodu (saf Python, ek bağımlılık yok)
+
+# --- Görünüm araması (src/arama.py) ---
+open_clip_torch>=3.0      # SigLIP (Apache-2.0) — arşivde serbest metinle nesne arama
+transformers>=4.40        # open_clip'in SigLIP tokenizer'ı için

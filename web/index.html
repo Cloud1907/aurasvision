@@ -155,6 +155,29 @@
   .chipbtn{border:1px solid var(--line-2);background:var(--panel);color:var(--ink-3);border-radius:4px;padding:4px 10px;font-size:11.5px;font-weight:600;cursor:pointer;transition:all var(--t);}
   .chipbtn:hover{border-color:var(--ink-3);color:var(--ink-2);}
   .chipbtn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);}
+  /* Envanter listesi — kamera başına tek satır; dar ekranda tablo kendi içinde kayar */
+  .camlist-wrap{overflow-x:auto;}
+  table.camlist{min-width:860px;}
+  table.camlist td{vertical-align:middle;padding:10px 14px;}
+  table.camlist td:nth-child(2){min-width:210px;}
+  table.camlist tbody tr:last-child td{border-bottom:0;}
+  .camprev{position:relative;display:block;width:96px;height:54px;padding:0;background:#0c131f;
+    border:1px solid var(--line);border-radius:3px;overflow:hidden;cursor:pointer;}
+  .camprev:hover{border-color:var(--line-2);}
+  .camprev img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .3s ease;}
+  .camprev img.loaded{opacity:1;}
+  .camprev .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#46536a;}
+  .camlist .camname{font-size:13.5px;}
+  .camtur{font-size:10.5px;font-weight:700;letter-spacing:.07em;color:var(--ink-3);margin-top:3px;}
+  .camadr{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--ink-2);white-space:nowrap;}
+  .rowstat{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-3);white-space:nowrap;}
+  .rowstat i{flex:none;width:6px;height:6px;border-radius:50%;background:var(--ink-3);}
+  .rowstat.ok{color:var(--ok);}
+  .rowstat.ok i{background:var(--ok);}
+  .rowstat.err{color:var(--danger);}
+  .rowstat.err i{background:var(--danger);}
+  .camlist .gorevler{display:inline-flex;gap:6px;}
+  .camlist .eylem{display:inline-flex;gap:5px;justify-content:flex-end;}
   .modal.wide{max-width:760px;}
   /* Adımlı kamera ekleme — bul → doğrula → adlandır */
   .step{border-left:2px solid var(--line);padding:0 0 20px 20px;margin-left:13px;position:relative;}
@@ -719,20 +742,24 @@ const SCREENS={
     const gorev=CAMS.reduce((n,c)=>n+Object.values(c.tasks||{}).filter(Boolean).length,0);
     // Birincil eylem başlıkta (ekranın en görünür yeri), form sayfa dibinde değil
     $("#tact").innerHTML=`<button class="btn pri" onclick="openCamForm()">${svg('plus',15)} Kamera ekle</button>`;
-    const kart=c=>{const d=durum(c),t=c.tasks||{};return `<div class="camcard" data-ara="${esc((c.name+' '+c.source).toLowerCase())}">
-      <div class="camthumb">
-        <div class="ph">${svg('cams',26)}</div>
-        <img loading="lazy" src="${snap(c.id)}" alt="" onload="this.classList.add('loaded')" onerror="this.remove()"/>
-        <span class="camstat ${d.k}"><i></i> ${esc(d.t)}</span></div>
-      <div class="cambody">
-        <div class="camname">${esc(c.name)} ${c.url_sub?'<span class="subpill" title="duvarda düşük çözünürlüklü akış">substream</span>':''}</div>
-        <div class="camsrc" title="${esc(maskUrl(c.source))}">${esc(maskUrl(c.source))}</div></div>
-      <div class="camfoot">
-        <span style="display:inline-flex;gap:6px;">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["record","Kayıt"]].map(([k,l])=>
-          `<button class="chipbtn ${(k==="record"?t[k]!==false:t[k])?'on':''}" title="${k==='record'?'Sürekli kaydı aç/kapat (NVR arşivi)':l+' görevini aç/kapat'}" onclick="toggleTask('${esc(c.id)}','${k}')">${l}</button>`).join("")}</span>
-        <span style="display:inline-flex;gap:5px;">
-          <button class="btn sm ico" title="düzenle" onclick='openCamForm(${JSON.stringify({id:c.id,name:c.name,source:c.source,url_sub:c.url_sub||""}).replace(/'/g,"&#39;")})'>${svg('zones',14)}</button>
-          <button class="btn sm ico" title="sil" onclick="delCam('${esc(c.id)}','${esc(c.name)}')">${svg('x',14)}</button></span></div></div>`;};
+    // Durum sütunu için kısa etiket — mantık durum()'dan, metin satıra sığacak kadar kısa
+    const kisaDurum=c=>{const d=durum(c),h=hs[c.id];
+      if(d.k==="ok")return{k:"ok",t:h&&h.fps?`${(+h.fps).toFixed(1)} fps`:"çalışıyor"};
+      if(d.k==="err")return{k:"err",t:"kare yok"};
+      return{k:"",t:d.t};};
+    const satir=c=>{const d=kisaDurum(c),t=c.tasks||{},kb=kaynakBilgi(c.source);return `<tr data-ara="${esc((c.name+' '+c.source).toLowerCase())}">
+      <td><button class="camprev" title="Canlı görünüm" onclick="openCam('${esc(c.id)}','${esc(c.name)}')">
+        <span class="ph">${svg('cams',18)}</span>
+        <img loading="lazy" src="${snap(c.id)}" alt="" onload="this.classList.add('loaded')" onerror="this.remove()"/></button></td>
+      <td><div class="camname">${esc(c.name)} ${c.url_sub?'<span class="subpill" title="duvarda düşük çözünürlüklü akış">substream</span>':''}</div>
+        <div class="camtur">${esc(kb.tur)}</div></td>
+      <td class="camadr" title="${esc(maskUrl(c.source))}">${esc(kb.adres)}</td>
+      <td><span class="rowstat ${d.k}"><i></i>${esc(d.t)}</span></td>
+      <td><span class="gorevler">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["record","Kayıt"]].map(([k,l])=>
+        `<button class="chipbtn ${(k==="record"?t[k]!==false:t[k])?'on':''}" title="${k==='record'?'Sürekli kaydı aç/kapat (NVR arşivi)':l+' görevini aç/kapat'}" onclick="toggleTask('${esc(c.id)}','${k}')">${l}</button>`).join("")}</span></td>
+      <td><span class="eylem">
+        <button class="btn sm ico" title="düzenle" onclick='openCamForm(${JSON.stringify({id:c.id,name:c.name,source:c.source,url_sub:c.url_sub||""}).replace(/'/g,"&#39;")})'>${svg('zones',14)}</button>
+        <button class="btn sm ico" title="sil" onclick="delCam('${esc(c.id)}','${esc(c.name)}')">${svg('x',14)}</button></span></td></tr>`;};
     $("#content").innerHTML=`
       <div class="overview" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
         <div class="stat"><div class="k">Kamera</div><div class="v">${CAMS.length}</div><div class="s">tanımlı kaynak</div></div>
@@ -742,7 +769,9 @@ const SCREENS={
       ${CAMS.some(c=>Object.values(c.tasks||{}).some(Boolean))?workerUyarisi():""}
       <div class="section-head"><b>Kamera envanteri</b>
         <span class="searchbar"><input id="cam-ara" placeholder="Ara" oninput="filtreCam(this.value)"/></span></div>
-      ${CAMS.length?`<div class="camgrid" id="camgrid">${CAMS.map(kart).join("")}</div>`
+      ${CAMS.length?`<div class="card camlist-wrap"><table class="camlist" id="camgrid">
+        <thead><tr><th style="width:96px;">Önizleme</th><th>Kamera</th><th>Adres</th><th>Durum</th><th>Görevler</th><th style="width:1%;"></th></tr></thead>
+        <tbody>${CAMS.map(satir).join("")}</tbody></table></div>`
         :`<div class="card"><div class="empty">Henüz kamera yok.<br><span class="mut-s">Sağ üstteki <b>Kamera ekle</b> ile başlayın.</span></div></div>`}`;
   },
   async zones(){
@@ -1521,9 +1550,19 @@ async function ackAlert(id){
 /* Adreste kimlik bilgisi EKRANDA gösterilmez — güvenlik ürününde şifre omuz
    üstünden okunabilir olmamalı (sunucu da log/hata metninde aynısını maskeler). */
 const maskUrl=s=>String(s??"").replace(/\/\/[^/@\s]+:[^/@\s]+@/,"//***:***@");
+/* Listede adres sütunu: şemadan kaynak türü, gövdeden host:port. Kimlik bilgisi
+   hiç ayrıştırılmaz — desen kullanıcı:şifre@ kısmını atlar, ekrana taşınamaz. */
+function kaynakBilgi(s){
+  s=String(s??"").trim();
+  const m=/^([a-zA-Z][\w+.-]*):\/\/(?:[^/@\s]*@)?(\[[^\]\s]+\]|[^/:\s?]+)(?::(\d+))?/.exec(s);
+  if(!m||m[1].toLowerCase()==="file")return{tur:"Dosya",adres:"—"};
+  const sema=m[1].toLowerCase();
+  const tur=sema==="rtsp"?"RTSP":(/\.m3u8(\?|$)/i.test(s)?"HLS":sema.toUpperCase());
+  return{tur,adres:m[3]?m[2]+":"+m[3]:m[2]};
+}
 function filtreCam(q){
   q=(q||"").toLowerCase().trim();
-  document.querySelectorAll("#camgrid .camcard").forEach(el=>{
+  document.querySelectorAll("#camgrid [data-ara]").forEach(el=>{
     el.style.display=!q||el.dataset.ara.includes(q)?"":"none";});
 }
 /* Onay diyaloğu — geri alınamaz işlem (kamera silme) sessizce yapılmaz */

@@ -39,6 +39,13 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict) -> No
         # Worker'da doğan alarm (ihlal alanı)
         store.add_alert(p.get("kind", "intrusion"), p.get("ref", ""),
                         p.get("list_type", ""), p.get("label", ""), camera_id)
+    elif type_ == "vektor":
+        # Görünüm araması örneği (base64 float16, arama.BOYUT boyutlu)
+        import base64
+        import numpy as np
+        v = np.frombuffer(base64.b64decode(p["vec"]), dtype="float16").astype("float32")
+        store.add_nesne_vektor(camera_id, p.get("sinif"), p.get("kutu", ""),
+                               p.get("kucuk", ""), v)
     elif type_ == "health":
         store.add_camera_health(camera_id, p.get("fps"), p.get("dropped"),
                                 p.get("status", "ok"))

@@ -246,6 +246,9 @@ class _SecondStage:
         self.plate_kayip = float(cfg.get("plate.track_lost_seconds", 4.0))
         self.plate_dirilme = float(cfg.get("plate.track_rebirth_seconds", 30.0))
         self.plate_tek_conf = float(cfg.get("plate.single_read_min_conf", 0.65))
+        # Görünüm araması örnekleme aralığı (kamera başına sn); 0 = kapalı
+        self.vektor_aralik = float(cfg.get("arama.sample_seconds", 2.0))
+        self.vektor_acik = bool(cfg.get("arama.enabled", True))
         self.face_tracks: dict[str, list] = {}
         self.face_next_tid: dict[str, int] = {}
         self.busy: set[tuple[str, str]] = set()
@@ -253,12 +256,16 @@ class _SecondStage:
     def maybe_submit(self, kind: str, cam_id: str, bgr_cpu, ts: float, frame_idx: int,
                      kutular=None) -> None:
         key = (cam_id, kind)
-        if ts - self.last_run.get(key, -1e9) < self.min_interval or key in self.busy:
+        aralik = self.vektor_aralik if kind == "vektor" else self.min_interval
+        if ts - self.last_run.get(key, -1e9) < aralik or key in self.busy:
             return
         self.last_run[key] = ts
         self.busy.add(key)
         if kind == "plate":
             self.pool.submit(self._guard, self._run_plate, key, cam_id, bgr_cpu,
+                             ts, frame_idx, kutular)
+        elif kind == "vektor":
+            self.pool.submit(self._guard, self._run_vektor, key, cam_id, bgr_cpu,
                              ts, frame_idx, kutular)
         else:
             self.pool.submit(self._guard, self._run_face, key, cam_id, bgr_cpu, ts, frame_idx)
@@ -325,6 +332,33 @@ class _SecondStage:
         for v in takip.kapat(ts):
             self.store.add_plate_event(cam_id, v["plate"], v["conf"], v["count"],
                                        v["ts_seconds"], v["frame_idx"])
+
+    # — görünüm araması: örneklenmiş nesne kırpmaları → SigLIP → olay yolu —
+    def _run_vektor(self, cam_id: str, bgr, ts: float, frame_idx: int,
+                    kutular=None) -> None:
+        import base64
+        import json as _json
+        import numpy as np
+        from . import arama
+        if not kutular:
+            return
+        h, w = bgr.shape[:2]
+        kirp, meta = [], []
+        for (x1, y1, x2, y2, sinif) in kutular[:6]:
+            ix1, iy1 = max(0, int(x1)), max(0, int(y1))
+            ix2, iy2 = min(w, int(x2)), min(h, int(y2))
+            if ix2 - ix1 < 40 or iy2 - iy1 < 60:
+                continue   # minik kırpma aramada da gürültüdür
+            kirp.append(bgr[iy1:iy2, ix1:ix2])
+            meta.append((sinif, (ix1, iy1, ix2, iy2)))
+        if not kirp:
+            return
+        vekler = arama.goruntu_vektorleri(kirp)
+        for k, v, (sinif, kutu) in zip(kirp, vekler, meta):
+            kucuk = arama.kucuk_kaydet(self.cfg, k)
+            publish(self.store.r, "vektor", cam_id, {
+                "vec": base64.b64encode(np.asarray(v, dtype="float16").tobytes()).decode(),
+                "sinif": int(sinif), "kutu": _json.dumps(kutu), "kucuk": kucuk})
 
     # — yüz: hafif IoU takibi, track kapanınca TEK olay (face.py semantiği) —
     def _run_face(self, cam_id: str, bgr, ts: float, frame_idx: int) -> None:
@@ -556,8 +590,18 @@ def run_gpu_worker(cams: list[dict], cfg, bus) -> None:
 
                     want_plate = tasks.get("plate") and any(int(c) in _VEHICLE_CLASSES for c in cls)
                     want_face = tasks.get("face") and any(int(c) == _PERSON_CLASS for c in cls)
-                    if want_plate or want_face:
+                    # Görünüm araması: kişi + araç kırpmaları (görev tiki aranmaz —
+                    # arama tüm izlenen kameralarda çalışır; arama.enabled kapatır)
+                    want_vektor = stage2.vektor_acik and stage2.vektor_aralik > 0 and any(
+                        int(c) == _PERSON_CLASS or int(c) in _VEHICLE_CLASSES for c in cls)
+                    if want_plate or want_face or want_vektor:
                         bgr_cpu = _nv12_to_bgr(nv12, w, h).cpu().numpy()
+                        if want_vektor:
+                            vk = [(*map(float, xyxy[i]), int(cls[i]))
+                                  for i in range(len(cls))
+                                  if int(cls[i]) == _PERSON_CLASS or int(cls[i]) in _VEHICLE_CLASSES]
+                            stage2.maybe_submit("vektor", cid, bgr_cpu, ts,
+                                                st["frame_idx"], vk)
                         if want_plate:
                             arac_kutulari = [tuple(float(v) for v in xyxy[i])
                                              for i in range(len(cls))

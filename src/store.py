@@ -168,6 +168,15 @@ class BaseStore:
     def set_camera_tasks(self, cid: str, tasks: dict) -> None:
         raise NotImplementedError
 
+    # --- Görünüm araması (SigLIP vektörleri) ---
+    def add_nesne_vektor(self, camera_id: str, sinif: int, kutu: str,
+                         kucuk: str, vec) -> None:
+        raise NotImplementedError
+
+    def search_nesne_vektor(self, vec, limit: int = 24, camera_id: str = "",
+                            start=None, end=None) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     # --- Kamera sağlığı (worker heartbeat) ---
     def add_camera_health(self, camera_id: str, fps: float | None,
                           dropped: int | None, status: str) -> None:
@@ -289,6 +298,10 @@ CREATE TABLE IF NOT EXISTS cameras (
     url_sub TEXT,   -- düşük çözünürlüklü substream (kamera duvarı); boşsa ana akış
     http_headers TEXT,  -- bu kameraya özgü HTTP başlıkları (bazı HLS sağlayıcıları Referer şart koşar)
     tasks TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS nesne_vektor (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id TEXT NOT NULL,
+    time TEXT NOT NULL DEFAULT (datetime('now')), sinif INTEGER,
+    kutu TEXT, kucuk TEXT, vec BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS recordings (
     id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id TEXT NOT NULL,
     path TEXT NOT NULL UNIQUE, start_time TEXT NOT NULL, end_time TEXT NOT NULL,
@@ -477,6 +490,17 @@ class PgStore(BaseStore):
                 size_bytes BIGINT NOT NULL)""")
             self.conn.execute("CREATE INDEX IF NOT EXISTS ix_rec_cam_time"
                               " ON recordings (camera_id, start_time DESC)")
+            # Görünüm araması (SigLIP): pgvector + HNSW (satır sayısından
+            # bağımsız kurulur; ivfflat eğitim verisi isterdi)
+            self.conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            self.conn.execute("""CREATE TABLE IF NOT EXISTS nesne_vektor (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                camera_id TEXT NOT NULL, time TIMESTAMPTZ NOT NULL DEFAULT now(),
+                sinif SMALLINT, kutu TEXT, kucuk TEXT, vec vector(768) NOT NULL)""")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS ix_nv_cam_time"
+                              " ON nesne_vektor (camera_id, time DESC)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS ix_nv_vec ON nesne_vektor"
+                              " USING hnsw (vec vector_cosine_ops)")
             self.conn.commit()
             return
         schema_path = _ROOT / "db" / "schema.sql"
@@ -558,6 +582,29 @@ class PgStore(BaseStore):
             " FROM camera_health ORDER BY camera_id, time DESC")
         for r in rows:
             r["time"] = str(r["time"])
+        return rows
+
+    def add_nesne_vektor(self, camera_id, sinif, kutu, kucuk, vec) -> None:
+        self._x("INSERT INTO nesne_vektor (camera_id, sinif, kutu, kucuk, vec)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (camera_id, sinif, kutu, kucuk,
+                 "[" + ",".join(f"{float(x):.6f}" for x in vec) + "]"))
+
+    def search_nesne_vektor(self, vec, limit=24, camera_id="", start=None, end=None):
+        vs = "[" + ",".join(f"{float(x):.6f}" for x in vec) + "]"
+        q = ("SELECT id, camera_id, time, sinif, kutu, kucuk,"
+             " 1 - (vec <=> ?::vector) AS skor FROM nesne_vektor")
+        p = [vs]
+        kosul = []
+        if camera_id: kosul.append("camera_id=?"); p.append(camera_id)
+        if start: kosul.append("time>=?"); p.append(start)
+        if end: kosul.append("time<=?"); p.append(end)
+        if kosul: q += " WHERE " + " AND ".join(kosul)
+        q += " ORDER BY vec <=> ?::vector LIMIT ?"
+        p += [vs, limit]
+        rows = self._all(q, tuple(p))
+        for r in rows:
+            r["time"] = str(r["time"]); r["skor"] = round(float(r["skor"]), 4)
         return rows
 
     def recent_events(self, limit: int = 50, tur: str = "",

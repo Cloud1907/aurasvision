@@ -542,6 +542,37 @@ def api_recordings_stats():
         s.close()
 
 
+class SearchPayload(BaseModel):
+    q: str
+    camera: str = ""
+    limit: int = 24
+
+
+@app.post("/api/search")
+def api_search(p: SearchPayload):
+    """Görünüm araması: serbest metin → arşivdeki nesne kırpmaları.
+
+    Vektörler worker'da üretilir (gpu_engine._run_vektor); burada yalnız metin
+    kodlanır ve pgvector/SQLite'ta en yakınlar bulunur. Model ilk çağrıda
+    yüklenir (~2 sn), sonrası milisaniyeler.
+    """
+    q = p.q.strip()
+    if len(q) < 2:
+        raise HTTPException(422, "Arama metni çok kısa")
+    from . import arama
+    try:
+        vec = arama.metin_vektoru(q)
+    except Exception as e:
+        raise HTTPException(503, f"Arama modeli yüklenemedi: {e}")
+    s = _store()
+    try:
+        rows = s.search_nesne_vektor(vec, limit=min(max(p.limit, 1), 60),
+                                     camera_id=p.camera)
+    finally:
+        s.close()
+    return {"sorgu": q, "sonuc": rows}
+
+
 @app.get("/api/recordings/root")
 def api_recordings_root():
     """Arşiv kök klasörünün tam yolu — operatör dosyalara elle erişebilsin."""

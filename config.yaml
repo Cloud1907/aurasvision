@@ -159,6 +159,14 @@ plate:
   # Gerçek geçiş birden çok kare okutur; tek karelik eşleşme alarm olmaz.
   alert_min_reads: 2
 
+arama:
+  # Görünüm araması (SigLIP, Apache-2.0): izlenen nesne kırpmaları vektörlenir,
+  # arşivde serbest metinle aranır. NVIDIA LocateAnything DEĞİL — onun lisansı
+  # ticari kullanımı yasaklıyor (src/arama.py başlığı).
+  enabled: true
+  sample_seconds: 2      # kamera başına örnekleme aralığı
+  keep_days: 30          # küçük görüntülerin saklama süresi (vektörler kalır)
+
 face:
   model_pack: buffalo_l  # InsightFace: tespit + ArcFace + yaş/cinsiyet
   det_size: 640
