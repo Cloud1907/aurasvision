@@ -491,7 +491,29 @@ def run_gpu_worker(cams: list[dict], cfg, bus) -> None:
     def refresh_db() -> None:
         s = open_store(cfg)
         try:
-            fresh = {c["id"]: c for c in merged_cameras(cfg, s)}
+            fresh = {c["id"]: c for c in merged_cameras(cfg, s)
+                     if c.get("enabled", True)}
+            # SICAK EKLEME: yeni kamera worker restart'ı İSTEMEZ. Eskiden liste
+            # açılışta donuyordu — "kamera ekledim, analiz başlamadı" sahada
+            # en pahalı sürpriz olurdu (bourbon-street eklerken yaşandı).
+            for cid, c in fresh.items():
+                if cid not in state:
+                    print(f"[nvdec] yeni kamera algılandı: {cid} — çözücü açılıyor", flush=True)
+                    d = _Decoder(cid, _stream_url(c, cfg),
+                                 http_options(cfg, _stream_url(c, cfg)))
+                    d.start()
+                    decoders[cid] = d
+                    state[cid] = {"cam": c, "tracker": None, "counter": None,
+                                  "counter_lines": None, "lines": [], "prev_y": None,
+                                  "seq": 0, "frame_idx": 0, "next_ts": 0.0}
+            # SİLİNENİ KAPAT: çözücüsü durur, durumu düşer (heartbeat da kesilir)
+            for cid in [x for x in state if x not in fresh]:
+                print(f"[nvdec] kamera silinmiş: {cid} — çözücü kapatılıyor", flush=True)
+                try:
+                    decoders.pop(cid).dur_()
+                except Exception:
+                    pass
+                state.pop(cid, None)
             for cid, st in state.items():
                 if cid in fresh:
                     st["cam"] = fresh[cid]
