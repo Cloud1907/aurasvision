@@ -510,7 +510,7 @@ def run_gpu_worker(cams: list[dict], cfg, bus) -> None:
             for cid in [x for x in state if x not in fresh]:
                 print(f"[nvdec] kamera silinmiş: {cid} — çözücü kapatılıyor", flush=True)
                 try:
-                    decoders.pop(cid).dur_()
+                    decoders.pop(cid).stop_flag = True  # run() döngüsü bayrağı görünce çıkar
                 except Exception:
                     pass
                 state.pop(cid, None)
