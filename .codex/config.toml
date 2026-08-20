@@ -1,0 +1,19 @@
+# ÜRETİLDİ — elle düzenleme: bin/yetki.py --uygula
+# Kaynak: .agents/capability-profiles/*.yml
+#
+# Burada YALNIZ proje düzeyinde geçerli anahtarlar var. `[profiles.*]` Codex
+# tarafından proje-yerel olarak reddedilir (ölçüldü) ve bilinçle YAZILMAZ.
+# Salt-okunur araştırma profilini istiyorsan KENDİ `~/.codex/config.toml`
+# dosyana ekle — bu repo senin kullanıcı ayarını değiştiremez, değiştirmemeli:
+#
+#   [profiles.research]          # Kaynaklı araştırma/keşif — kod değişikliği yok
+#   sandbox_mode = "read-only"
+#   approval_policy = "on-request"
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+# Profil ağ sınırı: code-change allowlist ("api.github.com"). Codex bunu
+# boolean olarak ifade eder; allowlist ≠ açık ağ olduğundan kapalı yazılır.
+network_access = false

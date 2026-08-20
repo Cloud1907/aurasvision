@@ -1,0 +1,166 @@
+name: evidence
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Elle tetikleme — kanıtın tek yolu otomatik olay OLMAMALI.
+  # 2026-08-06 GitHub Actions kesintisinde webhook teslimatı bozuldu:
+  # push/pull_request hiç run üretmedi, workflow_dispatch çalıştı. Bu
+  # tetikleyici olmadan kesinti boyunca hiçbir PR bağımsız makine kanıtı
+  # üretemez ve merge kararı yerel çıktıya kalır.
+  workflow_dispatch:
+
+jobs:
+  kernel:
+    runs-on: ubuntu-latest
+    steps:
+      # Action'lar TAM COMMIT SHA'sına sabitlenmiştir, etikete değil.
+      # Etiket hareketlidir: `v4` yarın başka bir commit'i işaret edebilir
+      # ve deterministik olması gereken kanıt üretimi sessizce değişir.
+      # Upstream ele geçirilirse etiket saldırganın kodunu getirir.
+      # Yükseltme bilinçli karardır: yeni SHA'yı yaz, gerekçesini commit'e.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          fetch-depth: 0        # check_test_first base dalı görebilsin
+
+      - name: PyYAML kur
+        # Sürüm sabit: `pyyaml` çıplak yazıldığında her koşu farklı sürüm
+        # çekebilir ve "aynı doğrulama bağımsız makinede tekrarlanır" iddiası
+        # bozulur.
+        # PEP 668 geri düşüşü: Homebrew/sistem python3'ü çıplak `pip install`i
+        # externally-managed-environment ile REDDEDER. GitHub imajında sorun
+        # yoktu; self-hosted runner'da (kanıt köprüsü) kernel job'ı ilk adımda
+        # düşüyordu — ölçüm 2026-08-16, OICommand. Sürüm sabiti her dalda
+        # KORUNUR: geri düşüş kurulum yolunu değiştirir, sürümü değil.
+        run: |
+          python3 -m pip install --quiet "pyyaml==6.0.3" \
+            || python3 -m pip install --quiet --user "pyyaml==6.0.3" \
+            || python3 -m pip install --quiet --break-system-packages "pyyaml==6.0.3"
+
+      - name: Kernel doğrulama
+        run: python3 bin/validate.py
+
+      # Skill doğrulayıcıları bağımsız makinede tekrarlanır (yerel kanca
+      # atlanabilir; CI atlanamaz). Sonuçları evidence.json'a check olarak girer.
+      - name: Secret taraması
+        # '*/eval/*' dışlanır: skill eval'leri tarayıcının kendi kabul
+        # vakası olarak kasıtlı sahte anahtar taşır.
+        run: |
+          python3 .agents/skills/security-review/scripts/scan_secrets.py \
+            --exclude '*/eval/*' .
+
+      # AYRI bir boyut: sır taraması "bu değer bir anahtar mı" der, bu
+      # "bu dosya bir insan listesi mi" der. 4Flow'da 20 kişilik bir kullanıcı
+      # dökümü sır taramasından temiz geçmişti (2026-08-07).
+      - name: Kişisel veri taraması
+        run: |
+          python3 .agents/skills/security-review/scripts/scan_personal_data.py \
+            --exclude '*/eval/*' .
+
+      - name: Test-önce disiplini
+        id: testfirst
+        run: |
+          set +e
+          python3 .agents/skills/implement-change/scripts/check_test_first.py \
+            --base "origin/${{ github.base_ref || 'main' }}"
+          kod=$?
+          set -e
+          # Araç hatası (exit 2) disiplin ihlali DEĞİLDİR — sahte kırmızı
+          # üretmek, sahte yeşil kadar zararlıdır: ikisi de kanıtı bozar.
+          case "$kod" in
+            0) echo "status=passed" >> "$GITHUB_OUTPUT" ;;
+            1) echo "status=failed" >> "$GITHUB_OUTPUT"
+               echo "::error::kaynak değişti ama hiç test değişmedi" ;;
+            *) echo "status=skipped" >> "$GITHUB_OUTPUT"
+               echo "::warning::check_test_first araç hatası (exit $kod) — disiplin ÖLÇÜLEMEDİ" ;;
+          esac
+
+      - name: Proje test bağımlılıkları (AurasVision)
+        # tests/test_birim.py src.server'ı import eder (cv2/fastapi/pydantic
+        # top-level). Ağır ML kütüphaneleri (ultralytics, insightface,
+        # fast-alpr, onnxruntime) src.detect/face/plate içinde fonksiyon
+        # içi lazy-import — testler için gerekmiyor, requirements.txt'in
+        # tamamı CI'da kurulmaz (dakikalarca sürer, bu testlerin ihtiyacı yok).
+        run: |
+          python3 -m pip install --quiet "opencv-python>=4.10.0" "fastapi>=0.115.0"
+
+      - name: Birim testleri
+        # Çıktı DOSYAYA da yazılır: `evidence.json` bunun sha256'sını taşır.
+        # Log linki süresi dolar, özet dolmaz — "kanıt > beyan" ancak
+        # artefakta bağlanınca CI katmanında da geçerli olur.
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tests 2>&1 | tee test-output.txt
+
+      - name: Risk sınıfı (ön × nihai)
+        id: risk
+        # PR gövdesi GÜVENİLMEYEN girdidir → env ile geçilir, `run:` içine
+        # interpolate EDİLMEZ (2026-08-07 komut enjeksiyonu dersi).
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+          CONTRACTLI: ${{ contains(github.event.pull_request.labels.*.name, 'contract') }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, subprocess, sys
+          sys.path.insert(0, "bin")
+          from contract import on_risk_oku
+          from risk import birlestir, risk_sinifi, yikici_aksiyon
+          base = os.environ.get("GITHUB_BASE_REF") or "main"
+          def git(*a):
+              p = subprocess.run(["git", *a], capture_output=True, text=True)
+              return p.stdout if p.returncode == 0 else ""
+          ref = f"origin/{base}"
+          dosyalar = [s for s in git("diff", "--name-only", f"{ref}...HEAD").splitlines() if s]
+          diff = git("diff", f"{ref}...HEAD")
+          on = on_risk_oku(os.environ.get("BODY", ""),
+                           os.environ.get("CONTRACTLI") == "true")
+          yol = risk_sinifi(dosyalar)
+          aksiyon = "deny" if yikici_aksiyon(diff) else "auto"
+          nihai = birlestir(yol, aksiyon)
+          print(f"provisional={'approval' if on == 'okunamadi' else (on if on != 'yok' else nihai)}")
+          print(f"final={nihai}")
+          PY
+
+      # Ratchet: mevcut borç kabul, BÜYÜMESİ yasak. Eşik yükseltmek
+      # gerekiyorsa taban bilinçli güncellenir ve gerekçe commit'e yazılır.
+      - name: Kod kalitesi (ratchet)
+        run: python3 bin/kalite.py --check
+
+      - name: Contract ID çıkar
+        id: contract
+        # PR başlığı GÜVENİLMEYEN girdidir ve `run:` içine DOĞRUDAN
+        # yazılamaz. Eskiden `TITLE="${{ github.event.pull_request.title }}"`
+        # idi: başlık tırnak içeriyorsa dizeyi kapatır ve kalanı KOMUT olarak
+        # çalışır. 2026-08-07'de gerçekleşti — başlıktaki `"adı test_"`
+        # yüzünden `test_ fixture demek değil: command not found`, exit 127.
+        # Kazara oldu ama kasıtlı da olabilirdi: PR başlığı yazabilen herkes
+        # CI runner'ında komut çalıştırabilirdi (GitHub'ın kendi uyarısı:
+        # untrusted input asla run: içine interpolate edilmez).
+        # Doğrusu env ile geçirmek: kabuk onu veri olarak görür, kod olarak değil.
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ID=$(printf '%s' "$TITLE" | grep -oE '#[0-9]+' | head -1 || true)
+          echo "id=${ID:-micro}" >> "$GITHUB_OUTPUT"
+
+      - name: Evidence üret
+        run: |
+          python3 bin/make_evidence.py \
+            --out evidence.json \
+            --contract "${{ steps.contract.outputs.id }}" \
+            --task-class "${{ contains(github.event.pull_request.labels.*.name, 'contract') && 'code-change' || 'micro' }}" \
+            --check "kernel-validate=passed" \
+            --check "secret-scan=passed" \
+            --check "tests=passed" \
+            --check "kod-kalitesi=passed" \
+            --check "test-first=${{ steps.testfirst.outputs.status }}" \
+            --risk-provisional "${{ steps.risk.outputs.provisional }}" \
+            --risk-final "${{ steps.risk.outputs.final }}" \
+            --digest "test-report=test-output.txt"
+
+      - name: Evidence artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: evidence
+          path: evidence.json

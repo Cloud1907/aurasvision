@@ -1,3 +1,5 @@
+# toplanmaz: pytest-native (TestCase yok, çıplak assert) — projenin test
+# aracı pytest'tir (bkz. CLAUDE.md), unittest discover ile toplanmaz.
 """Birim testleri — saf fonksiyonlar ve store davranışları.
 
 Çalıştırma: .venv/bin/python -m pytest tests/ -q
@@ -16,9 +18,9 @@ from src.config import Config
 from src.count import _ascii, _side
 from src.face import (_affinity, _best_reid, _calm_frac, _compact_gallery,
                       _dedup_tracks, _FaceTrack, _final_tracks, _iou,
-                      _wander_ratio, run_face)
+                      _wander_ratio)
 from src.plate import (_as_float_conf, _lev, _vote, accept_read, normalize_tr,
-                       normalize_yabanci, plaka_turu)
+                       plaka_turu)
 from src.server import _slug
 from src.store import DEFAULT_TASKS, SqliteStore, merged_cameras
 from src.zones import IntrusionWatcher, point_in_poly, wanted_classes

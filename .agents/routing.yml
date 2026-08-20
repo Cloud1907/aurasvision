@@ -1,0 +1,369 @@
+# Skill yönlendirme tablosu — istek metninden görev sınıfı ve skill seçimi.
+#
+# Tek doğruluk kaynağı: bu dosya. `bin/route.py` bunu okur ve her istekte
+# UserPromptSubmit hook'u olarak yönlendirme üretir; `bin/validate.py` her
+# skill'in burada kayıtlı olduğunu ve her kaydın gerçek skill'e işaret
+# ettiğini doğrular.
+#
+# Eşleşme kuralı: istek küçük harfe indirilir, kelimelere bölünür; bir tetik
+# kelime, isteğin bir kelimesinin BAŞINDA geçiyorsa eşleşir (Türkçe eklerin
+# üstesinden gelmek için: "ekle" → "ekleyelim", "eklemek"). Boşluk içeren
+# tetikler alt-dize olarak aranır. Puan = eşleşen tetik sayısı × specificity
+# (varsayılan 1); en yüksek puanlı kural birincil, diğerleri ek skill olur.
+# Çarpım bilinçli: doğal cümledeki genel fiiller ("düzelt ve uygula") tek
+# özgül tetiği sayıyla ezememeli. Puan eşitliğinde specificity bozar.
+# Açık /komut her şeyi yener.
+#
+# Niyet kapısı (2026-08-12, bin/niyet.py): istek POZİTİF okuma emri
+# taşıyor ve mutasyon işareti taşımıyorsa yazma-niyetli kural zorunlu
+# kılınmaz, öneriye düşer; niyet belirsizse bu tablonun otoritesi aynen
+# geçerlidir. Kuralın niyeti task_class'tan türer (research → read,
+# gerisi write); `intent: read` alanı bunu ezer.
+
+schema_version: 1
+
+# Sahip disiplinler (dünya standardı rol tanımları ~/.claude/agents altında).
+# Analiz her işte TEK sahip seçer — zincir değil. "Rol tiyatrosu yok"
+# (VIBE_CODING_TASARIM_TEMMUZ_2026.md:62): aynı çıktı personalar arasında
+# devredilmez; ayrı ajan yalnız bağımsız doğrulama ve izole araştırma için.
+roles:
+  - backend-engineer
+  - frontend-engineer
+  - database-engineer
+  - devops-engineer
+  - mobile-engineer
+  - ml-ai-engineer
+  - software-architect
+  - ux-designer
+  - security-engineer
+  - qa-engineer
+  - research-analyst
+
+# Disiplin tespiti skill seçiminden BAĞIMSIZ çalışır: aynı skill (örn.
+# implement-change) frontend işinde de backend işinde de kullanılır, ama
+# sahip değişir. Eşleşme yoksa kuralın kendi `owner` alanı geçerlidir.
+disciplines:
+  - owner: frontend-engineer
+    triggers: [buton, css, görünüm, gorunum, render, bileşen, component,
+               responsive, animasyon, tailwind, react, razor, sayfa yüklen]
+  - owner: ux-designer
+    triggers: [kullanıcı akış, kullanılabilir, hedefe var, karmaşık geliyor,
+               anlaşılmıyor, akış bozuk, heuristik, kullanıcı kayboluyor]
+  - owner: backend-engineer
+    triggers: [endpoint, api, servis, controller, middleware, iş kuralı,
+               yetki kontrol, dto, service, auth akış]
+  - owner: database-engineer
+    triggers: [sorgu, query, index, yavaş çalış, n+1, join, migration şema,
+               tablo, stored procedure, view]
+  - owner: devops-engineer
+    triggers: [deploy, pipeline, docker, ci/cd, env değişken, port, sunucu,
+               health check, container]
+  - owner: mobile-engineer
+    triggers: [mobil, ios, android, capacitor, react native, push bildirim,
+               offline senkron, store release]
+  - owner: ml-ai-engineer
+    triggers: [model, eval, drift, training, embedding, inference, dataset,
+               fine-tune]
+  - owner: software-architect
+    triggers: [mimari, monolit, mikroservis, servis sınır, ölçeklen,
+               trade-off, adr, sistem tasarım, bağımlılık yön]
+  - owner: security-engineer
+    triggers: [güvenlik, istismar, owasp, idor, injection, sızma, secret,
+               yetki bypass]
+  - owner: research-analyst
+    triggers: [nerede tanımlı, hangi dosya, nasıl hesaplan, kod tabanında,
+               envanter çıkar]
+
+rules:
+  - skill: implement-change
+    owner: backend-engineer
+    task_class: code-change
+    risk: approval
+    triggers:
+      - yap
+      - uygula
+      - ekle
+      - yaz
+      - düzelt
+      - kodla
+      - refactor
+      - taşı
+      - kaldır
+      # niyet.YAZ_FIILLERI ile uyum: bu fiiller mutasyon sayılıyordu ama
+      # tabloda tetik değildi, dolayısıyla "auth akışını değiştirmemiz
+      # gerekiyor" implement-change'i hiç eşleştirmiyor ve daha özgül
+      # security-review birincil oluyordu — uygulama işi denetim skill'ine
+      # gidiyordu (eval corpus bulgusu, 2026-08-15).
+      - değiştir
+      - güncelle
+      - oluştur
+      - geliştir
+      - sil
+      - bug
+      - hata al
+      - çalışmıyor
+      - implement
+      - fix
+      - endpoint
+      - test yaz
+      - migration
+      # İngilizce tetikler: sistem cross-engine olduğunu iddia ediyor ve
+      # Codex/Copilot kullanıcısı İngilizce yazar. Ölçüm 2026-08-15:
+      # İngilizce istekler ya yanlış sınıfa gidiyordu ya hiç yönlendirilmiyordu.
+      - add
+      - create
+      - build
+      - update
+      - remove
+      - rename
+      - refactor
+      - debug
+      - broken
+      - failing
+
+  - skill: research-with-evidence
+    owner: research-analyst
+    task_class: research
+    risk: auto
+    triggers:
+      - araştır
+      - incele
+      - karşılaştır
+      - nerede
+      - nasıl
+      - hangi
+      - neden
+      - kıyasla
+      - keşfet
+      - analiz
+      - öğren
+      - dokümantasyon oku
+      - seçenek
+      # İngilizce okuma tetikleri (bkz. implement-change kuralındaki not)
+      - review
+      - audit
+      - investigate
+      - compare
+      - explain
+      - where
+      - how
+      - which
+      - why
+      - explore
+
+  - skill: security-review
+    owner: security-engineer
+    specificity: 2
+    task_class: code-change
+    risk: approval
+    # Denetim salt-okunur bulgu üretir: "güvenlik açısından incele" gibi
+    # okuma-niyetli istekte de zorunlu kılınabilir. Okuma niyetinde sınıf
+    # salt-okunur profile İNER (incele.py P1, PR #43 — denetim yazma
+    # profili açmaz); mutasyon turunda code-change/approval geçerlidir.
+    # risk etiketi her iki durumda kuraldan gelir.
+    intent: read
+    triggers:
+      - güvenlik
+      - auth
+      - kimlik doğrula
+      - oturum
+      - token
+      - secret
+      - sızma
+      - istismar
+      - yetki
+      - owasp
+      - injection
+      - xss
+      - idor
+      - ödeme
+      - upload
+      # İngilizce güvenlik tetikleri: "review the security of …" hiçbir
+      # güvenlik skill'i seçmiyordu (ölçüm 2026-08-15) — güvenlik
+      # false-negative'i, sınıf hatasından farklı bir şeydir.
+      - security
+      - authentication
+      - authorization
+      - credential
+      - vulnerability
+      - exploit
+      - payment
+
+  - skill: designing-interfaces
+    owner: frontend-engineer
+    specificity: 2
+    task_class: code-change
+    risk: approval
+    triggers:
+      - tasarla
+      - tasarım
+      - arayüz
+      - ekran
+      - sayfa
+      - premium
+      - güzelleştir
+      - dashboard
+      - landing
+      - component
+      - bileşen
+      - css
+      - tipografi
+      - renk
+      - animasyon
+
+  - skill: kernel-work
+    owner: software-architect
+    specificity: 2
+    task_class: code-change
+    risk: approval
+    triggers:
+      - kernel
+      - skill
+      - profil
+      - validate
+      - hook
+      - kanca
+      - evidence
+      - kanıt
+      - agents.md
+      - router
+      - yönlendir
+      - hafıza
+      - memory
+      - iskelet
+      - çekirdek
+
+  - skill: auras
+    owner: devops-engineer
+    specificity: 2
+    task_class: code-change
+    risk: approval
+    triggers:
+      - projeyi bağla
+      - sisteme al
+      - kurulum yap
+      - onboard
+      - bağla
+      - auras kur
+
+  # Olay sınıfı: incident profili tanımlıydı ama hiçbir kural onu
+  # üretmiyordu — ulaşılamayan profil, olmayan korumadır. Sınıf SEÇİMLE
+  # değil ESKALASYONLA gelir (route._eskale): olay tetiği görüldüyse sınıf
+  # incident'a çıkar, skill seçimi normal akışta kalır. Sayı yarışı yok —
+  # "prod çöktü, düzelt ve uygula"daki genel fiiller sınıfı düşüremez
+  # (üç turda ölçüldü: sayı-tabanlı her formül yenildi; grilling dersi).
+  # Tetikler somut olay İFADELERİ: tek kelime "kesinti" önek eşleşmesiyle
+  # "kesintisiz"i, "servis durdu" alt-dizesi "servis durdurma"yı yakalıyordu.
+  - skill: implement-change
+    owner: devops-engineer
+    specificity: 3
+    task_class: incident
+    risk: approval
+    triggers:
+      - prod çöktü
+      - üretim hatası
+      - kesinti var
+      - kesinti yaşıyoruz
+      - acil müdahale
+      - servis çöktü
+      - canlıda hata
+
+  - skill: codex-debate
+    owner: software-architect
+    specificity: 2
+    external: true  # skill repo dışında (kullanıcı-global ~/.claude/skills)
+    task_class: research
+    risk: auto
+    triggers:
+      - codex
+      - ikinci görüş
+      - tartış
+      - eleştirt
+      - haklı mıyım
+      - karşı görüş
+
+# Birincil kural seçildikten sonra, isteğin içinde bu tetiklerden biri varsa
+# ilgili skill ek skill olarak DAİMA eklenir (risk yüzeyi kuralı).
+  # --- design sınıfı (ADR-0005) ---
+  # ÖLÇÜLEBİLİR ayak: SEO/erişilebilirlik/performans denetimi kaynaklı rapor
+  # üretir ve `design` profilindeki chrome-devtools'a ihtiyaç duyar (research
+  # profilinde tarayıcı YOK). Bu kural 2026-08-16'da bir kez geri alınmıştı:
+  # niyet kapısı sınıfı research'e düşürüp kuralın aracını elinden alıyordu.
+  # `salt_okunur_siniflar` ile o kapatıldı; kural artık ayakta duruyor.
+  # research-with-evidence kuralından SONRA gelir → skill'in varsayılan
+  # sınıfı `research` kalır (skill_kayit._routing_sinifi: ilk kural kazanır).
+  - skill: research-with-evidence
+    owner: ux-designer
+    specificity: 2
+    task_class: design
+    intent: read
+    risk: approval
+    triggers:
+      - seo denetimi
+      - lighthouse
+      - erişilebilirlik denetimi
+      - pazarlama araştırması
+      - rakip analizi
+      - marka denetimi
+
+always_add:
+  - skill: security-review
+    triggers:
+      - auth
+      - secret
+      - token
+      - şifre
+      - parola
+      - ödeme
+      - migration
+      - upload
+      - yetki
+      - oturum
+
+# Bilinçli yönlendirilmeyen skill'ler. Her kayıt gerekçe taşımak zorundadır
+# (bekçi: bin/validate.py test_routing). Buraya yazmak "unuttum" değil
+# "kasten dışarıda" demektir.
+not_routed:
+  # 2026-08-16 (ADR-0005): `design` sınıfı YÖNLENDİRİLMİYOR — iki ayrı sebep.
+  #
+  # (a) ÜRETİM ayağı: video/görsel/kampanya için YÖNETİLEN skill yok. Nim ve
+  #     Canva skill'leri eklenti kaynaklıdır, `.agents/skills/` altında
+  #     değildir. Skill yayın koşulu üçlüdür (eval + tetik + profil kaydı);
+  #     eval'siz skill uydurmak tam da bu dosyanın engellediği şeydir.
+  #
+  # (b) DENETİM ayağı ARTIK AÇIK (2026-08-16, aynı gün). Geçmişi: kural
+  #     yazıldı, canlı denendi, geri alındı, sebebi giderildi, geri kondu —
+  #     `lighthouse çalıştır` kuralı doğru eşleştirdi ama `niyet.py`
+  #     `_okuma_sinifi` sınıfı `design` → `research` düşürdü: o kod "research"i
+  #     TEK salt-okunur sınıf sayıyor. Sonuç, `design` profilindeki
+  #     chrome-devtools'u kaybeden bir SEO kuralı olurdu — yani çalışmayan
+  #     ama çalışır görünen bir yönlendirme. İkinci salt-okunur sınıfı
+  #     tanıtmak router'ın güvenlik kapısına dokunur; ayrı PR ister.
+  #
+  # Bu arada `design` sınıfı ÇALIŞIR: issue form'dan seçilir, /komutla açılır.
+  - skill: aurasprime
+    reason: >-
+      Kelime tetiğiyle seçilmez çünkü BELİRLİ bir işin skill'i değil, her
+      isteğin giriş noktasıdır — tabloya kural yazmak onu diğer skill'lerle
+      yarıştırırdı. Bağlanma yolu router hook'udur (karşılama katmanı, ayrı
+      iş); o bağlanana dek elle `/aurasprime` ile çağrılabilir.
+  - skill: grilling
+    reason: >-
+      Giriş yalnız /grilling. Doğal dil tetiği denendi ve KALDIRILDI: anahtar
+      kelime katmanı cümleyi anlamadığı için ret ("sorguya çekme"), alıntı
+      ("'sorguya çek' ne demek"), yük testi ve yemek anlamları sürekli
+      yanlış-pozitif üretti. Yanlış açılan sorgu oturumu kullanıcının "ara
+      soru sorma" tercihini ihlal ettiğinden bedeli, kaçırmanın bedelinden
+      yüksek — açık komut hem kesin hem yeterli.
+  # 2026-08-16: `project-onboarding` BİRLEŞTİRİLDİ. İki skill tek işi
+  # (repoyu sisteme bağlama) yapıyordu; ikisi de skill listing bütçesinden
+  # yer alıyor, ikisi de ayrı eval/profil kaydı istiyor, ve hangisinin
+  # otorite olduğu her okumada yeniden karar veriliyordu. Prosedür
+  # `auras/references/onboarding-checklist.md` olarak yaşamaya devam ediyor
+  # — bilgi korundu, ikinci giriş noktası kaldırıldı.
+
+fallback:
+  task_class: research
+  message: >-
+    Eşleşen skill yok. Serbest çalış; ama aynı iş tipini üçüncü kez elle tarif
+    ediyorsan bu bir skill adayıdır (AGENTS.md skill kuralı) — kullanıcıya söyle.

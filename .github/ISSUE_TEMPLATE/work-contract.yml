@@ -1,0 +1,66 @@
+name: İş sözleşmesi (work contract)
+description: Contract'lı bir agent işi başlatır — hedef, kabul kriterleri ve risk sınıfıyla.
+title: "[İş] "
+labels: ["contract"]
+body:
+  - type: input
+    id: hedef
+    attributes:
+      label: Hedef
+      description: Tek cümle, sonuç odaklı.
+      placeholder: "Abonelik iptalindeki yarış koşulunu düzelt"
+    validations:
+      required: true
+  - type: dropdown
+    id: gorev-sinifi
+    attributes:
+      label: Görev sınıfı
+      description: Capability profilini belirler; agent bu sınırı değiştiremez.
+      options:
+        - code-change
+        - research
+        - incident
+        - design
+    validations:
+      required: true
+  - type: textarea
+    id: kriterler
+    attributes:
+      label: Kabul kriterleri (EARS)
+      description: Her satır bir kriter, teste 1:1 eşlenir.
+      placeholder: |
+        - Aynı abonelik iki kez iptal edildiğinde, sistem ikinci isteği idempotent yanıtlamalı
+        - Mevcut API sözleşmesi değişmemeli
+    validations:
+      required: true
+  - type: textarea
+    id: kapsam
+    attributes:
+      label: Kapsam
+      description: İzinli path'ler ve kapsam dışı alanlar.
+      placeholder: |
+        İzinli: src/subscriptions/**, tests/subscriptions/**
+        Kapsam dışı: ödeme sağlayıcı entegrasyonu
+    validations:
+      required: true
+  - type: dropdown
+    id: on-risk
+    attributes:
+      label: Ön risk sınıfı
+      description: Nihai sınıf diff'ten yeniden hesaplanır; yalnız yukarı eskale olur.
+      options:
+        - auto
+        - approval
+        - deny-inceleme
+    validations:
+      required: true
+  - type: textarea
+    id: kanit
+    attributes:
+      label: Zorunlu kanıt
+      description: Hangi check/artifact başarıyı gösterir?
+      placeholder: |
+        - unit + integration testleri yeşil
+        - yarış koşulu reprodüksiyon testi
+    validations:
+      required: true

@@ -1,0 +1,10 @@
+{
+  "_uretildi": "bin/yetki.py --uygula — elle düzenleme kaybolur",
+  "hooks": [
+    {
+      "event": "preToolUse",
+      "run": "python3 bin/yetki.py --dogrula-yol",
+      "description": "Mutlak yasak yüzeyine yazımı reddeder"
+    }
+  ]
+}

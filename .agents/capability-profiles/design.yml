@@ -1,0 +1,47 @@
+schema_version: 1
+task_class: design
+# Sınıfın adı KONU, sınırı YETENEK (ADR-0005). Bu sınıfı diğer üçünden ayıran
+# şey "tasarım hakkında olması" değil, KİMLİK DOĞRULAMALI DIŞ ÜRETKEN SaaS
+# çağırması ve repoya YAZMAMASIDIR. Konu bazlı okunursa sınıf çöp kutusuna
+# döner. Kural: repoya yazan tasarım işi `design` DEĞİL `code-change`'tir —
+# routing bunu zaten öyle yapıyor (designing-interfaces → code-change).
+description: "Tasarım/UI-UX/pazarlama üretimi — dış üretken SaaS çağırır, repo mutasyonu yok"
+skills:
+  # aurasprime her sınıfta izinli: işi kendi yapmaz, dağıtır.
+  - aurasprime
+  # Yüzey kararlarının derinliği burada; dosya yazan uygulaması code-change'te.
+  - designing-interfaces
+  # Rakip/pazar/erişilebilirlik keşfi kaynaklı rapor üretir.
+  - research-with-evidence
+tools:
+  # SALT OKUNUR bilinçli: üretim dış serviste olur, çıktı rapora iner. Yazma
+  # açılırsa sınıf code-change'ten ayırt edilemez ve kimlik doğrulamalı SaaS
+  # erişimi sessizce yazma yetkisiyle birleşir.
+  filesystem: read-only
+  report_path: ".agents/reports/"
+  commands: [gh]
+network:
+  mode: allowlist
+  note: "Kimlik doğrulamalı dış SaaS; indirme/çalıştırma yasak"
+  domains:
+    - api.figma.com
+    - api.canva.com
+    - api.github.com
+# MCP izin sınırı — kayıt: .agents/mcp.yml, üretici: bin/yetki.py
+# Uzak (OAuth) sunucular repo tarafından ÜRETİLMEZ (ADR-0005); burada yalnız
+# SINIRLARI beyan edilir. Yapılandırma oturum düzeyindedir.
+mcp:
+  - figma
+  - canva
+  - nim
+  - chrome-devtools   # ölçüm ayağı: lighthouse, a11y snapshot, screenshot
+  - codegraph         # mevcut bileşeni bulmak grep'ten ucuz
+evidence_required:
+  # Tasarım aşamasında KAPI YOK (docs/yasam-dongusu-kapsami.md). Bu alan bir
+  # kapı değil, turun neyi göstermesi gerektiğinin beyanıdır.
+  - artifact
+  - cited_sources
+risk:
+  provisional_from: issue_form
+  final_from: diff
+  escalation: upward_only

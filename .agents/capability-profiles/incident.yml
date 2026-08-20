@@ -1,0 +1,31 @@
+schema_version: 1
+task_class: incident
+description: "Üretim olayı teşhisi + dar kapsamlı güvenli düzeltme"
+skills:
+  - aurasprime            # her sınıfta izinli: dağıtır, sınıfı işten alır
+  - research-with-evidence
+  - implement-change
+  - security-review
+tools:
+  filesystem: workspace-write
+  commands: [test, lint, build, gh, logs]
+network:
+  mode: allowlist
+  domains:
+    - api.github.com
+# MCP izin sınırı — kayıt: .agents/mcp.yml, üretici: bin/yetki.py
+# Olay sınıfı: teşhis için indeks + tarayıcı + ofis run durumu.
+mcp:
+  - codegraph
+  - chrome-devtools
+  - agent-ofis
+evidence_required:
+  - reproduction
+  - tests
+constraints:
+  fix_scope: "yalnız teşhiste kanıtlanan kök nedene dokunan minimal diff"
+risk:
+  provisional_from: issue_form
+  final_from: diff
+  escalation: upward_only
+  floor: approval

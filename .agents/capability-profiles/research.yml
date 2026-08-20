@@ -1,0 +1,33 @@
+schema_version: 1
+task_class: research
+description: "Kaynaklı araştırma/keşif — kod değişikliği yok"
+skills:
+  # Kendisi iş yapmaz: anlar, seçer, brief yazar — bu yüzden salt-okunur
+  # sınır doğru. Devrettiği işin sınıfı devirden SONRA belirlenir.
+  - aurasprime
+  - research-with-evidence
+  - grilling  # opt-in plan sorgusu; dosya yazmaz, read-only sınıra uyar
+  # Okuma-niyetli denetim ("güvenlik açısından incele") bu profile iner
+  # (incele.py P1, PR #43): denetim bulgu üretir, dosya yazmaz — yazma
+  # profili açmadan zorunlu kılınabilmesi için burada kayıtlı olmalı.
+  - security-review
+tools:
+  filesystem: read-only
+  report_path: ".agents/reports/"
+  commands: [gh]
+network:
+  mode: open-web
+  note: "Web araştırması serbest; indirme/çalıştırma yasak"
+# MCP izin sınırı — kayıt: .agents/mcp.yml, üretici: bin/yetki.py
+# Salt-okunur sınıf: kod indeksi + ofis okuma + disposable not defteri.
+# Tarayıcı YOK: tıklama kanıtı yazma işinin gereğidir, araştırmanın değil.
+mcp:
+  - codegraph
+  - agent-ofis
+  - agentmemory
+evidence_required:
+  - cited_sources
+risk:
+  provisional_from: issue_form
+  final_from: diff
+  escalation: upward_only

@@ -1,0 +1,227 @@
+#!/bin/sh
+# Kernel kapısı — doğrulama geçmeden push edilemez.
+# Kurulum: bash bin/install-hooks.sh
+
+# git, kancayi KENDI ortamiyla calistirir: worktree'den push'ta GIT_DIR
+# .git/worktrees/<ad>'a isaret eder (ana depoda hic set edilmez). Bu miras
+# iki ayri sekilde kapiyi yikar — ikisi de KURAL IHLALI OLMADAN:
+#   1. `git rev-parse --show-toplevel` bu ortamda ya patlar ("fatal: this
+#      operation must be run in a work tree") ya da sessizce CWD'yi kok
+#      sanir. Patlarsa ROOT bos kalir ve kapi `/bin/validate.py` arar.
+#   2. Miras ALT SURECLERE gecer: dogrulayicinin gecici depolarda yaptigi
+#      `git add` / `git ls-files` miras alinan depoya yonelir, 128 doner,
+#      kapi bunu "dogrulama basarisiz" diye okur.
+# Cozum ikisinin de kokunu keser: ortami temizle, sonra kesfi normal yoldan
+# yap. git kancayi zaten dogru calisma agacinin tepesinde baslatir, bu
+# yuzden temiz ortamda kesif worktree'nin kendi kokunu verir (ana deponunkini
+# degil — push edilen agac odur). Bulgu 2026-08-07, PR #17.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX \
+      GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+      GIT_NAMESPACE GIT_QUARANTINE_PATH
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -z "$ROOT" ]; then
+  # Kesif basarisiz — kancanin kendi konumundan tureterek son bir dene.
+  # DIKKAT: bu YEDEK yoldur, birincil degil. Kurulu kanca ana deponun
+  # .git/hooks'unda durur; oradan turetilen kok ANA depodur. Worktree
+  # push'unda birincil olarak kullanilsaydi yanlis agac dogrulanirdi.
+  NEDEN=$(git rev-parse --show-toplevel 2>&1 >/dev/null)
+  ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." 2>/dev/null && pwd)
+  if [ -n "$ROOT" ]; then
+    echo "UYARI: depo koku git'ten okunamadi (${NEDEN:-sebep bildirilmedi})."
+    echo "  kanca konumundan turetildi: $ROOT"
+    # Yedek kok, push edilen agac OLMAYABILIR — o zaman secret taramasi
+    # yanlis agaci tarar ve "temiz" der. Bu, kapinin kendi hakkinda
+    # yalan soyleyebilecegi tek yer; sessiz birakilamaz. Calisma dizini
+    # gercek agacin tepesidir (git kancayi orada baslatir), bu yuzden
+    # ayrisma dogrudan sinyaldir.
+    if [ "$ROOT" != "$(pwd)" ]; then
+      echo "  DIKKAT: calisma dizini farkli ($(pwd)) — kapi push edilen"
+      echo "  agaci degil, BASKA bir agaci dogruluyor olabilir. Secret"
+      echo "  taramasinin 'temiz' demesi bu durumda kanit degildir."
+    fi
+  fi
+fi
+if [ -z "$ROOT" ] || [ ! -f "$ROOT/bin/validate.py" ]; then
+  # Bos ROOT sessizce "/bin/validate.py"ye donusurdu; mesaj "arac hatasi"
+  # derdi ama HANGI arac, NEDEN soylemezdi. Yanlis teshis --no-verify
+  # aliskanligi uretir — kapinin kayboldugu an odur.
+  echo "PUSH ENGELLENDI: kernel dogrulamasi KOSAMADI — depo koku cozulemedi."
+  echo "  cozulen kok : ${ROOT:-<bos>}"
+  echo "  aranan dosya: ${ROOT:-}/bin/validate.py"
+  echo "Kural ihlali tespit edilmedi; kapi kor. Kancayi depo icinden calistir"
+  echo "ya da bilincli atla: git push --no-verify"
+  exit 1
+fi
+
+# Yorumlayici secimi: PATH'teki ilk python3 dogru olan olmayabilir.
+# 2026-08-07'de yasandi — Homebrew python3'u 3.13'ten 3.14'e tasidi, yeni
+# yorumlayicida PyYAML yoktu ve kapi "dogrulama BASARISIZ" dedi. Oysa
+# dogrulama basarisiz olmadi, hic KOSAMADI. Ikisi ayni sey degil: biri
+# "kural ihlal edildi", digeri "kural kontrol edilemedi". Kapi ikisini de
+# bloklar (fail-closed dogru davranis) ama dogru olani soylemek zorunda.
+py_uygun() {
+  # Aday GERCEKTEN python mu ve PyYAML tasiyor mu?
+  #
+  # Yalnizca cikis koduna bakmak YETMEZ. Denetim bulgusu 2026-08-07:
+  # `AURAS_PYTHON=/usr/bin/true git push` ile secret'li push kapiyi
+  # SESSIZCE gecti (exit 0, sifir satir cikti) — cunku `true` argumanlari
+  # yok sayip 0 doner ve kapi bunu "dogrulama gecti" diye okur. Cikis kodu,
+  # surec kendi hakkinda yalan soyleyebiliyorsa kanit degildir.
+  # Bu yuzden yetenek CIKTIYLA kanitlanir.
+  [ -n "$1" ] || return 1
+  command -v "$1" >/dev/null 2>&1 || return 1
+  [ "$("$1" -c 'import yaml,sys; sys.stdout.write("AURAS_PY_OK")' 2>/dev/null)" \
+    = "AURAS_PY_OK" ]
+}
+
+PY=""
+if [ -n "${AURAS_PYTHON:-}" ]; then
+  if py_uygun "$AURAS_PYTHON"; then
+    # Override SESSIZ OLAMAZ: kapinin hangi yorumlayiciyla kostugu gorunur
+    # olmali, yoksa .zshrc'ye bir kez yazilip unutulur ve kapi kor kalir.
+    echo "NOT: kernel kapisi AURAS_PYTHON ile kosuyor: $AURAS_PYTHON"
+    PY=$AURAS_PYTHON
+  else
+    echo "PUSH ENGELLENDI: AURAS_PYTHON gecerli bir python3 degil."
+    echo "  verilen: $AURAS_PYTHON"
+    echo "PyYAML tasiyan bir yorumlayici ver ya da degiskeni kaldir."
+    exit 1
+  fi
+fi
+if [ -z "$PY" ]; then
+  for c in python3 python3.13 python3.12 python3.11 /opt/homebrew/bin/python3.13; do
+    if py_uygun "$c"; then
+      PY=$c
+      break
+    fi
+  done
+fi
+if [ -z "$PY" ]; then
+  echo "PUSH ENGELLENDI: kernel dogrulamasi KOSAMADI (arac hatasi)."
+  echo "PyYAML tasiyan python3 bulunamadi — kural ihlali yok, kapi kor."
+  echo "Duzelt: pip3 install pyyaml   ya da: AURAS_PYTHON=<yorumlayici> git push"
+  exit 1
+fi
+
+"$PY" "$ROOT/bin/validate.py"
+KOD=$?
+if [ $KOD -eq 2 ]; then
+  echo ""
+  echo "PUSH ENGELLENDI: kernel dogrulamasi KOSAMADI (arac hatasi, cikis 2)."
+  echo "Kural ihlali tespit edilmedi — dogrulama yapilamadi. Once araci duzelt."
+  exit 1
+elif [ $KOD -ne 0 ]; then
+  echo ""
+  echo "PUSH ENGELLENDI: kernel dogrulamasi basarisiz."
+  echo "Duzeltip tekrar dene; bilincli atlamak icin: git push --no-verify"
+  exit 1
+fi
+
+# Secret kapisi — security-review skill'inin doğrulayıcısı burada zorlanır.
+# Sızan secret geri alınamaz: uzak depoya girdikten sonra iptal etmekten
+# başka çare yok. Bu yüzden push'tan ÖNCE, blocking.
+SCAN="$ROOT/.agents/skills/security-review/scripts/scan_secrets.py"
+if [ ! -f "$SCAN" ]; then
+  # FAIL-CLOSED: tarayici yoksa kapi sessizce kaybolurdu. Guvenlik kapisinin
+  # "yok" hali "gecti" olamaz — eksik kurulum gorunur olmali.
+  echo "PUSH ENGELLENDI: secret tarayicisi bulunamadi ($SCAN)."
+  echo "Kurulumu tamamla (/auras) ya da bilincli atla: git push --no-verify"
+  exit 1
+fi
+# Dislama: skill eval'leri kasitli sahte anahtar tasir (tarayicinin kendi
+# kabul vakasi). Dislama burada gorunur — tarayiciya gomulmez.
+# Cikis: 0 temiz · 1 bulgu · 2 kullanim/kapsam hatasi (hicbir dosya taranmadi).
+# --git: yalnizca git-IZLENEN icerik taranir (git ls-files = index).
+# Calisma agacinin tamami taranirsa .gitignore'lu yerel .env.local push'u
+# bloklar (OICommand'da bizzat yasandi) — kullanici --no-verify aliskanligi
+# edinir, kapi olur.
+# Kapsam INDEX'tir; gecmise (commit araligina) sizan sirri asagidaki
+# scan_gecmis kapisi yakalar — iki tarama birbirinin yerine gecmez:
+# bu, push ANINDAKI icerigi; o, aralikta EKLENEN her satiri gorur.
+if ! "$PY" "$SCAN" --git --exclude '*/eval/*' "$ROOT"; then
+  echo ""
+  echo "PUSH ENGELLENDI: secret kapisi gecilemedi (bkz. yukaridaki cikti)."
+  echo "Temizle ve gecmisi de kontrol et; yanlis pozitifse --no-verify."
+  exit 1
+fi
+
+# Kisisel veri kapisi — AYRI bir boyut, sir taramasinin yerine gecmez.
+# Sir tarayicisi "bu deger bir anahtar mi" diye sorar; bu "bu dosya bir insan
+# listesi mi" diye sorar. 4Flow'da (2026-08-07) users_list.json bulundu:
+# 20 kisinin adi + kurumsal e-postasi. scan_secrets ona "temiz" dedi ve DOGRU
+# davrandi — kapida bu boyut hic yoktu. Olmayan koruma, zayif korumadan
+# tehlikelidir: kullanici korundugunu sanir.
+PII="$ROOT/.agents/skills/security-review/scripts/scan_personal_data.py"
+if [ ! -f "$PII" ]; then
+  # FAIL-CLOSED: tarayici yoksa kapi sessizce kaybolurdu (secret kapisiyla ayni kural).
+  echo "PUSH ENGELLENDI: kisisel veri tarayicisi bulunamadi ($PII)."
+  echo "Kurulumu tamamla (/auras) ya da bilincli atla: git push --no-verify"
+  exit 1
+fi
+if ! "$PY" "$PII" --git --exclude '*/eval/*' "$ROOT"; then
+  echo ""
+  echo "PUSH ENGELLENDI: kisisel veri kapisi gecilemedi (bkz. yukaridaki cikti)."
+  echo "Kisisel veri kod deposunda saklanmaz; gercekten gerekliyse gerekcesiyle"
+  echo ".agents/secret-allowlist.txt'e yaz."
+  exit 1
+fi
+
+# Proje kapisi (opsiyonel uzanti noktasi) — projeye ozel pazarliksiz yasaklar
+# BURADA kosar. Motor yalnizca cagriyi tasir, kurali proje yazar; boylece
+# proje-ozel kural motor dosyasini CATALLAMADAN mekanizmaya baglanir
+# (ADR-0002'nin cozdugu fork sorununun tekrari onlenir).
+# Sozlesme: calistirilabilir olacak, 0 = gecti, 0-disi = push engellenir.
+PROJE_KAPI="$ROOT/bin/hooks/proje-kapisi"
+if [ -e "$PROJE_KAPI" ]; then
+  if [ ! -x "$PROJE_KAPI" ]; then
+    echo "PUSH ENGELLENDI: bin/hooks/proje-kapisi calistirilabilir degil."
+    echo "Duzelt: chmod +x bin/hooks/proje-kapisi"
+    exit 1
+  fi
+  # </dev/null ZORUNLU: git, push edilen ref listesini pre-push'a STDIN ile
+  # verir. Proje kapisi stdin'i okursa o akisi YER ve asagidaki while-read
+  # hicbir ref gormez — ref'e dayanan her politika (ör. "main'e dogrudan
+  # push") sessizce ise yaramaz hale gelir. Denetim bulgusu 2026-08-06.
+  if ! "$PROJE_KAPI" </dev/null; then
+    echo ""
+    echo "PUSH ENGELLENDI: proje kapisi gecilemedi (bkz. yukaridaki cikti)."
+    echo "Bilincli atlamak icin: git push --no-verify"
+    exit 1
+  fi
+fi
+
+# Gecmis (commit araligi) secret kapisi — index taramasinin kor noktasi
+# (bagimsiz inceleme, Codex 2026-08-12): commit A'da eklenip commit B'de
+# silinen sir index'te GORUNMEZ ama iki commit de push'la uzak GECMISE
+# gider ve oradan geri alinamaz. Bu kapi stdin'deki her ref icin
+# remote_sha..local_sha araligindaki EKLENEN satirlari tarar. Yeni dalda
+# (remote_sha 40 sifir) aralik "--not --remotes" olur: uzakta zaten olan
+# yeniden taranmaz. Muafiyet sozlesmesi aynidir (.agents/secret-allowlist.txt).
+GECMIS="$ROOT/.agents/skills/security-review/scripts/scan_gecmis.py"
+if [ ! -f "$GECMIS" ]; then
+  # FAIL-CLOSED: secret/PII kapisiyla ayni kural — "yok" hali "gecti" olamaz.
+  echo "PUSH ENGELLENDI: gecmis secret tarayicisi bulunamadi ($GECMIS)."
+  echo "Kurulumu tamamla (/auras) ya da bilincli atla: git push --no-verify"
+  exit 1
+fi
+SIFIR_SHA=0000000000000000000000000000000000000000
+while read -r _local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main)
+      echo "NOT: dogrudan main'e push ediyorsun (butunluklu is icin PR tercih edilir)."
+      ;;
+  esac
+  # Ref silme push'unda (local_sha sifir) uzaga giden yeni commit yok.
+  [ "$local_sha" = "$SIFIR_SHA" ] && continue
+  if ! "$PY" "$GECMIS" --push-range "$remote_sha" "$local_sha" \
+       --exclude '*/eval/*' "$ROOT"; then
+    echo ""
+    echo "PUSH ENGELLENDI: gecmis secret kapisi gecilemedi (bkz. yukaridaki cikti)."
+    echo "Sir GECMISTE: commit'i yeniden yaz (rebase/amend) ve anahtari dondur;"
+    echo "yanlis pozitifse gerekcesiyle .agents/secret-allowlist.txt."
+    exit 1
+  fi
+done
+
+exit 0

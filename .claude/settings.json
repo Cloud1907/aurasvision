@@ -1,0 +1,149 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/bin/route.py\"",
+            "timeout": 10,
+            "statusMessage": "Skill yönlendirmesi"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/bin/run_event.py\" --kind skill",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/bin/run_event.py\" --kind edit",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/bin/run_event.py\" --kind bash",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__chrome-devtools__click|mcp__chrome-devtools__take_screenshot|mcp__Claude_Browser__computer|mcp__Claude_Code_iOS_Simulator__control",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/bin/run_event.py\" --kind ui",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/bin/run_event.py\" --kind subagent",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/bin/kapi.py\"",
+            "timeout": 20,
+            "statusMessage": "Kanıt kapısı"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/bin/run_event.py\" --kind bash"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Edit(**/.env)",
+      "Read(**/.env.local)",
+      "Edit(**/.env.local)",
+      "Read(**/.env.production)",
+      "Edit(**/.env.production)",
+      "Read(**/.env.development)",
+      "Edit(**/.env.development)",
+      "Read(**/.env.staging)",
+      "Edit(**/.env.staging)",
+      "Read(**/.env.test)",
+      "Edit(**/.env.test)",
+      "Read(**/.env.prod)",
+      "Edit(**/.env.prod)",
+      "Read(**/.env.dev)",
+      "Edit(**/.env.dev)",
+      "Read(**/secrets/**)",
+      "Edit(**/secrets/**)",
+      "Read(**/secret/**)",
+      "Edit(**/secret/**)",
+      "Read(**/credentials/**)",
+      "Edit(**/credentials/**)",
+      "Read(**/credential/**)",
+      "Edit(**/credential/**)",
+      "Read(**/*.pem)",
+      "Edit(**/*.pem)",
+      "Read(**/*.key)",
+      "Edit(**/*.key)",
+      "Read(**/*.p12)",
+      "Edit(**/*.p12)",
+      "Read(**/*.pfx)",
+      "Edit(**/*.pfx)",
+      "Read(**/*.jks)",
+      "Edit(**/*.jks)",
+      "Read(**/*.keystore)",
+      "Edit(**/*.keystore)",
+      "Read(**/id_rsa)",
+      "Edit(**/id_rsa)",
+      "Read(**/id_ed25519)",
+      "Edit(**/id_ed25519)",
+      "Read(**/id_ecdsa)",
+      "Edit(**/id_ecdsa)",
+      "Read(**/id_dsa)",
+      "Edit(**/id_dsa)",
+      "Edit(**/.claude/settings.json)",
+      "Edit(**/.claude/settings.local.json)",
+      "Edit(**/.agents/capability-profiles/**)",
+      "Edit(**/bin/hooks/**)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(chmod 777*)"
+    ]
+  }
+}

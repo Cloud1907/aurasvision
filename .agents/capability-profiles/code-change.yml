@@ -1,0 +1,36 @@
+schema_version: 1
+task_class: code-change
+description: "Contract'lı kod değişikliği — sistemin ana iş sınıfı"
+skills:
+  # Bu küme routing.yml ile CI'da eşleşmek ZORUNDA (validate test_routing):
+  # profil izin sınırıdır, routing o sınır içinden seçim yapar.
+  # aurasprime HER sınıfta izinli: işi kendi yapmaz, dağıtır — sınıfı
+  # devrettiği işten gelir (bkz. skill_kayit.skill_task_class).
+  - aurasprime
+  - implement-change
+  - security-review
+  - kernel-work
+  - designing-interfaces   # görünür yüzey işi de kod değişikliğidir
+  - auras                  # projeyi sisteme bağlamak dosya yazar
+tools:
+  filesystem: workspace-write
+  commands: [test, lint, build, typecheck, gh]
+network:
+  mode: allowlist
+  domains:
+    - api.github.com
+# MCP izin sınırı — kayıt: .agents/mcp.yml, üretici: bin/yetki.py
+# Yazma sınıfı: kod indeksi + tarayıcı (tıklama kanıtı) + ofis.
+# agentmemory YOK: yazma turunda ikinci hafıza otoritesi doğurmasın.
+mcp:
+  - codegraph
+  - chrome-devtools
+  - agent-ofis
+evidence_required:
+  - tests
+  - lint
+  - build
+risk:
+  provisional_from: issue_form
+  final_from: diff
+  escalation: upward_only

@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AurasAgents evidence",
+  "description": "Contract'lı bir koşunun makine kanıtı manifesti. CI üretir; GitHub Checks/artifacts içinde saklanır.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "contract_id",
+    "commit_sha",
+    "generated_at",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "contract_id": {
+      "type": "string",
+      "description": "Issue numarası (ör. 'AURAS-12' veya '#12') ya da contract'sız işte 'micro'"
+    },
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO-8601 UTC"
+    },
+    "task_class": {
+      "enum": [
+        "code-change",
+        "research",
+        "incident",
+        "micro",
+        null
+      ]
+    },
+    "engine": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "skills_used": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "description": "Koşulan deterministik kontroller",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "criterion": {
+            "type": "string",
+            "description": "Doğruladığı EARS kriteri (varsa)"
+          },
+          "run_url": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "digests": {
+      "type": "object",
+      "description": "Kalıcı artifact özetleri — süresi dolan linklere tek başına güvenilmez",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    },
+    "approvals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "by",
+          "at"
+        ],
+        "properties": {
+          "by": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "properties": {
+        "provisional": {
+          "enum": [
+            "auto",
+            "approval",
+            "deny"
+          ]
+        },
+        "final": {
+          "enum": [
+            "auto",
+            "approval",
+            "deny"
+          ]
+        }
+      }
+    },
+    "runner": {
+      "type": "object",
+      "description": "Kanıtı üreten makine. `independent` yalnız github-hosted runner'da true'dur; self-hosted ya da yerel koşumda kanıt üretilir ama BAĞIMSIZ DEĞİLDİR (AGENTS.md kapı tablosu).",
+      "properties": {
+        "environment": {
+          "type": "string",
+          "enum": [
+            "github-hosted",
+            "self-hosted",
+            "local"
+          ]
+        },
+        "independent": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "environment",
+        "independent"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

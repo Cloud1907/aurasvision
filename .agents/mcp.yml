@@ -1,0 +1,149 @@
+# MCP sunucu kaydı — skill'lerle AYNI yönetim.
+#
+# Neden bu dosya var (ölçüm 2026-08-16): 5 MCP sunucusu `~/.claude.json`'da
+# kuruluydu, yani KULLANICININ MAKİNESİNE bağlıydı. Bağlı projeye (`/auras`)
+# hiçbiri gitmiyordu; hangi görev sınıfının hangi sunucuyu kullanabileceği
+# tanımsızdı; profil `network.mode: allowlist` diyordu ama MCP ağ erişiminin
+# ANA yoludur ve profillerde tek satır MCP yoktu. `bin/araclar.py:35` tarayıcı
+# MCP'sini tıklama kanıtı sayıyordu ama o sunucu hiç yapılandırılmamıştı —
+# mimaride var, sistemde yok.
+#
+# Skill'lerin üç katmanı: kanonik kaynak · profil sınırı · bekçi.
+# MCP'nin de aynı üçü olsun:
+#   kanonik kaynak → bu dosya
+#   profil sınırı  → `.agents/capability-profiles/*.yml` `mcp:` alanı
+#   bekçi          → `tests/test_mcp_kaydi.py` + `bin/validate.py`
+#   üretici        → `bin/yetki.py --uygula` → `.mcp.json`
+#
+# Kural tek cümle: **kayıtsız sunucu yapılandırılamaz, profilsiz sunucu
+# kayıtta duramaz.**
+#
+# TAŞINABİLİRLİK: `tasinabilir: false` olan sunucunun başlatma komutu
+# makineye özeldir (mutlak yol) ve bu repo PUBLIC'tir — yol sızdırmayız.
+# Onlar kayıtta DURUR (yönetim ve gerekçe için) ama `.mcp.json`'a ÜRETİLMEZ;
+# kullanıcının kendi global yapılandırmasında kalır. Kayıtta olması
+# "bu sunucu meşru ve şu sınıfta izinli" demektir, "kurulumu biz yapıyoruz"
+# demek değil.
+#
+# KAPSAM DÜRÜSTLÜĞÜ: bu kayıt sunucunun NE OLDUĞUNU ve hangi sınıfta izinli
+# olduğunu söyler. Sunucunun İÇİNDE ne yaptığını denetlemez — bir MCP aracı
+# çağrıldığında ne okuduğu/yazdığı sunucunun kendi sorumluluğudur. Skill
+# içindeki "şu aracı kullan" talimatı da güvenlik sınırı DEĞİLDİR.
+
+schema_version: 1
+
+sunucular:
+  - ad: codegraph
+    tur: yerel
+    amac: >-
+      Kod indeksi: sembol, çağrı grafiği ve dosya haritası. Keşif turlarında
+      onlarca grep/read çağrısının yerine 1-2 çağrı geçer — doğrudan tur
+      maliyeti düşürür. Bu sistemin en yüksek getirili MCP'si.
+    komut: [codegraph, serve, --mcp]
+    tasinabilir: true
+    task_class: [research, code-change, incident]
+    ag: yerel
+    kanit: none
+    not: >-
+      İndeks proje başına kurulur (`.codegraph/`). İndekssiz projede araç
+      hata döner ve ajan grep'e düşer — bozulma değil, düşüş.
+
+  - ad: chrome-devtools
+    tur: yerel
+    amac: >-
+      Tarayıcıda gerçek etkileşim: tıklama, ekran görüntüsü, konsol/ağ
+      kaydı. Görünür yüzey değişikliğinde tur kapısının istediği TIKLAMA
+      KANITINI üreten araç (bkz. bin/araclar.py TARAYICI_MCP).
+    komut: [npx, -y, chrome-devtools-mcp@latest]
+    tasinabilir: true
+    task_class: [code-change, incident]
+    ag: acik
+    kanit: ui
+    not: >-
+      `ag: acik` bilinçli beyandır: tarayıcı tanımı gereği açık ağa çıkar.
+      Bunu "allowlist" diye yazmak yalan olurdu.
+
+  - ad: agent-ofis
+    tur: yerel
+    amac: >-
+      Agent Ofis köprüsü: proje manifesti, run durumu, kalite metrikleri,
+      vault okuma. Orkestrasyon Agent Ofis'te kalır (2026-07-26 kararı);
+      bu sunucu AurasAgents'ın oraya BAKMASINI sağlar, yönetmesini değil.
+    komut: []
+    tasinabilir: false   # makineye özel mutlak yol; repo public, yol sızmaz
+    task_class: [research, code-change, incident]
+    ag: yerel
+    kanit: none
+
+  - ad: agentmemory
+    tur: yerel
+    amac: >-
+      Oturumlar arası not defteri — disposable yerel önbellek. AGENTS.md
+      hafıza hiyerarşisinin 3. KATMANIDIR: hiçbir iş ona bağımlı olamaz,
+      kalıcılaştırma yalnız reviewed PR ile olur. Otorite `AGENTS.md` +
+      `docs/decisions/`, sonra run/PR kayıtları.
+    komut: [npx, -y, "@agentmemory/mcp"]
+    tasinabilir: true
+    task_class: [research]
+    ag: yerel
+    kanit: none
+    not: >-
+      Yalnız `research` sınıfında izinli. Yazma turunda ikinci bir hafıza
+      otoritesi doğurmasın diye daraltıldı — `bin/hatirla.py` kanonik
+      kayıttan okur, bu ondan ayrı bir kanaldır.
+
+  # --- UZAK (OAuth connector) — ADR-0005 ---
+  # Bunlar stdio sunucusu DEĞİL: başlatma komutları yok, yapılandırmaları
+  # oturum düzeyinde yaşar. Motor onları `.mcp.json`'a YAZMAZ; burada yalnız
+  # YÖNETİLİRLER (amaç, sınıf, ağ beyanı, profil sınırı). Kullanım için
+  # kullanıcının interaktif bir oturumda yetkilendirmesi şarttır — ajan
+  # kimlik doğrulama akışını koşamaz ve token istemez.
+
+  - ad: figma
+    tur: uzak
+    amac: 'Tasarım dosyası okuma: bileşen, stil (renk/tipografi/boşluk) ve
+      ekran akışı. Uygulanmış arayüzle tasarımı karşılaştırmayı mümkün kılar —
+      "tasarımda ne yazıyordu" sorusu ekran görüntüsü tahminine kalmaz.'
+    tasinabilir: false
+    task_class: [design]
+    ag: acik
+    kanit: none
+    not: Yetki gerektirir (OAuth). Yetkisizken araçları çağrılamaz; ajan grep
+      ve ekran görüntüsüne düşer — bozulma değil, düşüş.
+
+  - ad: canva
+    tur: uzak
+    amac: 'Pazarlama görseli üretimi ve marka şablonu uygulaması. Sosyal/
+      kampanya varlıklarının elle tasarlanmasının yerine geçer.'
+    tasinabilir: false
+    task_class: [design]
+    ag: acik
+    kanit: none
+    not: Yetki gerektirir (OAuth). Ürettiği varlık ürün artefaktıdır; bu repoya
+      değil, bağlı ürün/pazarlama repo'suna iner (ADR-0005 kapsam notu).
+
+  - ad: nim
+    tur: uzak
+    amac: 'Video ve görsel üretimi (Seedance/Nano Banana Pro/GPT Image 2):
+      b-roll, UGC hook, ürün çekimi, upscale. Pazarlama içeriğinin tek üretim
+      yüzeyi.'
+    tasinabilir: false
+    task_class: [design]
+    ag: acik
+    kanit: none
+    not: Yetki + kredi gerektirir. Kredi bitince araç hata döner; bu bir kapı
+      ihlali DEĞİL ölçüm yokluğudur (AGENTS.md "ölçüm yokluğu ihlal değildir").
+
+
+not_kayitli:
+  - ad: unitask
+    reason: >-
+      Başka bir projeye (UnityApp) ait yerel araç sunucusu; AurasAgents'ın
+      iş alanıyla ilgisi yok. Kayda almak, kullanılmayan bir yüzeyi izin
+      sınırının içine sokmak olurdu. Kullanıcının global kurulumunda kalır;
+      bu repo onu üretmez ve bağlı projeye taşımaz.
+  - ad: claude-in-chrome
+    reason: >-
+      chrome-devtools ile aynı işi kapsıyor (tarayıcı etkileşimi) ama
+      kullanıcının GERÇEK oturumlarına erişir. Tıklama kanıtı için gerekli
+      olan izole tarayıcıdır; oturum erişimi gereksiz yüzey açar.

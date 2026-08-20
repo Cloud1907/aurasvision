@@ -1,0 +1,205 @@
+# Router eval corpus — yönlendirme doğruluğunun ÖLÇÜLEN hâli.
+#
+# Neden var: AGENTS.md skill yayın koşulunu üçe bağlıyor (eval + routing
+# tetiği + profil kaydı) ama `eval/cases.md` dosyaları PROZAYDI ve hiçbir
+# kapı onları koşmuyordu. Üç koşuldan ikisi mekanizmaya bağlıydı, biri
+# değildi. Denetim (2026-08-15) tetikleme uyumunu ölçtü: zorunlu skill
+# üretilen 90 turun yalnız 9'unda yüklendi (%10). Ölçülmeyen kural,
+# kuralın kendisi hakkında hiçbir şey söylemez.
+#
+# Nasıl koşar: `tests/test_routing_eval.py` her vakayı router'dan geçirir.
+# Vaka eklemek serbesttir ve TEŞVİK EDİLİR — ölçülen her yanlış yönlendirme
+# buraya kalıcı vaka olarak girer (regresyon bekçisi).
+#
+# Alanlar:
+#   istek   — router'a verilen ham metin
+#   sinif   — beklenen task_class
+#   skill   — beklenen ZORUNLU skill (null = zorunluluk olmamalı)
+#   ek      — bu skill ek/öneri listesinde OLMALI (opsiyonel)
+#   neden   — vakanın niye burada olduğu (ölçüm/bulgu atfı)
+
+schema_version: 1
+
+vakalar:
+  # --- Türkçe: iş emri, mutasyon doğrulanmış ---
+  - istek: "login endpointine rate limit ekle"
+    sinif: code-change
+    skill: implement-change
+    neden: "temel iş emri — pozitif emir eki, alan adı"
+
+  - istek: "şu yazım hatasını düzelt"
+    sinif: code-change
+    skill: implement-change
+    neden: "mikro iş de yazma sınıfıdır"
+
+  - istek: "auth akışını değiştirmemiz gerekiyor"
+    sinif: code-change
+    skill: implement-change
+    ek: security-review
+    neden: "-mA fiil-ismi + gerek → mutasyon; auth → risk yüzeyi"
+
+  # --- Türkçe: salt-okunur, yazma sınıfına ÇIKMAMALI ---
+  - istek: "router ve kanıt kapılarını eleştirel incele"
+    sinif: research
+    skill: research-with-evidence
+    neden: "2026-08-12: alan adları yüzünden code-change/approval oluyordu"
+
+  - istek: "login akışının güvenlik analizini yap"
+    sinif: research
+    skill: security-review
+    neden: "birleşik fiil — anlamı ad taşır, 'yap' yardımcıdır (6. tur)"
+
+  - istek: "auth akışını güvenlik açısından incele"
+    sinif: research
+    skill: security-review
+    neden: "okuma niyetli denetim salt-okunur profile iner (PR #43)"
+
+  - istek: "kod tabanında bu metrik nasıl hesaplanıyor"
+    sinif: research
+    skill: research-with-evidence
+    neden: "keşif sorusu — yazma yetkisi doğurmaz"
+
+  # --- Gömülü soru: iş emrini SESSİZCE düşürmemeli (M16) ---
+  - istek: >-
+      Bu repodaki skill yapısı son hâline yakın mı? Kapsamlı biçimde incele
+      ve her bulguyu dosya:satır kanıtıyla raporla.
+    sinif: research
+    skill: research-with-evidence
+    neden: >-
+      2026-08-15 ölçümü: aynı iş emri, gömülü tek soru cümlesi yüzünden
+      zorunlu skill'i KAYBEDİYORDU. Soru ölçüsü son cümleye demirlendi.
+
+  - istek: "raporu yaz ve bana bunun doğru olduğunu söyle"
+    sinif: code-change
+    skill: implement-change
+    neden: "yazma emri, içinde 'doğru' geçiyor diye soru sayılmamalı"
+
+  # --- Saf soru: zorunluluk dayatılmamalı ---
+  - istek: "bu sistem nasıl çalışıyor?"
+    sinif: research
+    skill: null
+    neden: "soru turu — zorunlu skill dayatmak approval gürültüsü üretir"
+
+  - istek: "hafıza tarafı başarılı mı?"
+    sinif: research
+    skill: null
+    neden: "2026-08-07: 12+ tur yanlış sınıflandı, soru → code-change oluyordu"
+
+  # --- İngilizce: cross-engine iddiasının karşılığı (M9) ---
+  - istek: "review the security of the login endpoint"
+    sinif: research
+    skill: security-review
+    neden: >-
+      2026-08-15 ölçümü: implement-change + code-change/approval alıyordu;
+      salt-okunur inceleme YAZMA sınıfına giriyor, security-review hiç
+      seçilmiyordu — güvenlik false-negative'i.
+
+  - istek: "add rate limiting to the login endpoint"
+    sinif: code-change
+    skill: implement-change
+    neden: "İngilizce iş emri — 'review' vakasından ayrılabilmeli"
+
+  - istek: "where is the routing table defined and how does it work"
+    sinif: research
+    skill: research-with-evidence
+    neden: "2026-08-15: hiçbir skill seçilmiyordu"
+
+  - istek: "audit the permission model"
+    sinif: research
+    skill: research-with-evidence
+    neden: "İngilizce denetim isteği"
+
+  - istek: "refactor the event writer"
+    sinif: code-change
+    skill: implement-change
+    neden: "İngilizce refactor iş emri"
+
+  # --- Belirsiz niyet: yazma YETKİSİ vermemeli (M16) ---
+  - istek: "endpoint"
+    sinif: research
+    skill: null
+    neden: >-
+      Yalnız alan adı eşleşmesi — doğrulanmış mutasyon yok. Sınıf salt-okunur
+      iner ve yazma skill'i o profilde izinli olmadığı için ZORUNLU kılınmaz:
+      izin sınırını tek kelimeye bağlamak, sınırı kelimeye teslim ederdi.
+
+  - istek: "migration dosyaları"
+    sinif: research
+    skill: null
+    ek: security-review
+    neden: >-
+      Alan adı var, doğrulanmış mutasyon yok → yazma yetkisi verilmez.
+      Risk yüzeyi önerisi (always_add) yine de görünür kalır.
+
+  # --- Anma (alıntı): kullanıcının emri değil ---
+  - istek: "router çıktısındaki 'kodu düzelt' ifadesini incele"
+    sinif: research
+    skill: research-with-evidence
+    neden: "5. tur: anılan emir niyet değildir"
+
+  - istek: "'auth açığını düzelt' ve yaptıklarını raporla"
+    sinif: code-change
+    skill: implement-change
+    neden: "7. tur: kullanıcı KENDİ emrini tırnaklayabilir — o yazmadır"
+
+  # --- Olay sınıfı: eskalasyon, sayı yarışı değil ---
+  - istek: "prod çöktü, düzelt ve uygula"
+    sinif: incident
+    skill: implement-change
+    neden: "PR #40: genel fiiller sınıfı düşüremez"
+
+  - istek: "canlıda hata var acil müdahale lazım"
+    sinif: incident
+    skill: implement-change
+    neden: "olay ifadesi tetikler"
+
+  # --- Risk yüzeyi: always_add çalışmalı ---
+  - istek: "token yenileme akışını yaz"
+    sinif: code-change
+    skill: implement-change
+    ek: security-review
+    neden: "always_add risk yüzeyi kuralı"
+
+  - istek: "ödeme sağlayıcısını değiştir"
+    sinif: code-change
+    skill: implement-change
+    ek: security-review
+    neden: "ödeme yüzeyi"
+
+  # --- Negatif: olumsuz emir yazma sayılmamalı ---
+  - istek: "kod yazma, sadece planı anlat"
+    sinif: research
+    skill: null
+    neden: "olumsuz emir ('yazma') mutasyon işareti DEĞİLDİR"
+
+  # --- Kernel işi kendi skill'ine gitmeli ---
+  - istek: "router'a yeni bir bekçi testi ekle"
+    sinif: code-change
+    skill: kernel-work
+    neden: "kernel yüzeyi — specificity implement-change'i yener"
+
+  - istek: "capability profiline yeni skill ekle"
+    sinif: code-change
+    skill: kernel-work
+    neden: "profil kernel işidir"
+
+  # --- Tasarım işi ---
+  - istek: "dashboard ekranını premium görünecek şekilde tasarla"
+    sinif: code-change
+    skill: designing-interfaces
+    neden: "görünür yüzey tasarımı"
+
+  # --- Kurulum ---
+  - istek: "bu projeyi sisteme bağla"
+    sinif: code-change
+    skill: auras
+    neden: "onboarding tek akış (M7)"
+
+  # --- Açık komut her şeyi yener ---
+  - istek: "/grilling planı netleştirelim"
+    sinif: research
+    skill: grilling
+    komut: grilling
+    neden: >-
+      Açık komut kelime puanlamasını EZER ve kendi sentetik kuralını üretir;
+      sınıf profilden gelir (grilling salt-okunur).

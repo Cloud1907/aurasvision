@@ -10,6 +10,13 @@ paths = [
     '''data/videos/.*''',       # demo videolar (ikili içerik, yanlış pozitif üretir)
     '''\.venv/.*''',
     '''output/.*''',
+    # AurasAgents kernel dosyaları — sır değil, kapının kendi malzemesi.
+    # Manifest yalnız sha256 ÖZETİ taşır; generic-api-key kuralı uzun hex'i
+    # anahtar sanıyor (4cast: 7 yanlış pozitif, CI bir haftadan uzun kırmızı).
+    '''\.agents/\.kernel-manifest\.json''',
+    # Skill eval fixture'ları KASITLI sahte anahtar taşır — tarayıcının kendi
+    # kabul vakaları (4Flow: stripe-access-token @ security-review/eval/cases.md).
+    '''\.agents/skills/.*/eval/.*''',
 ]
 # Belgelerdeki ÖRNEK adresler (gerçek kimlik bilgisi değil, yer tutucu):
 regexes = [
