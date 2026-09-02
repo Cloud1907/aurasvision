@@ -214,3 +214,31 @@ face:
                          # kompaktlanır, yine aşarsa en az görülenler canlı taramadan emekliye
                          # ayrılır (final sayıma yine girerler)
   track_timeout_seconds: 2.0   # nvdec: yüz bu kadar sn görünmezse track kapanır (tek olay yazılır)
+
+fire:
+  # YANGIN/DUMAN ERKEN UYARI — sertifikalı yangın alarm sistemi DEĞİLDİR.
+  # Video tabanlı tespit EN 54 kapsamında değil; mevcut yangın sistemini
+  # TAMAMLAR, yerine geçmez. Gerekçe: src/fire.py başlığı.
+
+  # Genel amaçlı YOLO ağırlığı BU İŞİ YAPMAZ (COCO'da duman sınıfı yok).
+  # Eğitim/indirme: docs/yangin-modeli.md. Model yoksa hat AÇIK HATA verir,
+  # sessizce sıfır olay üretmez.
+  model: models/fire.pt
+  conf: 0.35            # tespit güven eşiği (tek başına alarm ANLAMINA GELMEZ)
+  imgsz: 640
+  vid_stride: 3         # her N karede bir işle
+
+  # ── Zamansal doğrulama — hattın asıl değeri burada ──
+  # Ölçüm: FIA/BRE bağımsız testinde video duman dedektörleri tek karede
+  # ortalama %58 (benzer renkli arka planda %52) başarı gösterdi; SmokeyNet'in
+  # baseline'ları geçme sebebi uzam-ZAMANSAL bilgi. Tek kare asla alarm olamaz.
+  window_seconds: 6.0   # doğrulama penceresi
+  confirm_frames: 4     # pencere içinde aynı odağı doğrulaması gereken kare sayısı
+  iou_link: 0.2         # kareler arası "aynı odak" sayılma eşiği
+  alarm_seconds: 3.0    # ön uyarı bu kadar SÜRERSE alarma yükselir
+  cooldown_seconds: 120 # süren yangın bu aralıkla hatırlatılır (spam değil, sessizlik de değil)
+  clip_seconds: 4.0     # kanıt klibi uzunluğu
+
+  # Bölgeler DB'den gelir (zones tablosu): kind='fire' izleme alanı (tanımlıysa
+  # yalnız içi değerlendirilir), kind='firemask' maske (kaynak makinesi, egzoz,
+  # güneş vuran pencere). ISO/TS 7240-30 kurulum standardının karşılığı.

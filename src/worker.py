@@ -45,6 +45,24 @@ def _saved_intrusions(store, camera_id: str) -> list[dict]:
             if z["kind"] == "intrusion" and len(z["points"] or []) >= 3]
 
 
+def _saved_fire_zones(store, camera_id: str) -> tuple[list[dict], list[dict]]:
+    """(izleme alanları, maskeler) — kind='fire' / 'firemask'.
+
+    Maske ISO/TS 7240-30'un karşılığıdır: kaynak makinesi, egzoz bacası veya
+    güneş vuran pencere maskelenmezse hat yanlış alarm üretir ve operatör
+    uyarılara bakmayı bırakır — sessiz sistemden daha kötüsü budur.
+    """
+    izleme, maske = [], []
+    for z in store.list_zones(camera_id):
+        if len(z.get("points") or []) < 3:
+            continue
+        if z["kind"] == "fire":
+            izleme.append({"name": z.get("name") or "Izleme alani", "points": z["points"]})
+        elif z["kind"] == "firemask":
+            maske.append({"name": z.get("name") or "Maske", "points": z["points"]})
+    return izleme, maske
+
+
 def _nvdec_kullanilabilir() -> str:
     """GPU hattı gerçekten çalışır mı — çalışmıyorsa NEDENİNİ döndürür ("" = çalışır).
 
@@ -72,6 +90,45 @@ def _nvdec_kullanilabilir() -> str:
     return ""
 
 
+def _gorevleri_kos(cid: str, source: str, cfg, bstore, tasks: dict, lines,
+                   ihlaller, fire_izleme, fire_maske) -> bool:
+    """Kameranın açık görevlerini sırayla koşar; bir iş yapıldıysa True döner.
+
+    `_run_camera`den ayrı durur: o fonksiyon döngü/tazeleme/hata politikasını
+    taşıyor, burası yalnız görev dağıtımı — yeni bir analiz hattı eklemek
+    döngü mantığına dokunmadan mümkün olsun.
+    """
+    yapildi = False
+    if tasks.get("count"):
+        _STAGE[cid] = "count"
+        from .count import run_count
+        run_count(source, cfg, store=bstore, camera_id=cid, lines=lines,
+                  intrusions=ihlaller)
+        yapildi = True
+    if tasks.get("fire"):
+        _STAGE[cid] = "fire"
+        from .fire import run_fire
+        run_fire(source, cfg, store=bstore, camera_id=cid,
+                 bolgeler=fire_izleme, maskeler=fire_maske)
+        yapildi = True
+    if tasks.get("plate"):
+        _STAGE[cid] = "plate"
+        from .plate import run_plate
+        run_plate(source, cfg, store=bstore, camera_id=cid)
+        yapildi = True
+    if tasks.get("face"):
+        _STAGE[cid] = "face"
+        from .face import run_face
+        rstore = open_store(cfg)
+        try:
+            watch = rstore.faces_with_embedding()
+        finally:
+            rstore.close()
+        run_face(source, cfg, store=bstore, camera_id=cid, watch=watch)
+        yapildi = True
+    return yapildi
+
+
 def _run_camera(cam: dict, cfg, bus) -> None:
     cid = cam["id"]
     source = cam["source"]
@@ -95,33 +152,16 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             akis.kaydet(fresh.get("source") or source, fresh.get("http_headers") or "")
             tasks = fresh.get("tasks") or {}
             ihlaller = _saved_intrusions(rstore, cid)
+            fire_izleme, fire_maske = _saved_fire_zones(rstore, cid)
             cizgiler = _saved_lines(rstore, cid)
             # İhlal alanı varken çizgi yoksa [] geçilir: None config varsayılanına düşerdi
             lines = cizgiler or ([] if ihlaller else None)
         finally:
             rstore.close()
 
-        did_work = False
         try:
-            if tasks.get("count"):
-                _STAGE[cid] = "count"
-                from .count import run_count
-                run_count(source, cfg, store=bstore, camera_id=cid, lines=lines,
-                          intrusions=ihlaller)
-                did_work = True
-            if tasks.get("plate"):
-                _STAGE[cid] = "plate"
-                from .plate import run_plate
-                run_plate(source, cfg, store=bstore, camera_id=cid)
-                did_work = True
-            if tasks.get("face"):
-                _STAGE[cid] = "face"
-                from .face import run_face
-                rstore = open_store(cfg)
-                watch = rstore.faces_with_embedding()
-                rstore.close()
-                run_face(source, cfg, store=bstore, camera_id=cid, watch=watch)
-                did_work = True
+            did_work = _gorevleri_kos(cid, source, cfg, bstore, tasks,
+                                      lines, ihlaller, fire_izleme, fire_maske)
             _STAGE[cid] = "idle"
         except Exception as e:
             _STAGE[cid] = f"error: {e}"
