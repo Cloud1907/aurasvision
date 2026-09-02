@@ -221,8 +221,13 @@ def _ascii(s: str) -> str:
     return (s or "").translate(str.maketrans("çğıİöşüÇĞÖŞÜ", "cgiIosuCGOSU"))
 
 
-def _kaynak_olculeri(source: str, cfg) -> tuple[int, int, float]:
-    """Kaynağı bir kez açıp (genişlik, yükseklik, fps) okur ve kapatır."""
+def _kaynak_ac(source: str, cfg):
+    """Akışı açar ve açık bırakır; (cap, genişlik, yükseklik, fps) döndürür.
+
+    Akışı KENDİMİZ açıyoruz (ultralytics'in kendi çözücüsüne devretmiyoruz):
+    kamera başına HTTP başlıkları `akis.ac` üzerinden doğru uygulanıyor ve
+    kare temposunu biz kontrol ediyoruz.
+    """
     import cv2
 
     from . import akis
@@ -230,12 +235,10 @@ def _kaynak_olculeri(source: str, cfg) -> tuple[int, int, float]:
     cap = akis.ac(source, cfg)
     if not cap.isOpened():
         raise FileNotFoundError(f"Video açılamadı: {source}")
-    try:
-        return (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                cap.get(cv2.CAP_PROP_FPS) or 25.0)
-    finally:
-        cap.release()
+    return (cap,
+            int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            cap.get(cv2.CAP_PROP_FPS) or 25.0)
 
 
 def _takip_kur(cfg, w: int, h: int, bolgeler, maskeler) -> DumanTakip:
@@ -250,15 +253,18 @@ def _takip_kur(cfg, w: int, h: int, bolgeler, maskeler) -> DumanTakip:
     )
 
 
-def _tespitler(r) -> list[tuple]:
-    """Ultralytics sonucunu (sinif, x1, y1, x2, y2, conf) listesine çevirir."""
-    if r.boxes is None or not len(r.boxes):
-        return []
-    adlar = r.names or {}
-    return [(adlar.get(int(cid), str(cid)), *kutu, c)
-            for kutu, cid, c in zip(r.boxes.xyxy.tolist(),
-                                    r.boxes.cls.int().tolist(),
-                                    r.boxes.conf.tolist())]
+def _dedektor_kur(cfg):
+    """Lisans kapısından geçmiş dedektörü kurar (varsayılan: Apache-2.0)."""
+    from .dedektor import VARSAYILAN_MOTOR, yukle
+
+    ham = cfg.get("fire.classes", {0: "smoke", 1: "fire"}) or {}
+    adlar = {int(k): str(v) for k, v in dict(ham).items()}
+    return yukle(motor=cfg.get("fire.engine", VARSAYILAN_MOTOR),
+                 model=str(model_yolu(cfg.get("fire.model", "models/fire.pt"))),
+                 adlar=adlar,
+                 esik=float(cfg.get("fire.conf", 0.35)),
+                 agpl_kabul=bool(cfg.get("fire.agpl_kabul", False)),
+                 device_pref=cfg.get("device", "auto"))
 
 
 def _alarm_kanitla(cfg, olay: dict, kare, halka, camera_id: str,
@@ -274,16 +280,16 @@ def _alarm_kanitla(cfg, olay: dict, kare, halka, camera_id: str,
                                fps=efektif_fps)
 
 
-def _tahmin_ayarlari(cfg, vid_stride: int) -> dict:
-    """Ultralytics predict parametreleri. `.pt` + device=auto bilinçli tercih:
-    TensorRT `.engine` GPU mimarisine özgüdür, GB10'da üretilen 3050'de yüklenmez
-    (docs/yangin-modeli.md)."""
-    from .device import select_device
+def _ciz(kare, tespitler) -> Any:
+    """Canlı görünüm için tespitleri kareye çizer (ultralytics plot yerine)."""
+    import cv2
 
-    return {"conf": float(cfg.get("fire.conf", 0.35)),
-            "imgsz": int(cfg.get("fire.imgsz", 640)),
-            "vid_stride": vid_stride,
-            "device": select_device(cfg.get("device", "auto"))}
+    img = kare.copy()
+    for sinif, x1, y1, x2, y2, conf in tespitler:
+        cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 165, 255), 2)
+        cv2.putText(img, f"{_ascii(sinif)} {conf:.2f}", (int(x1), max(14, int(y1) - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+    return img
 
 
 def run_fire(source: str, cfg, store=None, camera_id: str = "",
@@ -295,43 +301,39 @@ def run_fire(source: str, cfg, store=None, camera_id: str = "",
     `bolgeler` / `maskeler`: normalize poligonlar (zones tablosundan; kind
     'fire' ve 'firemask'). Bölge verilmezse tüm kadraj izlenir.
     """
-    from . import akis
-    from .detect import load_yolo
-
-    model = str(model_yolu(cfg.get("fire.model", "models/fire.pt")))
-    vid_stride = int(cfg.get("fire.vid_stride", cfg.get("detect.vid_stride", 3)))
+    vid_stride = max(1, int(cfg.get("fire.vid_stride",
+                                    cfg.get("detect.vid_stride", 3))))
     camera_id = camera_id or Path(source).stem
-    w, h, fps = _kaynak_olculeri(source, cfg)
+    ded = _dedektor_kur(cfg)
+    cap, w, h, fps = _kaynak_ac(source, cfg)
     takip = _takip_kur(cfg, w, h, bolgeler, maskeler)
 
     # İşlenen kare temposu — klip halkasının uzunluğu buna göre hesaplanır
-    efektif_fps = max(1.0, fps / max(vid_stride, 1))
+    efektif_fps = max(1.0, fps / vid_stride)
     halka: deque = deque(maxlen=max(2, int(cfg.get("fire.clip_seconds", 4.0)
                                            * efektif_fps)))
-
-    yolo = load_yolo(model, cfg.get("device", "auto"), instance_key=camera_id)
-    basliklar = akis.basliklarla(source, cfg)
-    basliklar.__enter__()
     sonuc = FireResult(fps=fps)
+    ham_idx = 0
     try:
-        for r in yolo.predict(source=source, stream=True, verbose=False,
-                              **_tahmin_ayarlari(cfg, vid_stride)):
-            if should_stop is not None and should_stop():
+        while should_stop is None or not should_stop():
+            okundu, kare = cap.read()
+            if not okundu:
                 break
+            ham_idx += 1
+            if ham_idx % vid_stride:
+                continue          # stride: her N karede bir analiz
             sonuc.frames += 1
-            kare = r.orig_img
-            if kare is not None:
-                halka.append(kare.copy())
-            ts = (sonuc.frames * vid_stride) / fps
-            for olay in takip.guncelle(_tespitler(r), ts):
+            halka.append(kare.copy())
+            tespitler = ded.tespit(kare)
+            for olay in takip.guncelle(tespitler, ham_idx / fps):
                 olay["camera_id"] = camera_id
-                olay["frame_idx"] = sonuc.frames * vid_stride
+                olay["frame_idx"] = ham_idx
                 _yay(cfg, olay, sonuc, kare, halka, camera_id, efektif_fps,
                      store, on_event, on_alert)
-            if on_frame is not None and kare is not None:
-                on_frame(r.plot())
+            if on_frame is not None:
+                on_frame(_ciz(kare, tespitler))
     finally:
-        basliklar.__exit__()
+        cap.release()
         if store is not None:
             store.commit()
     return sonuc
