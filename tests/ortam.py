@@ -15,7 +15,6 @@ Doğru davranış iki katmanlıdır ve biri diğerinin yerine geçmez:
      Atlama tek başına yetmez: exit 0 veren eksik süit CI'da "geçti" diye
      okunur, oysa "koşmadı" ile "geçti" aynı şey değildir.
 """
-import importlib.util
 import os
 import shutil
 import subprocess
@@ -41,72 +40,6 @@ PYYAML_EKSIK = (
 
 #: Sınıf ya da metot üstünde: @pyyaml_gerekir
 pyyaml_gerekir = unittest.skipUnless(yaml is not None, PYYAML_SEBEP)
-
-
-# --- pytest-native modüller için koşullu atlama -----------------------------
-# `unittest.skipUnless` TestCase OLMAYAN sınıfta ETKİSİZDİR: pytest
-# `__unittest_skip__` bayrağını yalnız TestCase alt sınıflarında okur. Ölçüm
-# 2026-09-02: düz bir sınıfa konan `@unittest.skipUnless(False, ...)` altındaki
-# test atlanmadı, KOŞTU ve kırmızı verdi. Yani pytest-native bir modülde
-# (`tests/test_birim.py`) yalnız unittest kancasına güvenmek, atladığını sanan
-# ama koşan bir test üretir — sahte yeşilin tersi, sahte kırmızı.
-try:
-    import pytest
-except ImportError:                 # kernel süiti unittest ile koşar
-    pytest = None
-
-
-def gerekir(kosul, sebep):
-    """Koşullu atlama dekoratörü — hem unittest hem pytest koşucusu için.
-
-    Atlama SİLME değildir: test sayıda `skipped` olarak kalır ve `sebep`
-    neyin koşmadığını adıyla söyler. İki bayrak birden takılır, çünkü modülü
-    hangi koşucunun toplayacağı dosyanın kendi meselesi değildir; her koşucu
-    kendi tanıdığı bayrağı görür.
-    """
-    ut = unittest.skipUnless(kosul, sebep)
-    if pytest is None:
-        return ut
-    pt = pytest.mark.skipif(not kosul, reason=sebep)
-    return lambda hedef: pt(ut(hedef))
-
-
-def _kurulu(ad):
-    """Modül KURULU mu — import ETMEDEN (find_spec).
-
-    İçe aktarmıyoruz: yoklamanın kendisi `import cv2` maliyetini (yüz
-    milisaniyelerce) `ortam`ı import eden HER kernel testine yıkardı. Soru
-    "bu bağımlılık var mı", "yüklensin mi" değil.
-    """
-    try:
-        return importlib.util.find_spec(ad) is not None
-    except (ImportError, ValueError):   # bozuk/namespace paket → yok say
-        return False
-
-
-# `src/server.py` modül tepesinde cv2 + fastapi + pydantic import eder; biri
-# eksikse `from src.server import ...` çöker ve o satırı taşıyan test modülü
-# TÜMÜYLE süitten düşer. 2026-09-02 ölçümü, sistem python3'ü: test_birim
-# import'ta çöktü, `bin/validate.py` iki hata verdi ve pytest'in topladığı
-# 93 test o yorumlayıcıda hiç görünmedi. Ölçüt "cv2 var mı" DEĞİL "sunucu
-# import edilebilir mi"dir: üçünden biri eksikken sonuç aynıdır, o yüzden
-# yalnız cv2'ye bakan bir kapı fastapi'siz makinede yine çökerdi.
-SUNUCU_MODULLERI = ("cv2", "fastapi", "pydantic")
-_SUNUCU_EKSIK = tuple(m for m in SUNUCU_MODULLERI if not _kurulu(m))
-SUNUCU_VAR = not _SUNUCU_EKSIK
-SUNUCU_SEBEP = ("web sunucusu bağımlılığı eksik ({}) — src.server import "
-                "edilemiyor, bu test onsuz anlamsız "
-                "(pip install -r requirements.txt)"
-                .format(", ".join(_SUNUCU_EKSIK) or "yok"))
-
-# cv2'yi doğrudan (monkeypatch ederek) kullanan testler için ayrı kapı: sunucu
-# yığınının tamamı gerekmez, tek başına OpenCV yeter.
-CV2_SEBEP = ("OpenCV (cv2) yok — bu test kare okuma yolunu taklit ediyor, "
-             "cv2 olmadan anlamsız (pip install opencv-python)")
-
-#: Sınıf ya da metot üstünde: @sunucu_gerekir / @cv2_gerekir
-sunucu_gerekir = gerekir(SUNUCU_VAR, SUNUCU_SEBEP)
-cv2_gerekir = gerekir(_kurulu("cv2"), CV2_SEBEP)
 
 
 # --- modül düzeyinde atlamanın TEK meşru kaydı ------------------------------

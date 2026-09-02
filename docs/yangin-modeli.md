@@ -27,13 +27,41 @@ sahasına değil. Sahanın verisi ise hat çalışmadan toplanamaz — yani eği
 mantıken hattın SONRASINA düşer. Genel yangın görüntüsü eklemek, o sahanın
 kaynak makinesini duman sanmayı düzeltmez.
 
-## Aday hazır modeller
+## Mimari kararı: RF-DETR (Apache-2.0)
 
-| Aday | Lisans | Biçim | Sınıf | Uygunluk |
-|---|---|---|---|---|
-| [pedbrgs/Fire-Detection](https://github.com/pedbrgs/Fire-Detection) | MIT (repo) | YOLOv5s/l, YOLOv4 ağırlıkları + `scripts/download_models.sh` | alev + duman | **En yakın aday** — D-Fire dahil eğitilmiş, DETEKTÖR. Ağırlıkların kendi lisansı repo README'sinde ayrıca yazılı değil; kullanmadan önce teyit gerekir |
-| [pyronear/yolo11s_colorful-chameleon_v3.0.0](https://huggingface.co/pyronear/yolo11s_colorful-chameleon_v3.0.0) | Apache-2.0 | `.pt`, ONNX, NCNN, TorchScript | **tek sınıf: duman** | Açık saha/uzak duman kolonu. Kapalı mekânda zayıf; `fire.imgsz` 1024 olmalı |
-| [prithivMLmods/Fire-Detection-Engine](https://huggingface.co/prithivMLmods/Fire-Detection-Engine) | Apache-2.0 | ViT | 3 sınıf | **KULLANILAMAZ** — sınıflandırıcı, kutu üretmez. Hattımız IoU bağlama ve kanıt çerçevesi için kutu ister. "Hazır ama yanlış biçim"in örneği |
+Ultralytics YOLO **AGPL-3.0**'dır ve AGPL, modeli sunucu arkasında sunmayı da
+dağıtım sayar — AurasVision tam olarak budur. Kapalı kaynak ticari üründe bu,
+ya tüm kaynağı açmayı ya Enterprise lisansı gerektirir. Ürün adını değiştirmek
+bunu çözmez: yükümlülük markadan değil, çalışma anında import edilen koddan
+doğar.
+
+Seçilen: **[RF-DETR](https://github.com/roboflow/rf-detr)** (Roboflow, ICLR 2026).
+
+| Ölçüt | Neden RF-DETR |
+|---|---|
+| Lisans | **N / S / M / L detection = Apache-2.0**; ücret yok, copyleft yok. `rfdetr` paketinin **ultralytics bağımlılığı yok** (doğrulandı 2026-09-02) |
+| Duman ↔ buhar ayrımı | DINOv2 omurga küresel bağlam modelliyor. Dumanı buhardan/tozdan ayırmak yerel doku değil BAĞLAM işidir; kapalı/kısmen örtülü nesnede CNN'lerden belirgin üstün |
+| Fine-tune | Roboflow'un açık tasarım hedefi "designed for fine-tuning". Sahadan zor negatif toplayıp yeniden eğitme döngümüzün tam ihtiyacı |
+| Doğruluk | COCO'da 60 mAP'ı geçen ilk gerçek-zamanlı model ailesi; RF-DETR-L 56.5 AP @ 6.8 ms (T4, TensorRT FP16) |
+| Donanım | N (30.5M par., 384×384) → L. PyTorch; CUDA / MPS / CPU. RTX 3050 için N veya S |
+
+> **UYARI — PML katmanına dokunma.** RF-DETR **XL ve 2XL** detection modelleri
+> ve `rfdetr_plus` uzantısı **PML 1.0** lisanslıdır, Apache değildir.
+> `src/dedektor.py:LISANSLAR` tablosuna bilinçli olarak alınmadılar; tabloda
+> olmayan motor yüklenemez.
+
+### Lisans kapısı koda gömüldü
+
+`fire.engine` varsayılanı `rfdetr`'dir. AGPL motor ancak `fire.agpl_kabul: true`
+ile yüklenir (`src/dedektor.py:lisans_kapisi`, testi `tests/test_dedektor.py`).
+Böylece lisans kararı config.yaml'da GÖRÜNÜR ve denetlenebilir olur — import
+zincirinde kazayla oluşamaz.
+
+### Devredeki borç
+
+`count`, `plate` ve `face` hatları hâlâ Ultralytics üstündedir
+(`src/detect.py`, `src/gpu_engine.py`). Yangın hattı bağımsızdır; diğer üçünün
+taşınması ayrı ve ölçülmüş bir iştir.
 
 ## Kabul ölçütü — hangi model YETERLİ
 

@@ -220,10 +220,21 @@ fire:
   # Video tabanlı tespit EN 54 kapsamında değil; mevcut yangın sistemini
   # TAMAMLAR, yerine geçmez. Gerekçe: src/fire.py başlığı.
 
-  # Genel amaçlı YOLO ağırlığı BU İŞİ YAPMAZ (COCO'da duman sınıfı yok).
+  # ── Dedektör motoru — LİSANS KARARI, performans tercihi değil ──
+  # rfdetr      Apache-2.0 (RF-DETR N/S/M/L). Ticari kullanımda serbest,
+  #             ödeme yok, kaynak açma yükümlülüğü yok. VARSAYILAN.
+  #             DİKKAT: RF-DETR XL/2XL PML 1.0'dır ve desteklenmez.
+  # ultralytics AGPL-3.0. Kapalı kaynak üründe ya tüm kaynağı açmayı ya
+  #             Enterprise lisansı gerektirir; AGPL sunucu arkasında sunmayı
+  #             da dağıtım sayar. Yalnız geliştirme/karşılaştırma için.
+  engine: rfdetr
+  agpl_kabul: false   # true yapmadan AGPL motor YÜKLENMEZ (src/dedektor.py kapısı)
+
+  # Genel amaçlı ağırlık BU İŞİ YAPMAZ (COCO'da duman sınıfı yok).
   # Eğitim/indirme: docs/yangin-modeli.md. Model yoksa hat AÇIK HATA verir,
   # sessizce sıfır olay üretmez.
   model: models/fire.pt
+  classes: {0: smoke, 1: fire}   # D-Fire sınıf sırası
   conf: 0.35            # tespit güven eşiği (tek başına alarm ANLAMINA GELMEZ)
   imgsz: 640
   vid_stride: 3         # her N karede bir işle
