@@ -41,7 +41,7 @@ Model seçimi zevk meselesi değil; `src/fire.py`'deki zamansal doğrulama
 sayısal bir eşik dayatıyor. Varsayılan yapılandırmada (25 fps kaynak,
 `vid_stride 3`, 6 sn pencere, 4 kare onay) pencereye **50 işlenmiş kare**
 sığıyor ve %95 olasılıkla onay için **kare-başına recall ≥ %15** gerekiyor
-(`src/fire.py:gereken_recall`, testi `tests/test_fire_metrik.py`).
+(`src/fire_metrik.py:gereken_recall`, testi `tests/test_fire_metrik.py`).
 
 Bu sayı iki şey söylüyor:
 

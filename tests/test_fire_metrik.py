@@ -11,7 +11,7 @@ Bu süit veri seti ve model İSTEMEZ — saf olasılık.
 """
 import unittest
 
-from src.fire import gereken_recall, onay_olasiligi, pencere_kare
+from src.fire_metrik import gereken_recall, onay_olasiligi, pencere_kare
 
 
 class PencereKare(unittest.TestCase):
