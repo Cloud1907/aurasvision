@@ -12,6 +12,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Keşif `tests/`i sys.path'e koyar, `python3 -c "import tests.test_birim"`
+# koymaz — paylaşılan yardımcıdan ÖNCE eklenmeli (tests/test_kapsam_bekcisi).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from ortam import cv2_gerekir, sunucu_gerekir  # noqa: E402
 
 from src.bus import BusStore, YerelBus, publish
 from src.config import Config
@@ -21,9 +26,18 @@ from src.face import (_affinity, _best_reid, _calm_frac, _compact_gallery,
                       _wander_ratio)
 from src.plate import (_as_float_conf, _lev, _vote, accept_read, normalize_tr,
                        plaka_turu)
-from src.server import _slug
 from src.store import DEFAULT_TASKS, SqliteStore, merged_cameras
 from src.zones import IntrusionWatcher, point_in_poly, wanted_classes
+
+# `src.server` modül tepesinde cv2 + fastapi + pydantic ister. Bu import
+# koşulsuz kaldığında, bağımlılığı olmayan yorumlayıcıda MODÜLÜN TAMAMI
+# import'ta çöküyor ve buradaki testler süitten yok oluyordu — çıktı "1 hata"
+# der, gerçek "93 test hiç koşmadı"dır (ölçüm 2026-09-02, sistem python3'ü).
+# Doğru davranış `tests/ortam.py` deseni: eksiklik testi SİLMEZ, ATLAR.
+try:
+    from src.server import _slug
+except ImportError:                 # kurulum eksiği — kural ihlali değil
+    _slug = None
 
 
 # ── Sayım: çizgi tarafı geometrisi ─────────────────────────────────
@@ -483,6 +497,7 @@ class _SahteCap:
         pass
 
 
+@cv2_gerekir
 class TestDetMinScore:
     N = 12
 
@@ -554,6 +569,12 @@ class TestGalleryKompakt:
 
 
 # ── Sunucu yardımcıları ────────────────────────────────────────────
+# NOT: `_slug` saf bir yardımcı (yalnız `re` + str.translate), ama tek adresi
+# `src/server.py` ve o dosya FastAPI uygulamasının kendisi — cv2'yi lazy
+# import'a çevirmek yetmez, fastapi/pydantic de tepede duruyor (ölçüldü).
+# Bu iki testi bağımsız kılmanın tek yolu `_slug`ı bağımlılıksız bir modüle
+# taşımaktır; o uygulama kodu kararıdır, bu PR'ın kapsamı değil.
+@sunucu_gerekir
 class TestSlug:
     def test_turkce_ve_bosluk(self):
         assert _slug("Arka Kapı Girişi") == "arka-kapi-girisi"
