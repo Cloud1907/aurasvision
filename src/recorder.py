@@ -222,6 +222,15 @@ def temizlik(cfg, cams: list[dict]) -> None:
     kok = kayit_kok(cfg)
     store = open_store(cfg)
     try:
+        # Heartbeat tablosu: kamera başına 5 sn'de bir satır, hiç budanmıyordu.
+        # Kayıt segmentlerinin aksine bu veri KANIT değil, anlık durum içindir —
+        # eskisi tutulursa yalnız veritabanını şişirir ve durum sorgusunu yavaşlatır.
+        saglik_gun = int(cfg.get("db.health_keep_days", 30))
+        if saglik_gun > 0:
+            silinen = store.prune_camera_health(
+                datetime.now(timezone.utc) - timedelta(days=saglik_gun))
+            if silinen:
+                print(f"[rec] {silinen} eski heartbeat satırı silindi", flush=True)
         if gun > 0:
             sinir = datetime.now(timezone.utc) - timedelta(days=gun)
             for r in store.recordings_before(sinir):

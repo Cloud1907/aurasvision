@@ -25,6 +25,23 @@ from .store import merged_cameras, open_store
 
 # kamera_id → o an çalışan aşama (heartbeat bunu yayınlar)
 _STAGE: dict[str, str] = {}
+# kamera_id → işlenen toplam kare (heartbeat fps'i bunun farkından türetir)
+_FRAMES: dict[str, int] = {}
+
+
+def _kare_sayaci(cid: str):
+    """Kare başına çağrılan sayaç; analiz fonksiyonlarına `should_stop` olarak verilir.
+
+    `should_stop` üç analiz modülünde de kare başına tam bir kez çağrılır
+    (count.py, plate.py, face.py) — durdurma isteği olmadığı için hep False döner.
+    Tek amacı saymak. `on_frame` kancası da kare başına çağrılır ama karenin
+    ANNOTATE edilmesini zorlar (r.plot() + çizimler); heartbeat için her karede
+    çizim maliyeti ödemek anlamsız.
+    """
+    def tik() -> bool:
+        _FRAMES[cid] = _FRAMES.get(cid, 0) + 1
+        return False
+    return tik
 
 
 def _saved_lines(store, camera_id: str) -> list[dict]:
@@ -107,12 +124,13 @@ def _run_camera(cam: dict, cfg, bus) -> None:
                 _STAGE[cid] = "count"
                 from .count import run_count
                 run_count(source, cfg, store=bstore, camera_id=cid, lines=lines,
-                          intrusions=ihlaller)
+                          intrusions=ihlaller, should_stop=_kare_sayaci(cid))
                 did_work = True
             if tasks.get("plate"):
                 _STAGE[cid] = "plate"
                 from .plate import run_plate
-                run_plate(source, cfg, store=bstore, camera_id=cid)
+                run_plate(source, cfg, store=bstore, camera_id=cid,
+                          should_stop=_kare_sayaci(cid))
                 did_work = True
             if tasks.get("face"):
                 _STAGE[cid] = "face"
@@ -120,7 +138,8 @@ def _run_camera(cam: dict, cfg, bus) -> None:
                 rstore = open_store(cfg)
                 watch = rstore.faces_with_embedding()
                 rstore.close()
-                run_face(source, cfg, store=bstore, camera_id=cid, watch=watch)
+                run_face(source, cfg, store=bstore, camera_id=cid, watch=watch,
+                         should_stop=_kare_sayaci(cid))
                 did_work = True
             _STAGE[cid] = "idle"
         except Exception as e:
@@ -137,14 +156,32 @@ def _run_camera(cam: dict, cfg, bus) -> None:
 
 
 def _heartbeat(cams: list[dict], bus, interval: float = 5.0) -> None:
+    """Kamera başına durum + KARE HIZI yayınlar.
+
+    fps'i yalnızca nvdec motoru yayınlıyordu; ultralytics motorunda alan boş
+    kalıyor ve panel (src/server.py, fps > 0.1 şartı) olaylar düzgün yazılırken
+    bile "bağlı ama KARE ÜRETMİYOR" diyordu. Çalışan kurulumu hatalı göstermek,
+    gerçek arızayı fark edilmez yapar — bu yüzden fps burada da üretilir:
+    iki heartbeat arasındaki kare farkı / geçen süre.
+    """
+    onceki: dict[str, int] = {}
+    son = time.monotonic()
     while True:
+        time.sleep(interval)
+        simdi = time.monotonic()
+        gecen = max(simdi - son, 1e-6)
+        son = simdi
         for cam in cams:
-            st = _STAGE.get(cam["id"], "başlıyor")
+            cid = cam["id"]
+            st = _STAGE.get(cid, "başlıyor")
             if st == "silindi":
                 continue
             status = "error" if st.startswith("error") else ("idle" if st in ("idle", "görev kapalı", "bitti") else "ok")
-            publish(bus, "health", cam["id"], {"status": status, "stage": st})
-        time.sleep(interval)
+            toplam = _FRAMES.get(cid, 0)
+            fps = (toplam - onceki.get(cid, 0)) / gecen
+            onceki[cid] = toplam
+            publish(bus, "health", cid,
+                    {"status": status, "stage": st, "fps": round(fps, 1)})
 
 
 def main() -> None:
@@ -204,8 +241,44 @@ def main() -> None:
         t.start()
     hb = threading.Thread(target=_heartbeat, args=(cams, bus), daemon=True)
     hb.start()
+
+    def _yeni_kameralari_al() -> None:
+        """Panelden EKLENEN kameraya iş parçacığı açar.
+
+        Kamera listesi yalnız açılışta okunuyordu: silinme ele alınmıştı
+        (_run_camera kendini durdurur) ama EKLENME alınmıyordu. Sonuç: panelden
+        kamera eklenince "kaydettim, hiçbir şey olmuyor" — worker elle yeniden
+        başlatılana kadar o kamera görünmezdi. Görev değişikliği zaten her turda
+        DB'den tazeleniyor; eksik olan tek şey buydu.
+        """
+        while True:
+            time.sleep(int(cfg.get("worker.loop_interval", 30)))
+            try:
+                st = open_store(cfg)
+                try:
+                    guncel = [c for c in merged_cameras(cfg, st) if c.get("enabled", True)]
+                finally:
+                    st.close()
+            except Exception as e:
+                print(f"[worker] kamera listesi okunamadı: {e}", flush=True)
+                continue
+            if selector:
+                guncel = [c for c in guncel if c["id"] in keep]
+            var = {c["id"] for c in cams}
+            for c in guncel:
+                if c["id"] in var:
+                    continue
+                print(f"[worker] yeni kamera: {c['id']} — işleme alınıyor", flush=True)
+                cams.append(c)          # heartbeat aynı listeyi okur, o da alır
+                t = threading.Thread(target=_run_camera, args=(c, cfg, bus), daemon=True)
+                t.start()
+                threads.append(t)
+
+    izci = threading.Thread(target=_yeni_kameralari_al, daemon=True)
+    izci.start()
+
     try:
-        while any(t.is_alive() for t in threads):
+        while any(t.is_alive() for t in threads) or izci.is_alive():
             time.sleep(1)
         # dosya kaynakları tek geçişte bittiyse son durumu bir kez daha yayınla
         for c in cams:
