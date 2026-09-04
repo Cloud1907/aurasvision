@@ -165,6 +165,44 @@ def _nvdec_kullanilabilir() -> str:
     return ""
 
 
+def _canli_kaynak(source: str) -> bool:
+    """RTSP/RTMP/HTTP(S) — bitmeyen akış (yolo.track(stream=True) hiç dönmez).
+
+    Dosya kaynağı bunun tersi: işlenir, biter, döner — sıralı görev dispatch'i
+    orada sorun değil (bkz. _run_camera'daki canlı+çoklu-görev dalı).
+    """
+    return str(source).lower().startswith(("rtsp://", "rtmp://", "http://", "https://"))
+
+
+def _gorev_calistir(gorev: str, source: str, cfg, bstore, cid: str,
+                    lines, ihlaller, watch=None) -> None:
+    """Tek analiz görevini (count/plate/face) çalıştırır — dispatch tek yerde,
+    hem sıralı hem eşzamanlı (bkz. _run_camera) çağrı yolu bunu kullanır."""
+    if gorev == "count":
+        from .count import run_count
+        run_count(source, cfg, store=bstore, camera_id=cid, lines=lines,
+                  intrusions=ihlaller, should_stop=_kare_sayaci(cid),
+                  on_frame=_onizleme_itici(cid))
+    elif gorev == "plate":
+        from .plate import run_plate
+        run_plate(source, cfg, store=bstore, camera_id=cid,
+                  should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
+    elif gorev == "face":
+        from .face import run_face
+        run_face(source, cfg, store=bstore, camera_id=cid, watch=watch,
+                 should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
+
+
+def _gorev_thread_calistir(gorev: str, source: str, cfg, bstore, cid: str,
+                           lines, ihlaller, watch=None) -> None:
+    """_gorev_calistir'i AYRI thread'de sarar — bir görevin hatası diğerini
+    (veya kamerayı) düşürmesin diye burada yutulur (bkz. _run_camera)."""
+    try:
+        _gorev_calistir(gorev, source, cfg, bstore, cid, lines, ihlaller, watch)
+    except Exception as e:
+        print(f"[worker] {cid}/{gorev} hata: {e}", flush=True)
+
+
 def _run_camera(cam: dict, cfg, bus) -> None:
     cid = cam["id"]
     source = cam["source"]
@@ -195,29 +233,39 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             rstore.close()
 
         did_work = False
+        aktif = [g for g in ("count", "plate", "face") if tasks.get(g)]
+        canli = _canli_kaynak(source)
+        watch = None
+        if "face" in aktif:
+            rstore = open_store(cfg)
+            watch = rstore.faces_with_embedding()
+            rstore.close()
         try:
-            if tasks.get("count"):
-                _STAGE[cid] = "count"
-                from .count import run_count
-                run_count(source, cfg, store=bstore, camera_id=cid, lines=lines,
-                          intrusions=ihlaller, should_stop=_kare_sayaci(cid),
-                          on_frame=_onizleme_itici(cid))
-                did_work = True
-            if tasks.get("plate"):
-                _STAGE[cid] = "plate"
-                from .plate import run_plate
-                run_plate(source, cfg, store=bstore, camera_id=cid,
-                          should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
-                did_work = True
-            if tasks.get("face"):
-                _STAGE[cid] = "face"
-                from .face import run_face
-                rstore = open_store(cfg)
-                watch = rstore.faces_with_embedding()
-                rstore.close()
-                run_face(source, cfg, store=bstore, camera_id=cid, watch=watch,
-                         should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
-                did_work = True
+            if canli and len(aktif) > 1:
+                # RTSP/canlı kaynakta count() BİTMEYEN bir generator'dır
+                # (yolo.track(stream=True), should_stop hep False). Aynı thread'de
+                # sırayla çağrılırsa count SONRAKİ görevi sonsuza dek engeller —
+                # sahada ölçüldü: kamera-204 count+plate açıkken plate_events
+                # HİÇ satır üretmedi (count asla dönmediği için plate'e sıra
+                # gelmiyordu). Her görev kendi RTSP bağlantısını açıp AYRI
+                # thread'de koşar — recorder zaten aynı akışa ayrıca bağlanıyor,
+                # çoklu istemci varsayımı burada yeni değil. Bir görevin hatası
+                # diğerini düşürmez (_gorev_thread_calistir hatayı yutar).
+                _STAGE[cid] = "+".join(aktif)
+                gorev_threads = [threading.Thread(
+                    target=_gorev_thread_calistir,
+                    args=(g, source, cfg, bstore, cid, lines, ihlaller, watch),
+                    daemon=True) for g in aktif]
+                for t in gorev_threads:
+                    t.start()
+                for t in gorev_threads:
+                    t.join()
+                did_work = bool(aktif)
+            else:
+                for gorev in aktif:
+                    _STAGE[cid] = gorev
+                    _gorev_calistir(gorev, source, cfg, bstore, cid, lines, ihlaller, watch)
+                    did_work = True
             _STAGE[cid] = "idle"
         except Exception as e:
             _STAGE[cid] = f"error: {e}"
