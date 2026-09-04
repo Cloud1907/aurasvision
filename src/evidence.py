@@ -35,6 +35,40 @@ def etkin(cfg, tur: str) -> bool:
     return bool(cfg.get(f"evidence.{tur}", tur != "face"))
 
 
+def klip_kaydet(cfg, kareler, camera_id: str, tur: str, fps: float = 5.0) -> str:
+    """Doğrulayan kareleri kısa MP4 olarak yazar, /media'ya göreli yolu döndürür.
+
+    Neden tek kare yetmiyor: duman DURAĞAN karede insan gözüyle de ayırt
+    edilemez — FIA/BRE ölçümünde video dedektörlerinin benzer renkli arka planda
+    başarısı %52. Operatörün "gerçek mi" sorusuna cevap verebilmesi için
+    dumanın HAREKETİNİ görmesi gerekir; kanıt bu yüzden karenin değil kısa
+    dizinin kendisidir.
+    """
+    if not etkin(cfg, tur) or not kareler:
+        return ""
+    import cv2
+
+    try:
+        temizle(cfg)
+        h, w = kareler[0].shape[:2]
+        klasor = _kok(cfg) / date.today().isoformat()
+        klasor.mkdir(parents=True, exist_ok=True)
+        ad = f"{camera_id}_{tur}_{uuid.uuid4().hex[:10]}.mp4"
+        yazici = cv2.VideoWriter(str(klasor / ad), cv2.VideoWriter_fourcc(*"mp4v"),
+                                 max(1.0, float(fps)), (w, h))
+        if not yazici.isOpened():
+            return ""
+        try:
+            for k in kareler:
+                # Boyutu tutmayan kare (çözünürlük değişimi) klibi bozmasın
+                yazici.write(k if k.shape[:2] == (h, w) else cv2.resize(k, (w, h)))
+        finally:
+            yazici.release()
+        return f"evidence/{klasor.name}/{ad}"
+    except Exception:
+        return ""   # kanıt yazımı ASLA analizi düşürmez (kaydet() ile aynı kural)
+
+
 def _kok(cfg) -> Path:
     return _ROOT / cfg.get("paths.output_dir", "output") / "evidence"
 

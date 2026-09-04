@@ -53,6 +53,19 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
                         p.get("list_type", ""), p.get("label", ""), camera_id)
         _web(cfg, {"tur": p.get("kind", "intrusion"), "ref": p.get("ref", ""),
                    "etiket": p.get("label", ""), "kamera": camera_id})
+    elif type_ == "fire":
+        # Yangın ERKEN UYARISI (sertifikalı alarm değil — src/fire.py). Ön uyarı
+        # panelde kalır, webhook YALNIZ alarmda gider: her ön uyarıyı santrale
+        # basmak alarmı değersizleştirir, gerçek alarmda kimse bakmaz olur.
+        from .fire import FERAGAT
+        if p.get("durum") == "alarm":
+            etiket = (f"{p.get('dogrulama', 0)} kare / {p.get('sure', 0)} sn"
+                      f" · {FERAGAT}")
+            store.add_alert("fire_warning", p.get("sinif", "duman"), "fire",
+                            etiket, camera_id, snapshot=p.get("snapshot", ""))
+            _web(cfg, {"tur": "fire_warning", "ref": p.get("sinif", "duman"),
+                       "etiket": etiket, "kamera": camera_id,
+                       "kanit": p.get("snapshot", ""), "klip": p.get("clip", "")})
     elif type_ == "vektor":
         # Görünüm araması örneği (base64 float16, arama.BOYUT boyutlu)
         import base64
