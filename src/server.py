@@ -140,8 +140,7 @@ def _sync_go2rtc() -> None:
         return
     path = ROOT / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["# Otomatik üretilir (src/server.py) — kamera eklendikçe yenilenir.",
-             "streams:"]
+    lines = ["# Otomatik üretilir (src/server.py) — kamera eklendikçe yenilenir."]
 
     # go2rtc iki biçimde koşar: compose konteyneri (docker profili) ya da tek
     # makinede bin/go2rtc.exe. Dosya kaynağının yolu ve ffmpeg'in yeri buna bağlı.
@@ -150,6 +149,11 @@ def _sync_go2rtc() -> None:
     # Konteynerde ffmpeg imajın içinde ve PATH'te; tek makinede PATH'te olmayabilir
     # (Windows'ta genelde yoktur) — yanına konulan ikili mutlak yolla çağrılır.
     ffmpeg = str(_ff) if (_yerel_go2rtc and _ff.exists()) else "ffmpeg"
+    if _yerel_go2rtc and _ff.exists():
+        # go2rtc'nin KENDİ dahili "ffmpeg:" kaynak türü (aşağıdaki H.265 yedeği)
+        # de bu ikiliyi bulsun — yoksa PATH'te arar, Windows'ta genelde bulamaz.
+        lines.append(f"ffmpeg:\n  bin: {json.dumps(str(_ff))}")
+    lines.append("streams:")
 
     def _go2rtc_src(src: str, kamera_basliklari: str = "") -> str:
         if src.startswith(("http://", "https://")):
@@ -186,16 +190,32 @@ def _sync_go2rtc() -> None:
         return (f'exec:{ffmpeg} -re -stream_loop -1 -i "{yol}"'
                 " -an -c copy -f rtsp {output}")
 
-    for c in _cameras():
+    def _stream_bloklari(ad: str, src: str, kamera_basliklari: str) -> None:
         # Değer JSON ile alıntılanır: içinde ": " geçen kaynak (ör. -headers "Referer: ...")
         # alıntısız yazılınca go2rtc'nin YAML ayrıştırıcısı TÜM config'i reddediyor.
+        birincil = _go2rtc_src(src, kamera_basliklari)
+        if src.startswith(("rtsp://", "rtmp://")) and _yerel_go2rtc and _ff.exists():
+            # H.265/HEVC kaynaklar tarayıcıda (Chrome/Edge MSE) OYNAMAZ —
+            # MEDIA_ERR_DECODE ile sessizce siyah kare kalır (sahada yakalandı:
+            # REOLINK_CX810, codec hvc1...). go2rtc, tüketici h264 isteyip
+            # birincil kaynakta yoksa bu YEDEĞİ (ffmpeg ile anlık çevrim)
+            # kullanır — kaynak zaten h264 ise bu satır hiç TETİKLENMEZ
+            # (go2rtc talep eşleşince birincili kullanır), gereksiz CPU
+            # yükü doğmaz.
+            lines.append(f"  {ad}:")
+            lines.append(f"    - {json.dumps(birincil)}")
+            lines.append(f"    - {json.dumps(f'ffmpeg:{ad}#video=h264')}")
+        else:
+            lines.append(f"  {ad}: {json.dumps(birincil)}")
+
+    for c in _cameras():
         _hdr = str(c.get("http_headers") or "")
-        lines.append(f"  {c['id']}: {json.dumps(_go2rtc_src(str(c['source']), _hdr))}")
+        _stream_bloklari(c["id"], str(c["source"]), _hdr)
         # Kamera duvarı substream'i: IP kameraların düşük çözünürlüklü ikinci akışı.
         # Duvarda 100 kareyi tam çözünürlükte çözmek tarayıcıyı boğar; tam çözünürlük
         # yalnız tek-kamera görünümü ve analiz içindir.
         if c.get("url_sub"):
-            lines.append(f"  {c['id']}{SUB_SUFFIX}: {json.dumps(_go2rtc_src(str(c['url_sub']), _hdr))}")
+            _stream_bloklari(f"{c['id']}{SUB_SUFFIX}", str(c["url_sub"]), _hdr)
     yeni = "\n".join(lines) + "\n"
     if path.exists() and path.read_text(encoding="utf-8") == yeni:
         return   # değişiklik yok → çalışan akışları kesme
