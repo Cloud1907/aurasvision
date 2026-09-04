@@ -280,6 +280,14 @@
   .metric{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:var(--r-lg);padding:18px 20px;box-shadow:var(--shadow);}
   .metric .k{font-size:12.5px;color:var(--ink-2);margin-bottom:6px;}
   .metric .v{font-size:28px;font-weight:750;letter-spacing:0;}
+  .sayirow{display:flex;align-items:center;gap:8px;}
+  .sayinum{font-variant-numeric:tabular-nums;font-weight:750;font-size:16px;display:flex;flex-direction:column;
+    align-items:center;min-width:46px;padding:4px 8px;border-radius:8px;background:var(--hover);
+    color:var(--ink);transition:background .3s ease,color .3s ease;}
+  .sayinum i{font-style:normal;font-size:9px;font-weight:600;color:var(--ink-3);letter-spacing:.2px;}
+  .sayinum.pulse{background:var(--accent);color:#fff;}
+  .sayinum.pulse i{color:#fff;opacity:.85;}
+  @media (prefers-reduced-motion:reduce){.sayinum{transition:none;}}
   table{width:100%;border-collapse:collapse;}
   th,td{text-align:left;padding:9px 14px;border-bottom:1px solid var(--line);}
   th{color:var(--ink-3);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;background:var(--panel-2);}
@@ -722,6 +730,10 @@ function openCam(id,ad){
           <div class="mut-s" id="cv-zones" style="margin-top:6px;">çizgi/bölge yükleniyor…</div>
           <a class="mut-s" style="display:inline-block;margin-top:8px;" onclick="window._zc='${esc(id)}';go('zones')">Bölgeleri düzenle →</a>
         </div>
+        <div class="card pad" id="cv-sayim" style="display:none;">
+          <div style="font-weight:700;margin-bottom:9px;">Sayım — çizgi başına</div>
+          <div id="cv-sayim-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
         <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0;">
           <div style="padding:10px 14px;border-bottom:1px solid var(--line);font-weight:700;">Canlı olaylar</div>
           <div id="cv-events" style="overflow-y:auto;flex:1;min-height:0;"><div class="empty">canlı veri bekleniyor…</div></div>
@@ -729,15 +741,22 @@ function openCam(id,ad){
       </div>
     </div></div>`;
   document.body.appendChild(m);
+  const sayimKart=m.querySelector("#cv-sayim"),sayimRows=m.querySelector("#cv-sayim-rows");
   api("/zones?camera="+encodeURIComponent(id)).then(z=>{
     const tl=m.querySelector(".tile");if(tl)tl.insertAdjacentHTML("beforeend",zoneSvg(z));
     const zc=m.querySelector("#cv-zones");
     if(zc)zc.textContent=z.length?z.map(x=>`${x.kind==="line"?"Çizgi":x.kind==="intrusion"?"İhlal alanı":"Bölge"}: ${x.name}`).join(" · "):"Çizgi/bölge tanımlı değil";
+    const cizgiler=z.filter(x=>x.kind==="line");
+    if(cizgiler.length&&sayimKart&&sayimRows){
+      sayimKart.style.display="block";
+      cizgiler.forEach(x=>sayimRows.appendChild(cvSayimSatiri(x.name)));
+    }
   }).catch(()=>{});
   toggleAnaliz(id,m.querySelector("#cv-analiz"));   // tıklayınca doğrudan analiz görünümüyle açılsın
   const evEl=m.querySelector("#cv-events");
-  cvOlaylarGuncelle(id,evEl);
-  const strTimer=setInterval(()=>cvOlaylarGuncelle(id,evEl),2000);
+  delete window._cvSayimSeen[id];   // önceki açılıştan kalan "görüldü" kümesi taşınmasın
+  cvOlaylarGuncelle(id,evEl,sayimRows);
+  const strTimer=setInterval(()=>cvOlaylarGuncelle(id,evEl,sayimRows),2000);
   const kapat=()=>{clearInterval(strTimer);clearInterval(window._analizTimers[id]);delete window._analizTimers[id];
     m.remove();document.body.style.overflow="";document.removeEventListener("keydown",onkey);};
   const onkey=e=>{if(e.key==="Escape")kapat();};
@@ -751,25 +770,71 @@ function openCam(id,ad){
    akan liste mantığıyla AYNI: iskele bir kez kurulur, yalnız YENİ satır
    eklenir (bkz. _appendNew), her poll'da innerHTML basılmaz — liste yanıp
    sönmez. Kapalı görevin verisi zaten /api/events'te hiç oluşmaz, ayrıca
-   filtrelemeye gerek yok. */
-const _EV_META={count:["live","var(--accent-soft)","var(--accent)","Çizgi geçişi"],
+   filtrelemeye gerek yok.
+
+   Kullanıcı geri bildirimi: "çizgi geçişi bir şey ifade etmiyor" — tek satırlık
+   olay logu tek başına yeterli değil, çizgi başına ARTAN bir sayaç (cvSayimSatiri/
+   cvSayimArttir) gerekiyor. Plaka satırına da güven yüzdesi eklendi ("net veri"). */
+const _EV_META={count:["live","var(--accent-soft)","var(--accent)"],
                plate:["cams","var(--warn-soft)","var(--warn)","Plaka okuma"],
                face:["events","var(--ok-soft)","var(--ok)","Yüz tespiti"]};
-async function cvOlaylarGuncelle(id,el){
+function _evBaslikDetay(e){
+  if(e.type==="count")
+    return [`${esc(e.zone||"Çizgi")} · ${e.direction==="out"?"çıkış":"giriş"}`,
+            e.frame_idx!=null?`kare ${e.frame_idx}`:""];
+  if(e.type==="plate")
+    return ["Plaka okuma", esc(e.detail)+(e.conf!=null?` · %${Math.round(e.conf*100)} güven`:"")];
+  const m=_EV_META[e.type]||["live","var(--hover)","var(--ink-2)",esc(e.type)];
+  return [m[3], esc(e.detail)];
+}
+window._cvSayimSeen={};
+async function cvOlaylarGuncelle(id,el,sayimRows){
   if(!el||!document.body.contains(el))return;
   try{
     const ev=await api("/events?limit=30&kamera="+encodeURIComponent(id));
     _appendNew(el,ev.slice().reverse(),e=>e.time+"|"+e.type+"|"+e.frame_idx,e=>{
-      const m=_EV_META[e.type]||["live","var(--hover)","var(--ink-2)",esc(e.type)];
+      const m=_EV_META[e.type]||["live","var(--hover)","var(--ink-2)"];
+      const [baslik,detay]=_evBaslikDetay(e);
       return `<div class="row">
         ${e.snapshot?`<img class="kanit" src="/media/${esc(e.snapshot)}${tokq().replace('&','?')}" alt="kanıt"
              title="Kanıt görüntüsü — büyütmek için tıklayın" onclick="kanitAc('${esc(e.snapshot)}')"/>`
           :`<span class="av" style="background:${m[1]};color:${m[2]};">${svg(m[0],15)}</span>`}
-        <div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:13px;">${m[3]}</div>
-          <div class="mono mut-s" style="font-size:12px;">${esc(e.detail)}</div></div>
+        <div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:13px;">${baslik}</div>
+          <div class="mono mut-s" style="font-size:12px;">${detay}</div></div>
         <span class="mut-s" style="font-size:11px;text-align:right;white-space:nowrap;">${esc(gecenSure(e.time))}</span></div>`;
     });
+    if(sayimRows){
+      const seen=window._cvSayimSeen[id]||(window._cvSayimSeen[id]=new Set());
+      const ilkYukleme=seen.size===0;
+      for(const e of ev){
+        if(e.type!=="count"||!e.zone||!e.direction)continue;
+        const k=e.time+"|"+e.frame_idx;
+        if(seen.has(k))continue;
+        seen.add(k);
+        cvSayimArttir(sayimRows,e.zone,e.direction,!ilkYukleme);
+      }
+    }
   }catch(e){}
+}
+/* Çizgi başına sayaç satırı — kullanıcı isteği: "a noktasından b noktasına
+   sayaç gibi olsun, arttıkça uyarı versin, rakam artsın". Giriş/çıkış
+   config'teki AtoB/BtoA yönüyle eşleşir (bkz. _saved_lines, count.py). */
+function cvSayimSatiri(line){
+  const row=document.createElement("div");row.className="sayirow";row.dataset.line=line;
+  row.innerHTML=`<span class="mut-s" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(line)}</span>
+    <span class="sayinum" data-dir="in">0<i>giriş</i></span>
+    <span class="sayinum" data-dir="out">0<i>çıkış</i></span>`;
+  return row;
+}
+function cvSayimArttir(sayimRows,line,direction,animasyonlu){
+  let row=sayimRows.querySelector(`[data-line="${CSS.escape(line)}"]`);
+  if(!row){row=cvSayimSatiri(line);sayimRows.appendChild(row);}
+  const numEl=row.querySelector(`[data-dir="${direction==="out"?"out":"in"}"]`);
+  if(!numEl)return;
+  numEl.firstChild.textContent=(parseInt(numEl.firstChild.textContent,10)||0)+1;
+  if(!animasyonlu)return;
+  numEl.classList.add("pulse");
+  setTimeout(()=>numEl.classList.remove("pulse"),900);
 }
 /* --- PTZ pedi ---
    Yalnız PTZ destekli kamerada görünür (yetenek sorgusu önbelleklidir, PTZ'siz

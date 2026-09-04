@@ -512,13 +512,16 @@ class SqliteStore(BaseStore):
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
                  TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
-                 NULL AS snapshot
+                 NULL AS snapshot, zone, direction, NULL AS conf
             FROM count_events
           UNION ALL
-          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot FROM plate_events
+          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot,
+                 NULL AS zone, NULL AS direction, conf
+            FROM plate_events
           UNION ALL
           SELECT time, 'face', camera_id,
-                 COALESCE(gender,'?')||' ~'||COALESCE(age,0), ts_seconds, frame_idx, NULL
+                 COALESCE(gender,'?')||' ~'||COALESCE(age,0), ts_seconds, frame_idx, NULL,
+                 NULL AS zone, NULL AS direction, NULL AS conf
             FROM face_events
         ) WHERE (?='' OR type=?) AND (?='' OR camera_id=?)
         ORDER BY time DESC, ts_seconds DESC LIMIT ?
@@ -692,14 +695,16 @@ class PgStore(BaseStore):
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
                  TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
-                 NULL AS snapshot
+                 NULL AS snapshot, zone, direction, NULL::real AS conf
             FROM count_events
           UNION ALL
-          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot FROM plate_events
+          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot,
+                 NULL AS zone, NULL AS direction, conf
+            FROM plate_events
           UNION ALL
           SELECT time, 'face', camera_id,
                  COALESCE(gender, chr(63))||' ~'||COALESCE(age::text,'0'), ts_seconds, frame_idx,
-                 NULL
+                 NULL, NULL AS zone, NULL AS direction, NULL::real AS conf
             FROM face_events
         ) ev WHERE (?='' OR type=?) AND (?='' OR camera_id=?)
         ORDER BY time DESC, ts_seconds DESC NULLS LAST LIMIT ?
