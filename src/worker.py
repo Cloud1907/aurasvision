@@ -48,8 +48,12 @@ def _kare_sayaci(cid: str):
 # bunu server.py üzerinden (aynı-origin proxy) çeker.
 _PREVIEW: dict[str, bytes] = {}
 _PREVIEW_LOCK = threading.Lock()
-_PREVIEW_MIN_INTERVAL = 1.0   # sn — sayım/analiz hızını ETKİLEMEZ, yalnız önizleme örnekleme sıklığı
-_PREVIEW_MAX_W = 960
+_PREVIEW_MIN_INTERVAL = 0.35   # sn — sayım/analiz hızını ETKİLEMEZ, yalnız önizleme örnekleme sıklığı.
+                                # Analiz zaten ~3-5 fps'te çalışıyor (heartbeat fps); bu sayı o tavanı
+                                # AŞMAZ (on_frame'in kendisi kareden daha sık çağrılmıyor) — yalnız
+                                # 1 sn'lik eski aralıkta atlanan kareleri de örneklemeye açar (kullanıcı
+                                # geri bildirimi: "görüntü çok donuyor ve takılıyor").
+_PREVIEW_MAX_W = 800   # 960 → 800: JPEG kodlama+aktarım süresi kısalır, daha sık örnekleme ucuzlaşır
 
 
 def _onizleme_itici(cid: str):

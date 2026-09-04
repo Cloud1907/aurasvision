@@ -562,8 +562,19 @@ function toggleAnaliz(id,btn){
   }else{
     img.style.display="block";btn.classList.add("on");
     if(btn.dataset.toggleLabel)btn.textContent="Ham görüntü";
-    const tik=()=>{img.src="/api/live-frame?camera="+encodeURIComponent(id)+tokq()+"&t="+Date.now();};
-    tik();window._analizTimers[id]=setInterval(tik,1000);
+    // Önce arka planda yükle, İMG'ye ancak TAM yüklenince ata — doğrudan
+    // img.src= atansaydı yavaş ağda yarı-inmiş kare/kısa boşluk görünürdü
+    // ("takılıyor" şikayeti). meşgulken yeni tur atlanır — istek birikmesin.
+    let mesgul=false;
+    const tik=()=>{
+      if(mesgul)return;
+      mesgul=true;
+      const yeni=new Image();
+      yeni.onload=()=>{img.src=yeni.src;mesgul=false;};
+      yeni.onerror=()=>{mesgul=false;};
+      yeni.src="/api/live-frame?camera="+encodeURIComponent(id)+tokq()+"&t="+Date.now();
+    };
+    tik();window._analizTimers[id]=setInterval(tik,400);
   }
 }
 async function refreshLiveCounts(){try{const res=await api("/counts");LIVE_ACTIVE=!!res.active;const rows=res.rows||[];const next={};rows.forEach(r=>{next[r.camera_id]={in:Number(r.in_count||0),out:Number(r.out_count||0)};});LIVE_COUNTS=next;document.querySelectorAll("[data-countbox]").forEach(el=>{const y=countBox(el.dataset.countbox);if(el.outerHTML!==y)el.outerHTML=y;});
@@ -730,13 +741,9 @@ function openCam(id,ad){
           <div class="mut-s" id="cv-zones" style="margin-top:6px;">çizgi/bölge yükleniyor…</div>
           <a class="mut-s" style="display:inline-block;margin-top:8px;" onclick="window._zc='${esc(id)}';go('zones')">Bölgeleri düzenle →</a>
         </div>
-        <div class="card pad" id="cv-sayim" style="display:none;">
+        <div class="card pad" id="cv-sayim" style="display:none;flex:1;">
           <div style="font-weight:700;margin-bottom:9px;">Sayım — çizgi başına</div>
           <div id="cv-sayim-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
-        </div>
-        <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0;">
-          <div style="padding:10px 14px;border-bottom:1px solid var(--line);font-weight:700;">Canlı olaylar</div>
-          <div id="cv-events" style="overflow-y:auto;flex:1;min-height:0;"><div class="empty">canlı veri bekleniyor…</div></div>
         </div>
       </div>
     </div></div>`;
@@ -753,10 +760,9 @@ function openCam(id,ad){
     }
   }).catch(()=>{});
   toggleAnaliz(id,m.querySelector("#cv-analiz"));   // tıklayınca doğrudan analiz görünümüyle açılsın
-  const evEl=m.querySelector("#cv-events");
   delete window._cvSayimSeen[id];   // önceki açılıştan kalan "görüldü" kümesi taşınmasın
-  cvOlaylarGuncelle(id,evEl,sayimRows);
-  const strTimer=setInterval(()=>cvOlaylarGuncelle(id,evEl,sayimRows),2000);
+  cvSayimGuncelle(id,sayimRows);
+  const strTimer=setInterval(()=>cvSayimGuncelle(id,sayimRows),2000);
   const kapat=()=>{clearInterval(strTimer);clearInterval(window._analizTimers[id]);delete window._analizTimers[id];
     m.remove();document.body.style.overflow="";document.removeEventListener("keydown",onkey);};
   const onkey=e=>{if(e.key==="Escape")kapat();};
@@ -766,53 +772,22 @@ function openCam(id,ad){
   mountStreams();   // yeni auras-stream'i bağlar
   ptzPed(m,id);     // kamera destekliyorsa yönlendirme pedi ekler
 }
-/* Tek kamera görünümünün yan panelindeki canlı olay akışı — Test ekranının
-   akan liste mantığıyla AYNI: iskele bir kez kurulur, yalnız YENİ satır
-   eklenir (bkz. _appendNew), her poll'da innerHTML basılmaz — liste yanıp
-   sönmez. Kapalı görevin verisi zaten /api/events'te hiç oluşmaz, ayrıca
-   filtrelemeye gerek yok.
-
-   Kullanıcı geri bildirimi: "çizgi geçişi bir şey ifade etmiyor" — tek satırlık
-   olay logu tek başına yeterli değil, çizgi başına ARTAN bir sayaç (cvSayimSatiri/
-   cvSayimArttir) gerekiyor. Plaka satırına da güven yüzdesi eklendi ("net veri"). */
-const _EV_META={count:["live","var(--accent-soft)","var(--accent)"],
-               plate:["cams","var(--warn-soft)","var(--warn)","Plaka okuma"],
-               face:["events","var(--ok-soft)","var(--ok)","Yüz tespiti"]};
-function _evBaslikDetay(e){
-  if(e.type==="count")
-    return [`${esc(e.zone||"Çizgi")} · ${e.direction==="out"?"çıkış":"giriş"}`,
-            e.frame_idx!=null?`kare ${e.frame_idx}`:""];
-  if(e.type==="plate")
-    return ["Plaka okuma", esc(e.detail)+(e.conf!=null?` · %${Math.round(e.conf*100)} güven`:"")];
-  const m=_EV_META[e.type]||["live","var(--hover)","var(--ink-2)",esc(e.type)];
-  return [m[3], esc(e.detail)];
-}
+/* Tek kamera görünümünün yan panelindeki çizgi sayaçlarını /api/events'ten
+   besler. Akan olay LOGU kullanıcı isteğiyle kaldırıldı (görüntüyü doyurup
+   dikkat dağıtıyordu) — yalnız sayaç kalır, ARTAN rakam kendi başına yeterli. */
 window._cvSayimSeen={};
-async function cvOlaylarGuncelle(id,el,sayimRows){
-  if(!el||!document.body.contains(el))return;
+async function cvSayimGuncelle(id,sayimRows){
+  if(!sayimRows||!document.body.contains(sayimRows))return;
   try{
-    const ev=await api("/events?limit=30&kamera="+encodeURIComponent(id));
-    _appendNew(el,ev.slice().reverse(),e=>e.time+"|"+e.type+"|"+e.frame_idx,e=>{
-      const m=_EV_META[e.type]||["live","var(--hover)","var(--ink-2)"];
-      const [baslik,detay]=_evBaslikDetay(e);
-      return `<div class="row">
-        ${e.snapshot?`<img class="kanit" src="/media/${esc(e.snapshot)}${tokq().replace('&','?')}" alt="kanıt"
-             title="Kanıt görüntüsü — büyütmek için tıklayın" onclick="kanitAc('${esc(e.snapshot)}')"/>`
-          :`<span class="av" style="background:${m[1]};color:${m[2]};">${svg(m[0],15)}</span>`}
-        <div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:13px;">${baslik}</div>
-          <div class="mono mut-s" style="font-size:12px;">${detay}</div></div>
-        <span class="mut-s" style="font-size:11px;text-align:right;white-space:nowrap;">${esc(gecenSure(e.time))}</span></div>`;
-    });
-    if(sayimRows){
-      const seen=window._cvSayimSeen[id]||(window._cvSayimSeen[id]=new Set());
-      const ilkYukleme=seen.size===0;
-      for(const e of ev){
-        if(e.type!=="count"||!e.zone||!e.direction)continue;
-        const k=e.time+"|"+e.frame_idx;
-        if(seen.has(k))continue;
-        seen.add(k);
-        cvSayimArttir(sayimRows,e.zone,e.direction,!ilkYukleme);
-      }
+    const ev=await api("/events?limit=30&kamera="+encodeURIComponent(id)+"&tur=count");
+    const seen=window._cvSayimSeen[id]||(window._cvSayimSeen[id]=new Set());
+    const ilkYukleme=seen.size===0;
+    for(const e of ev){
+      if(!e.zone||!e.direction)continue;
+      const k=e.time+"|"+e.frame_idx;
+      if(seen.has(k))continue;
+      seen.add(k);
+      cvSayimArttir(sayimRows,e.zone,e.direction,!ilkYukleme);
     }
   }catch(e){}
 }
