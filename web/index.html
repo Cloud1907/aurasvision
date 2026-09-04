@@ -554,8 +554,10 @@ function toggleAnaliz(id,btn){
   if(acik){
     clearInterval(window._analizTimers[id]);delete window._analizTimers[id];
     img.style.display="none";btn.classList.remove("on");
+    if(btn.dataset.toggleLabel)btn.textContent="Analiz";
   }else{
     img.style.display="block";btn.classList.add("on");
+    if(btn.dataset.toggleLabel)btn.textContent="Ham görüntü";
     const tik=()=>{img.src="/api/live-frame?camera="+encodeURIComponent(id)+tokq()+"&t="+Date.now();};
     tik();window._analizTimers[id]=setInterval(tik,1000);
   }
@@ -704,8 +706,8 @@ function openCam(id,ad){
   m.innerHTML=`<div class="camview full">
     <div class="camview-head"><b>${esc(ad)}</b>
       <span style="display:flex;gap:10px;align-items:center;"><span class="mut-s">tam çözünürlük</span>
-      <button class="btn sm" id="cv-analiz" title="Analiz görünümü (tespit kutuları, ~1 sn'de bir)"
-              onclick="toggleAnaliz('${esc(id)}',this)">Analiz</button>
+      <button class="btn sm" id="cv-analiz" data-toggle-label="1" title="Ham çözünürlüklü akışa geç"
+              onclick="toggleAnaliz('${esc(id)}',this)">Ham görüntü</button>
       <button class="btn sm ico" id="cv-x" title="kapat">${svg('x',15)}</button></span></div>
     <div class="tile" data-state="wait">
       <div class="skel"></div><auras-stream data-src="${esc(id)}"></auras-stream>
@@ -717,6 +719,7 @@ function openCam(id,ad){
   api("/zones?camera="+encodeURIComponent(id)).then(z=>{
     const t=m.querySelector(".tile");if(t)t.insertAdjacentHTML("beforeend",zoneSvg(z));
   }).catch(()=>{});
+  toggleAnaliz(id,m.querySelector("#cv-analiz"));   // tıklayınca doğrudan analiz görünümüyle açılsın
   const strip=m.querySelector("#cv-strip");
   stripGuncelle(id,strip);
   const strTimer=setInterval(()=>stripGuncelle(id,strip),2000);
