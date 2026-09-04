@@ -48,9 +48,11 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
                             "", camera_id)
             _web(cfg, {"tur": "face", "ref": p["match_name"], "kamera": camera_id})
     elif type_ == "alert":
-        # Worker'da doğan alarm (ihlal alanı)
+        # Worker'da doğan alarm (ihlal alanı) — snapshot (kanıt karesi) count.py'de
+        # zaten üretiliyordu ama buradan geçerken düşüyordu (bkz. bus.py:BusStore.add_alert)
         store.add_alert(p.get("kind", "intrusion"), p.get("ref", ""),
-                        p.get("list_type", ""), p.get("label", ""), camera_id)
+                        p.get("list_type", ""), p.get("label", ""), camera_id,
+                        snapshot=p.get("snapshot") or "")
         _web(cfg, {"tur": p.get("kind", "intrusion"), "ref": p.get("ref", ""),
                    "etiket": p.get("label", ""), "kamera": camera_id})
     elif type_ == "vektor":
