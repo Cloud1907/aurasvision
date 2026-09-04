@@ -1168,6 +1168,70 @@ async def api_stream(ws: WebSocket):
             pass   # zaten kapanmış
 
 
+def _worker_detections(camera: str) -> dict:
+    """Worker'ın 127.0.0.1'e bağlı önizleme sunucusundan tespit listesini çeker.
+
+    urllib BLOKLAR — event loop'u kilitlememek için asyncio.to_thread ile
+    çağıran taraf (api_detections) sarmalı. Worker kapalıysa/kamera işlenmiyorsa
+    boş liste döner (hata değil — bağlantı kopmadan önce birkaç kez normal).
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    port = int(cfg.get("worker.preview_port", 8801))
+    url = f"http://127.0.0.1:{port}/detections/{urllib.parse.quote(camera, safe='')}"
+    try:
+        with urllib.request.urlopen(url, timeout=1) as r:
+            return json.loads(r.read())
+    except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError):
+        return {"dets": [], "frame_idx": None}
+
+
+@app.websocket("/api/detections")
+async def api_detections(ws: WebSocket):
+    """Canlı video üstüne kutu çizmek için: worker'ın kare başına ürettiği tespit
+    listesini (bkz. count.py:on_detections, worker.py:_tespit_itici) tarayıcıya
+    WebSocket'le akıtır. Resim DEĞİL — {id,x1,y1,x2,y2,cls,conf} listesi, birkaç
+    onlarca bayt; video kendi hızında (go2rtc/MSE) akmaya devam eder, kutular
+    istemcide ÜSTÜNE çizilir (bkz. src/count.py docstring — "Analiz" JPEG modunun
+    slayt-gösterisi hissine alternatif).
+    """
+    import asyncio
+
+    q = ws.query_params
+    oturum = kimlik.coz(ws.cookies.get(kimlik.OTURUM_CEREZ, ""))
+    izinli = (API_TOKEN and secrets.compare_digest(q.get("token", ""), API_TOKEN)) \
+        or (oturum is not None and oturum["ad"] in _kullanici_rolleri()) \
+        or (not API_TOKEN and not _kullanici_var())
+    if not izinli:
+        await ws.close(code=1008)
+        return
+    camera = q.get("camera", "")
+    if not camera:
+        await ws.close(code=1011)
+        return
+    await ws.accept()
+    son_kare = None
+    try:
+        while True:
+            snap = await asyncio.to_thread(_worker_detections, camera)
+            # frame_idx değişmediyse (worker o kamerayı işlemiyor/duraklattı) yeniden
+            # göndermek boşuna trafik — istemci zaten aynı kutuları çizmiş durumda
+            if snap.get("frame_idx") != son_kare:
+                son_kare = snap.get("frame_idx")
+                await ws.send_json(snap)
+            await asyncio.sleep(0.12)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"[detections] {camera} akışı hata: {e}", flush=True)
+    finally:
+        try:
+            await ws.close()
+        except RuntimeError:
+            pass
+
+
 # go2rtc oynatıcı bileşeni: CORS başlığı göndermediği için tarayıcı onu başka
 # origin'den ES module olarak YÜKLEYEMEZ → kendi origin'imizden vekilleriz.
 # Repoya kopyalamak yerine vekil: bileşen daima çalışan go2rtc sürümüyle eşleşir.

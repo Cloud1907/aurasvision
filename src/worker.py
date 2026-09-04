@@ -87,31 +87,67 @@ def _onizleme_itici(cid: str):
     return push
 
 
+# kamera_id → {"dets":[{id,x1,y1,x2,y2,cls,conf}...], "frame_idx": N}. Yalnız
+# bellekte (aynı KVKK ilkesi) — count.py'nin ZATEN hesapladığı kutuları taşır,
+# ekstra kod tarafında bir maliyet yok (kare BAŞINA çağrılır, throttle YOK —
+# resim değil birkaç onlarca baytlık liste, /api/detections istemciye kendi
+# hızında ilettiği için burada geciktirmenin faydası yok).
+_DETECTIONS: dict[str, dict] = {}
+_DETECTIONS_LOCK = threading.Lock()
+
+
+def _tespit_itici(cid: str):
+    """count.py'ye `on_detections` olarak verilir — bkz. count.py docstring'i:
+    video AYRI akar, kutular ayrı/hafif bir kanaldan gider (WebSocket ile
+    istemciye), sunucu resmi yeniden kodlayıp göndermez. Bu, "Analiz" JPEG
+    modunun slayt-gösterisi hissini gidermek için eklendi (kullanıcı: web/stream
+    olması değil, kutuların RESME gömülüp yeniden gönderilmesi sorunun kaynağıydı)."""
+    def push(dets: list[dict], frame_idx: int) -> None:
+        with _DETECTIONS_LOCK:
+            _DETECTIONS[cid] = {"dets": dets, "frame_idx": frame_idx}
+    return push
+
+
 class _OnizlemeHandler(BaseHTTPRequestHandler):
     """127.0.0.1'e bağlı, kimlik doğrulamasız minik sunucu — yalnız aynı makineden
-    server.py'nin proxy'lediği son kareyi verir. Dışa açık DEĞİL (operatör ağına
-    kimliksiz görüntü servisi koymamak için server.py:/api/live-frame arada durur)."""
+    server.py'nin proxy'lediği son kareyi/tespit listesini verir. Dışa açık DEĞİL
+    (operatör ağına kimliksiz servis koymamak için server.py arada durur)."""
 
     def log_message(self, *a) -> None:
         pass   # stdout'u istek başına satırla kirletme
 
-    def do_GET(self) -> None:
-        if not self.path.startswith("/frame/"):
-            self.send_response(404)
-            self.end_headers()
-            return
-        cid = self.path[len("/frame/"):].split("?")[0]
-        with _PREVIEW_LOCK:
-            data = _PREVIEW.get(cid)
-        if not data:
-            self.send_response(204)
-            self.end_headers()
-            return
+    def _json(self, obj) -> None:
+        import json
+        data = json.dumps(obj).encode("utf-8")
         self.send_response(200)
-        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def do_GET(self) -> None:
+        if self.path.startswith("/frame/"):
+            cid = self.path[len("/frame/"):].split("?")[0]
+            with _PREVIEW_LOCK:
+                data = _PREVIEW.get(cid)
+            if not data:
+                self.send_response(204)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if self.path.startswith("/detections/"):
+            cid = self.path[len("/detections/"):].split("?")[0]
+            with _DETECTIONS_LOCK:
+                snap = _DETECTIONS.get(cid)
+            self._json(snap or {"dets": [], "frame_idx": None})
+            return
+        self.send_response(404)
+        self.end_headers()
 
 
 def _onizleme_sunucusu_baslat(port: int) -> None:
@@ -186,7 +222,7 @@ def _gorev_calistir(gorev: str, source: str, cfg, bstore, cid: str,
         from .count import run_count
         run_count(source, cfg, store=bstore, camera_id=cid, lines=lines,
                   intrusions=ihlaller, should_stop=_kare_sayaci(cid),
-                  on_frame=_onizleme_itici(cid))
+                  on_frame=_onizleme_itici(cid), on_detections=_tespit_itici(cid))
     elif gorev == "plate":
         from .plate import run_plate
         run_plate(source, cfg, store=bstore, camera_id=cid,

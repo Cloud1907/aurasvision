@@ -129,6 +129,11 @@
   .tile .grad{position:absolute;left:0;right:0;bottom:0;height:92px;background:linear-gradient(transparent,rgba(0,0,0,.76));pointer-events:none;}
   .zone-ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;}
   .analiz-frame{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;background:#05070c;}
+  /* Video object-fit:contain kullanınca (tek kamera görünümü) siyah bantlar oluşur;
+     .ov-wrap JS'le TAM video içeriğinin kapladığı dikdörtgene konumlanır — aksi hâlde
+     çizgi/kutu bantların üstüne taşıp gerçek görüntüyle hizasız görünürdü. */
+  .ov-wrap{position:absolute;inset:0;pointer-events:none;z-index:2;}
+  .det-canvas{position:absolute;inset:0;width:100%;height:100%;}
   .tileact button.on{background:var(--accent);color:#fff;}
   .tile .nm{position:absolute;left:16px;bottom:14px;color:#fff;font-weight:700;font-size:15px;text-shadow:0 1px 4px rgba(0,0,0,.5);}
   .countbox{position:absolute;left:12px;top:10px;display:flex;gap:8px;background:rgba(8,9,11,.88);color:#fff;font-size:11px;font-weight:600;padding:4px 8px;border-radius:3px;z-index:2;border:1px solid rgba(255,255,255,.08);}
@@ -547,6 +552,30 @@ function zoneSvg(zones){
   };
   return `<svg class="zone-ov" viewBox="0 0 1 1" preserveAspectRatio="none">${zones.map(shape).join("")}</svg>`;
 }
+/* Canlı tespit kutuları — /api/detections WebSocket'inden gelen normalize [0,1]
+   koordinatları canvas'a çizer. SVG DEĞİL: viewBox 0..1 + preserveAspectRatio=none
+   metni orantısız gerdirirdi (video her zaman kare değil); canvas gerçek piksele
+   çizer, metin/çizgi bozulmaz. Her mesajda TAM temizlenip yeniden çizilir — kutu
+   sayısı azdır (birkaç kişi), maliyeti önemsiz. */
+function detCizCanvas(canvas,dets){
+  if(!canvas)return;
+  const w=canvas.clientWidth,h=canvas.clientHeight;
+  if(!w||!h)return;
+  if(canvas.width!==w)canvas.width=w;
+  if(canvas.height!==h)canvas.height=h;
+  const ctx=canvas.getContext("2d");
+  ctx.clearRect(0,0,w,h);
+  if(!dets||!dets.length)return;
+  ctx.lineWidth=2;ctx.strokeStyle="#22d3ee";ctx.font="600 12px system-ui,sans-serif";ctx.textBaseline="bottom";
+  for(const d of dets){
+    const x=d.x1*w,y=d.y1*h,bw=(d.x2-d.x1)*w,bh=(d.y2-d.y1)*h;
+    ctx.strokeRect(x,y,bw,bh);
+    const etiket=d.cls+(d.conf!=null?" "+Math.round(d.conf*100)+"%":"");
+    const tw=ctx.measureText(etiket).width;
+    ctx.fillStyle="#22d3ee";ctx.fillRect(x,Math.max(0,y-16),tw+8,16);
+    ctx.fillStyle="#03202b";ctx.fillText(etiket,x+4,Math.max(15,y));
+  }
+}
 /* "Analiz" modu: ham akış yerine worker'ın o an ürettiği kutu-çizili kareyi
    1 sn'de bir çeker (bkz. src/worker.py:_onizleme_itici, /api/live-frame).
    Gerçek zamanlı video DEĞİL — kabaca 1 fps'lik "şu an ne görüyor" önizlemesi. */
@@ -554,13 +583,16 @@ window._analizTimers={};
 function toggleAnaliz(id,btn){
   const tile=btn.closest(".tile");const img=tile&&tile.querySelector(".analiz-frame");
   if(!img)return;
+  const ovWrap=tile.querySelector(".ov-wrap");   // JPEG karede kutular ZATEN gömülü — çift çizim olmasın
   const acik=img.style.display!=="none";
   if(acik){
     clearInterval(window._analizTimers[id]);delete window._analizTimers[id];
     img.style.display="none";btn.classList.remove("on");
+    if(ovWrap)ovWrap.style.display="";
     if(btn.dataset.toggleLabel)btn.textContent="Analiz";
   }else{
     img.style.display="block";btn.classList.add("on");
+    if(ovWrap)ovWrap.style.display="none";
     if(btn.dataset.toggleLabel)btn.textContent="Ham görüntü";
     // Önce arka planda yükle, İMG'ye ancak TAM yüklenince ata — doğrudan
     // img.src= atansaydı yavaş ağda yarı-inmiş kare/kısa boşluk görünürdü
@@ -724,13 +756,14 @@ function openCam(id,ad){
   m.innerHTML=`<div class="camview full">
     <div class="camview-head"><b>${esc(ad)}</b>
       <span style="display:flex;gap:10px;align-items:center;"><span class="mut-s">tam çözünürlük</span>
-      <button class="btn sm" id="cv-analiz" data-toggle-label="1" title="Ham çözünürlüklü akışa geç"
-              onclick="toggleAnaliz('${esc(id)}',this)">Ham görüntü</button>
+      <button class="btn sm" id="cv-analiz" data-toggle-label="1" title="Plaka/yüz için: ~3 fps'lik anlık kare önizlemesi"
+              onclick="toggleAnaliz('${esc(id)}',this)">Analiz</button>
       <button class="btn sm ico" id="cv-x" title="kapat">${svg('x',15)}</button></span></div>
     <div class="camview-body">
       <div class="tile" data-state="wait">
         <div class="skel"></div><auras-stream data-src="${esc(id)}"></auras-stream>
         <img class="analiz-frame" data-cam="${esc(id)}" style="display:none;" alt="analiz görünümü"/>
+        <div class="ov-wrap"><canvas class="det-canvas"></canvas></div>
         <span class="nosig">${svg('cams',17)} Sinyal yok</span>
         <span class="live"><i></i> <b>BAĞLANIYOR</b></span></div>
       <div class="camside">
@@ -748,9 +781,10 @@ function openCam(id,ad){
       </div>
     </div></div>`;
   document.body.appendChild(m);
+  const tile=m.querySelector(".tile"),ovWrap=m.querySelector(".ov-wrap"),detCanvas=m.querySelector(".det-canvas");
   const sayimKart=m.querySelector("#cv-sayim"),sayimRows=m.querySelector("#cv-sayim-rows");
   api("/zones?camera="+encodeURIComponent(id)).then(z=>{
-    const tl=m.querySelector(".tile");if(tl)tl.insertAdjacentHTML("beforeend",zoneSvg(z));
+    ovWrap.insertAdjacentHTML("afterbegin",zoneSvg(z));
     const zc=m.querySelector("#cv-zones");
     if(zc)zc.textContent=z.length?z.map(x=>`${x.kind==="line"?"Çizgi":x.kind==="intrusion"?"İhlal alanı":"Bölge"}: ${x.name}`).join(" · "):"Çizgi/bölge tanımlı değil";
     const cizgiler=z.filter(x=>x.kind==="line");
@@ -759,11 +793,34 @@ function openCam(id,ad){
       cizgiler.forEach(x=>sayimRows.appendChild(cvSayimSatiri(x.name)));
     }
   }).catch(()=>{});
-  toggleAnaliz(id,m.querySelector("#cv-analiz"));   // tıklayınca doğrudan analiz görünümüyle açılsın
   delete window._cvSayimSeen[id];   // önceki açılıştan kalan "görüldü" kümesi taşınmasın
   cvSayimGuncelle(id,sayimRows);
   const strTimer=setInterval(()=>cvSayimGuncelle(id,sayimRows),2000);
-  const kapat=()=>{clearInterval(strTimer);clearInterval(window._analizTimers[id]);delete window._analizTimers[id];
+  // ov-wrap'i videonun GERÇEKTEN kapladığı dikdörtgene oturt (object-fit:contain
+  // bant bırakıyor) — video hazır olana kadar birkaç kez dener.
+  const konumla=()=>{
+    const v=tile.querySelector("auras-stream")?.video;
+    if(!v||!v.videoWidth){window._ovTimer=setTimeout(konumla,250);return;}
+    const cw=tile.clientWidth,ch=tile.clientHeight,vr=v.videoWidth/v.videoHeight,cr=cw/ch;
+    let w,h,x,y;
+    if(vr>cr){w=cw;h=cw/vr;x=0;y=(ch-h)/2;}else{h=ch;w=ch*vr;y=0;x=(cw-w)/2;}
+    ovWrap.style.left=x+"px";ovWrap.style.top=y+"px";ovWrap.style.width=w+"px";ovWrap.style.height=h+"px";
+  };
+  konumla();
+  window.addEventListener("resize",konumla);
+  // Sayım açıksa canlı kutu overlay'i (video AYNEN akar, kutu ayrı hafif kanaldan
+  // gelir — bkz. src/count.py:on_detections). Analiz JPEG modu ayrı, elle açılır.
+  let detWS=null;
+  if(t.count){
+    const proto=location.protocol==="https:"?"wss:":"ws:";
+    try{
+      detWS=new WebSocket(`${proto}//${location.host}/api/detections?camera=${encodeURIComponent(id)}${tokq()}`);
+      detWS.onmessage=ev=>{try{detCizCanvas(detCanvas,JSON.parse(ev.data).dets);}catch(e){}};
+    }catch(e){}
+  }
+  const kapat=()=>{clearInterval(strTimer);clearTimeout(window._ovTimer);window.removeEventListener("resize",konumla);
+    clearInterval(window._analizTimers[id]);delete window._analizTimers[id];
+    if(detWS)try{detWS.close();}catch(e){}
     m.remove();document.body.style.overflow="";document.removeEventListener("keydown",onkey);};
   const onkey=e=>{if(e.key==="Escape")kapat();};
   document.addEventListener("keydown",onkey);

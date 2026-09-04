@@ -42,7 +42,7 @@ def _ascii(s: str) -> str:
 def run_count(source: str, cfg: Config, save_video: bool = False,
               store=None, camera_id: str = "",
               lines: list[dict] | None = None, on_event=None,
-              on_frame=None,
+              on_frame=None, on_detections=None,
               should_stop: Callable[[], bool] | None = None,
               intrusions: list[dict] | None = None, on_alert=None) -> CountResult:
     """Videoda kişileri sayar.
@@ -50,6 +50,12 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
     `lines`: [{"name","pts":[[ax,ay],[bx,by]],"direction"}] normalize koordinat.
     direction: 'AtoB' (A→B geçişi = giriş, varsayılan) | 'BtoA' (ters).
     Verilmezse config'teki tek çizgi kullanılır.
+
+    `on_detections(dets, frame_idx)`: HER karede çağrılır (on_frame'in aksine kare
+    ANNOTATE edilmesini gerektirmez — yalnız zaten hesaplanmış kutu listesini normalize
+    [0,1] koordinatla verir). Canlı video üstüne İSTEMCİDE kutu çizmek için: sunucunun
+    resmi yeniden kodlayıp göndermesi yerine (ağır, "slayt gösterisi" gibi akar) birkaç
+    onlarca baytlık bir liste akıtılır — video kendi hızında akmaya devam eder.
     """
     import cv2
 
@@ -133,6 +139,21 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
         ts = real_frame / fps
 
         boxes = r.boxes
+        if on_detections is not None:
+            # Kutu kutu, kare BAŞINA — annotate/JPEG kodlama YOK, yalnız sayı listesi.
+            # Boş liste de gönderilir: istemci "artık kimse yok" bilgisini de almalı.
+            dets = []
+            if boxes is not None and boxes.id is not None:
+                _ids = boxes.id.int().tolist()
+                _xyxy = boxes.xyxy.tolist()
+                _cls = (boxes.cls.int().tolist() if boxes.cls is not None else [0] * len(_ids))
+                _conf = (boxes.conf.tolist() if boxes.conf is not None else [None] * len(_ids))
+                for tid, (x1, y1, x2, y2), cid, cf in zip(_ids, _xyxy, _cls, _conf):
+                    dets.append({"id": tid, "x1": round(x1 / w, 4), "y1": round(y1 / h, 4),
+                                "x2": round(x2 / w, 4), "y2": round(y2 / h, 4),
+                                "cls": yolo.names.get(cid, str(cid)),
+                                "conf": round(cf, 2) if cf is not None else None})
+            on_detections(dets, real_frame)
         if boxes is not None and boxes.id is not None:
             ids = boxes.id.int().tolist()
             xyxy = boxes.xyxy.tolist()
