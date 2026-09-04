@@ -93,15 +93,30 @@ negatif** (yangın/duman içermeyen) kare: yanlış alarmı bastıran şey pozit
 örnek değil negatif örnektir. ISO/TS 7240-29 yanlış alarm testi
 *tanımlamıyor* (FIA Fact File 90); o boşluğu ancak negatifler kapatır.
 
+D-Fire YOLO biçiminde dağıtılır, RF-DETR ise COCO ister — dönüştürücü
+`scripts/dfire_to_coco.py`. Dönüşümde negatif kareler `images` listesinde
+KALIR (`annotations`sız); etiketsiz görüntüyü atan naif dönüştürücü bu veri
+setinin yanlış-alarm bastıran parçasını siler.
+
 ```bash
-yolo detect train data=dfire.yaml model=yolo11s.pt imgsz=640 epochs=100 batch=16
+python scripts/dfire_to_coco.py --kaynak <d-fire> --hedef <coco> --valid-orani 0.1
+python scripts/fire_train.py --coco <coco> --epochs 10 --resolution 512
+python scripts/fire_eval.py  --model models/fire.pt --coco <coco>/test
 ```
 
-**Eğitim makinesi GB10'dur, bu Mac değil.** `docs/olcumler-gb10.md`: Blackwell
-sm_121, 128 GB birleşik bellek, CUDA 13.0. Geliştirme Mac'i M4/MPS'tir ve
-aynı işi büyüklük mertebesi yavaş yapar; ayrıca diskte yer dar. Çıkan
-`best.pt` → `models/fire.pt`; ağırlığı repoya **commit etme**, SHA'sını
-ölçüm belgesine yaz.
+> Buradaki komut 2026-09-02'ye kadar `yolo detect train ... model=yolo11s.pt`
+> yazıyordu — yani bu belgenin kendi RF-DETR kararıyla çelişen, Ultralytics
+> (AGPL-3.0) bir komut. Düzeltildi; eğitim hattında ultralytics import edilmez.
+
+**Çözünürlük 512'dir, 640 değil.** RF-DETR-Small'un pretrain çözünürlüğü 512
+ve konumsal kodlama ondan türer (PE = 512/16 = 32). Bu değer aynı zamanda
+küçük VRAM'de tek çalışabilen seçenektir. Küçük nesne (erken duman) recall'ı
+çözünürlükle iyileşir; daha büyük GPU'da 640 denemeye değer — açık uç.
+
+**Eğitim makinesi GB10 olarak planlanmıştı.** İlk gerçek eğitim 2026-09-02'de
+RTX 3050 (6 GB) üzerinde koşuldu; ölçüm ve kısıtlar
+`docs/olcumler-yangin-modeli.md`'de. Çıkan ağırlık → `models/fire.pt`;
+repoya **commit edilmez**, SHA'sı ölçüm belgesine yazılır.
 
 ## Donanım
 
