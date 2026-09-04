@@ -130,6 +130,21 @@ class BaseStore:
             out.setdefault(r["camera_id"], {})[r["kind"]] = int(r["n"])
         return out
 
+    def all_zones(self) -> dict[str, list[dict[str, Any]]]:
+        """Tüm kameraların TAM bölge/çizgi geometrisi — {camera_id: [zone, ...]}.
+
+        Canlı duvar görünümü, kamera başına ayrı /api/zones isteği atmak yerine
+        tek çağrıda çizilecek çizgi/bölgeleri alır (zone_counts() ile aynı N+1
+        gerekçesi — burada sayı değil geometri lazım). points/classes'ın
+        SQLite/Postgres'te farklı ayrıştırılması gerektiğinden (bkz. list_zones)
+        alt sınıfların kendi list_zones'u kamera kamera çağrılır; kamera sayısı
+        küçük olduğundan (onlarca) bu, ayrı SQL yolu yazmaktan daha güvenli.
+        """
+        out: dict[str, list[dict[str, Any]]] = {}
+        for r in self._all("SELECT DISTINCT camera_id FROM zones"):
+            out[r["camera_id"]] = self.list_zones(r["camera_id"])
+        return out
+
     def add_zone(self, camera_id: str, kind: str, name: str,
                  points: list, classes: list, direction: str) -> None:
         raise NotImplementedError

@@ -127,6 +127,9 @@
   .tile .skel{position:absolute;inset:0;background:linear-gradient(100deg,var(--panel-2) 30%,var(--hover) 50%,var(--panel-2) 70%);background-size:200% 100%;animation:shimmer 1.3s infinite;}
   @keyframes shimmer{from{background-position:200% 0;}to{background-position:-200% 0;}}
   .tile .grad{position:absolute;left:0;right:0;bottom:0;height:92px;background:linear-gradient(transparent,rgba(0,0,0,.76));pointer-events:none;}
+  .zone-ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;}
+  .analiz-frame{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;background:#05070c;}
+  .tileact button.on{background:var(--accent);color:#fff;}
   .tile .nm{position:absolute;left:16px;bottom:14px;color:#fff;font-weight:700;font-size:15px;text-shadow:0 1px 4px rgba(0,0,0,.5);}
   .countbox{position:absolute;left:12px;top:10px;display:flex;gap:8px;background:rgba(8,9,11,.88);color:#fff;font-size:11px;font-weight:600;padding:4px 8px;border-radius:3px;z-index:2;border:1px solid rgba(255,255,255,.08);}
   .countbox span{white-space:nowrap;}
@@ -524,6 +527,39 @@ function startSysWatch(){
 }
 /* Sayaç kutuları yalnız bir analiz KOŞARKEN görünür — ekran ilk açılışta eski toplamlarla dolmaz */
 function countBox(id){const c=LIVE_COUNTS[id];if(!LIVE_ACTIVE||!c)return `<div class="countbox" data-countbox="${esc(id)}" style="display:none;"></div>`;return `<div class="countbox" data-countbox="${esc(id)}"><span>${c.in} giriş</span><span>${c.out} çıkış</span></div>`;}
+/* Çizgi/bölge çizimi canlı görünümde de görünsün — operatör "sayım nerede sayıyor"
+   sorusuna zones ekranına gitmeden cevap bulsun. points normalize [0,1] (bkz. zones()
+   editörü px()), o yüzden viewBox="0 0 1 1" ile çözünürlükten bağımsız çizilir. */
+const ZONE_COL={line:"#22d3ee",zone:"#a78bfa",intrusion:"#f87171"};
+function zoneSvg(zones){
+  if(!zones||!zones.length)return "";
+  const shape=z=>{
+    const pts=(z.points||[]).map(p=>p[0].toFixed(4)+","+p[1].toFixed(4)).join(" ");
+    if(!pts)return "";
+    const c=ZONE_COL[z.kind]||ZONE_COL.line;
+    return z.kind==="line"
+      ?`<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="0.005"/>`
+      :`<polygon points="${pts}" fill="${c}" fill-opacity="0.14" stroke="${c}" stroke-width="0.005"/>`;
+  };
+  return `<svg class="zone-ov" viewBox="0 0 1 1" preserveAspectRatio="none">${zones.map(shape).join("")}</svg>`;
+}
+/* "Analiz" modu: ham akış yerine worker'ın o an ürettiği kutu-çizili kareyi
+   1 sn'de bir çeker (bkz. src/worker.py:_onizleme_itici, /api/live-frame).
+   Gerçek zamanlı video DEĞİL — kabaca 1 fps'lik "şu an ne görüyor" önizlemesi. */
+window._analizTimers={};
+function toggleAnaliz(id,btn){
+  const tile=btn.closest(".tile");const img=tile&&tile.querySelector(".analiz-frame");
+  if(!img)return;
+  const acik=img.style.display!=="none";
+  if(acik){
+    clearInterval(window._analizTimers[id]);delete window._analizTimers[id];
+    img.style.display="none";btn.classList.remove("on");
+  }else{
+    img.style.display="block";btn.classList.add("on");
+    const tik=()=>{img.src="/api/live-frame?camera="+encodeURIComponent(id)+tokq()+"&t="+Date.now();};
+    tik();window._analizTimers[id]=setInterval(tik,1000);
+  }
+}
 async function refreshLiveCounts(){try{const res=await api("/counts");LIVE_ACTIVE=!!res.active;const rows=res.rows||[];const next={};rows.forEach(r=>{next[r.camera_id]={in:Number(r.in_count||0),out:Number(r.out_count||0)};});LIVE_COUNTS=next;document.querySelectorAll("[data-countbox]").forEach(el=>{const y=countBox(el.dataset.countbox);if(el.outerHTML!==y)el.outerHTML=y;});
 // Panel kartları yalnız İÇERİK DEĞİŞİNCE yenilenir. Koşulsuz outerHTML her
 // 2 sn'de DOM'u söküp kuruyordu — ekran yanıp sönüyordu (sahada görüldü).
@@ -562,6 +598,7 @@ function render(){
   // Grup başlıkları NAV tanımından gelir — sekme eklerken menü kodu değişmesin
   $("#nav").innerHTML=NAV.map(n=>(n[3]?`<div class="lbl">${n[3]}</div>`:"")+navHtml(n)).join("");
   clearInterval(window._liveTimer);clearInterval(window._tileTimer);
+  Object.values(window._analizTimers||{}).forEach(clearInterval);window._analizTimers={};
   const t=TITLES[active];$("#ttl").textContent=t[0];$("#tsub").textContent=t[1];$("#tact").innerHTML="";
   const c=$("#content");c.style.animation="none";void c.offsetWidth;c.style.animation="";
   SCREENS[active]();
@@ -667,17 +704,24 @@ function openCam(id,ad){
   m.innerHTML=`<div class="camview full">
     <div class="camview-head"><b>${esc(ad)}</b>
       <span style="display:flex;gap:10px;align-items:center;"><span class="mut-s">tam çözünürlük</span>
+      <button class="btn sm" id="cv-analiz" title="Analiz görünümü (tespit kutuları, ~1 sn'de bir)"
+              onclick="toggleAnaliz('${esc(id)}',this)">Analiz</button>
       <button class="btn sm ico" id="cv-x" title="kapat">${svg('x',15)}</button></span></div>
     <div class="tile" data-state="wait">
       <div class="skel"></div><auras-stream data-src="${esc(id)}"></auras-stream>
+      <img class="analiz-frame" data-cam="${esc(id)}" style="display:none;" alt="analiz görünümü"/>
       <span class="nosig">${svg('cams',17)} Sinyal yok</span>
       <span class="live"><i></i> <b>BAĞLANIYOR</b></span></div>
     <div class="camstrip" id="cv-strip"><span class="mut-s">canlı veri bekleniyor…</span></div></div>`;
   document.body.appendChild(m);
+  api("/zones?camera="+encodeURIComponent(id)).then(z=>{
+    const t=m.querySelector(".tile");if(t)t.insertAdjacentHTML("beforeend",zoneSvg(z));
+  }).catch(()=>{});
   const strip=m.querySelector("#cv-strip");
   stripGuncelle(id,strip);
   const strTimer=setInterval(()=>stripGuncelle(id,strip),2000);
-  const kapat=()=>{clearInterval(strTimer);m.remove();document.body.style.overflow="";document.removeEventListener("keydown",onkey);};
+  const kapat=()=>{clearInterval(strTimer);clearInterval(window._analizTimers[id]);delete window._analizTimers[id];
+    m.remove();document.body.style.overflow="";document.removeEventListener("keydown",onkey);};
   const onkey=e=>{if(e.key==="Escape")kapat();};
   document.addEventListener("keydown",onkey);
   m.querySelector("#cv-x").onclick=kapat;
@@ -919,15 +963,16 @@ const SCREENS={
       kullaniciYukle();
     }catch(e){$("#sy-b").innerHTML=`<div class="card pad"><b style="color:var(--danger);">Sistem bilgisi alınamadı</b><div class="mut-s">${esc(String(e))}</div></div>`;}
   },
-  live(){
+  async live(){
     // go2rtc varsa gerçek canlı akış (MSE), yoksa 5 sn'de bir snapshot
     // Duvarda substream (varsa): 100 karoyu tam çözünürlükte çözmek tarayıcıyı boğar.
     // Tam çözünürlük tek-kamera görünümünde ve analizde kullanılır.
+    let allZones={};try{allZones=await api("/zones/all");}catch(e){}
     const wallSrc=c=>c.url_sub?c.id+"-sub":c.id;
     const inner=c=>SYS.go2rtc
-      ?`<div class="skel"></div><auras-stream data-src="${esc(wallSrc(c))}"></auras-stream>`
+      ?`<div class="skel"></div><auras-stream data-src="${esc(wallSrc(c))}"></auras-stream>${zoneSvg(allZones[c.id])}`
       :`<div class="skel"></div><img loading="lazy" src="${snap(c.id)}" data-cam="${esc(c.id)}" alt="${esc(c.name)}"
-             onload="this.classList.add('loaded');this.previousElementSibling.remove()"/>`;
+             onload="this.classList.add('loaded');this.previousElementSibling.remove()"/>${zoneSvg(allZones[c.id])}`;
     // Düzen seçimi operatörde kalır (localStorage) — her açılışta yeniden seçilmesin
     const duzen=window._grid||localStorage.getItem("vai-grid")||"auto";
     window._grid=duzen;
@@ -941,9 +986,11 @@ const SCREENS={
       <div class="tile ${SYS.go2rtc?'clickable':''}" data-state="${SYS.go2rtc?'wait':'live'}"
            ${SYS.go2rtc?`onclick="openCam('${esc(c.id)}','${esc(c.name)}')"`:''}>
         ${inner(c)}
+        <img class="analiz-frame" data-cam="${esc(c.id)}" style="display:none;" alt="analiz görünümü"/>
         <div class="grad"></div>
         <span class="nosig">${svg('cams',17)} Sinyal yok</span>
         <span class="tileact" onclick="event.stopPropagation();">
+          <button title="Analiz görünümü (tespit kutuları, ~1 sn'de bir)" onclick="toggleAnaliz('${esc(c.id)}',this)">${svg('events',15)}</button>
           <button title="Tek kamera görünümü" onclick="openCam('${esc(c.id)}','${esc(c.name)}')">${svg('live',15)}</button>
           <button title="Kayıtlara git" onclick="window._rc='${esc(c.id)}';go('rec')">${svg('play',15)}</button></span>
         <span class="live"><i></i> <b>${SYS.go2rtc?'BAĞLANIYOR':'CANLI'}</b></span>

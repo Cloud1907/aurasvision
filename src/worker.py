@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import akis
 from .bus import BusStore, YerelBus, open_bus, publish
@@ -34,14 +35,89 @@ def _kare_sayaci(cid: str):
 
     `should_stop` üç analiz modülünde de kare başına tam bir kez çağrılır
     (count.py, plate.py, face.py) — durdurma isteği olmadığı için hep False döner.
-    Tek amacı saymak. `on_frame` kancası da kare başına çağrılır ama karenin
-    ANNOTATE edilmesini zorlar (r.plot() + çizimler); heartbeat için her karede
-    çizim maliyeti ödemek anlamsız.
+    Tek amacı saymak.
     """
     def tik() -> bool:
         _FRAMES[cid] = _FRAMES.get(cid, 0) + 1
         return False
     return tik
+
+
+# kamera_id → son ANNOTATE edilmiş kare (JPEG). Yalnız bellekte tutulur (KVKK,
+# bkz. server.py:_frame_pusher ile aynı ilke) — canlı görünümün "Analiz" modu
+# bunu server.py üzerinden (aynı-origin proxy) çeker.
+_PREVIEW: dict[str, bytes] = {}
+_PREVIEW_LOCK = threading.Lock()
+_PREVIEW_MIN_INTERVAL = 1.0   # sn — sayım/analiz hızını ETKİLEMEZ, yalnız önizleme örnekleme sıklığı
+_PREVIEW_MAX_W = 960
+
+
+def _onizleme_itici(cid: str):
+    """count/plate/face'e `on_frame` olarak verilir.
+
+    Üç modül de on_frame VARSA r.plot() ile ANNOTATE edilmiş kareyi (kutular +
+    count.py'de ayrıca çizgi/bölge) üretir — bu zaten Test ekranının canlı
+    önizlemesinde kullanılan yol (server.py:_frame_pusher), burada aynı örüntü
+    sürekli çalışan worker'a taşınıyor. 1 sn'de bir örnekler; maliyet yalnız
+    çizim+JPEG kodlama, tespit zaten HER KAREDE çalışıyordu (marjinal maliyet düşük).
+    """
+    state = {"t": 0.0}
+
+    def push(frame) -> None:
+        now = time.monotonic()
+        if now - state["t"] < _PREVIEW_MIN_INTERVAL:
+            return
+        state["t"] = now
+        try:
+            import cv2
+            h, w = frame.shape[:2]
+            if w > _PREVIEW_MAX_W:
+                frame = cv2.resize(frame, (_PREVIEW_MAX_W, int(h * _PREVIEW_MAX_W / w)))
+            ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if ok:
+                with _PREVIEW_LOCK:
+                    _PREVIEW[cid] = buf.tobytes()
+        except Exception:
+            pass   # önizleme hatası analizi ASLA düşürmez
+
+    return push
+
+
+class _OnizlemeHandler(BaseHTTPRequestHandler):
+    """127.0.0.1'e bağlı, kimlik doğrulamasız minik sunucu — yalnız aynı makineden
+    server.py'nin proxy'lediği son kareyi verir. Dışa açık DEĞİL (operatör ağına
+    kimliksiz görüntü servisi koymamak için server.py:/api/live-frame arada durur)."""
+
+    def log_message(self, *a) -> None:
+        pass   # stdout'u istek başına satırla kirletme
+
+    def do_GET(self) -> None:
+        if not self.path.startswith("/frame/"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        cid = self.path[len("/frame/"):].split("?")[0]
+        with _PREVIEW_LOCK:
+            data = _PREVIEW.get(cid)
+        if not data:
+            self.send_response(204)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+def _onizleme_sunucusu_baslat(port: int) -> None:
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", port), _OnizlemeHandler)
+    except OSError as e:
+        print(f"[worker] önizleme sunucusu başlatılamadı (port {port}): {e} — "
+              f"canlı görünümün Analiz modu bu worker için çalışmaz", flush=True)
+        return
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 
 def _saved_lines(store, camera_id: str) -> list[dict]:
@@ -124,13 +200,14 @@ def _run_camera(cam: dict, cfg, bus) -> None:
                 _STAGE[cid] = "count"
                 from .count import run_count
                 run_count(source, cfg, store=bstore, camera_id=cid, lines=lines,
-                          intrusions=ihlaller, should_stop=_kare_sayaci(cid))
+                          intrusions=ihlaller, should_stop=_kare_sayaci(cid),
+                          on_frame=_onizleme_itici(cid))
                 did_work = True
             if tasks.get("plate"):
                 _STAGE[cid] = "plate"
                 from .plate import run_plate
                 run_plate(source, cfg, store=bstore, camera_id=cid,
-                          should_stop=_kare_sayaci(cid))
+                          should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
                 did_work = True
             if tasks.get("face"):
                 _STAGE[cid] = "face"
@@ -139,7 +216,7 @@ def _run_camera(cam: dict, cfg, bus) -> None:
                 watch = rstore.faces_with_embedding()
                 rstore.close()
                 run_face(source, cfg, store=bstore, camera_id=cid, watch=watch,
-                         should_stop=_kare_sayaci(cid))
+                         should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
                 did_work = True
             _STAGE[cid] = "idle"
         except Exception as e:
@@ -234,6 +311,7 @@ def main() -> None:
                       f"({e.__class__.__name__}: {e}) — ultralytics motoruna "
                       f"düşülüyor", flush=True)
 
+    _onizleme_sunucusu_baslat(int(cfg.get("worker.preview_port", 8801)))
     print(f"[worker] {len(cams)} kamera: {', '.join(c['id'] for c in cams)}")
     threads = [threading.Thread(target=_run_camera, args=(c, cfg, bus), daemon=True)
                for c in cams]

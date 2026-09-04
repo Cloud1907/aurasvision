@@ -1237,6 +1237,33 @@ def api_snapshot(camera: str = Query(...), fresh: int = 0):
                     headers={"Cache-Control": "public, max-age=4"})
 
 
+@app.get("/api/live-frame")
+def api_live_frame(camera: str = Query(...)):
+    """Canlı görünümün "Analiz" modu: worker'ın o an ürettiği ANNOTATE edilmiş
+    (kutu + çizgi/bölge) kareyi verir (bkz. worker.py:_onizleme_itici).
+
+    Worker'ın önizleme portu 127.0.0.1'e bağlı ve kimlik doğrulamasız — burada
+    aynı-origin proxy'lenir ki tarayıcı doğrudan o porta erişmesin (operatörün
+    ağına kimliksiz görüntü servisi açılmasın). Worker kapalıysa veya o kamera
+    için henüz kare üretilmediyse 204 döner (hata değil — panel bunu sessizce
+    "henüz yok" olarak gösterir).
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    port = int(cfg.get("worker.preview_port", 8801))
+    url = f"http://127.0.0.1:{port}/frame/{urllib.parse.quote(camera, safe='')}"
+    try:
+        with urllib.request.urlopen(url, timeout=2) as r:
+            if r.status == 204:
+                return Response(status_code=204)
+            data = r.read()
+    except (urllib.error.URLError, TimeoutError, ConnectionError):
+        return Response(status_code=204)   # worker'ın önizleme sunucusu ayakta değil
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
 class ZonePayload(BaseModel):
     camera: str
     zones: list[dict]   # [{kind, name, points:[[x,y]..], classes:[..], direction}]
@@ -1252,6 +1279,16 @@ def api_zone_summary():
     s = _store()
     try:
         return s.zone_counts()
+    finally:
+        s.close()
+
+
+@app.get("/api/zones/all")
+def api_get_all_zones():
+    """Canlı duvar görünümü için tüm kameraların çizgi/bölge geometrisi tek çağrıda."""
+    s = _store()
+    try:
+        return s.all_zones()
     finally:
         s.close()
 

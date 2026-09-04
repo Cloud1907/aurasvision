@@ -46,6 +46,11 @@ worker:
   loop_interval: 30   # ultralytics motoru, dosya kaynakları: tur arası bekleme sn (0 = tek geçiş)
   batch_max: 32       # nvdec: tek TensorRT inference'ına girecek azami kare
   second_stage_interval: 0.7   # nvdec: plaka/yüz tetikleri arası asgari sn (kamera başına)
+  # Canlı görünümün "Analiz" modu (annotate edilmiş kare) worker'ın bu yerel
+  # porttan verdiği son kareyi server.py üzerinden proxy'ler (127.0.0.1'e bağlı,
+  # dışa kapalı). server.py ve worker.py AYNI config'i okuduğu için elle
+  # eşleştirme gerekmez.
+  preview_port: 8801
 
 motion:               # nvdec: hareket ön-filtresi (Y-düzlemi fark, GPU)
   enabled: true
