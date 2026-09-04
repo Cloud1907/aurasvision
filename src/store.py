@@ -116,6 +116,20 @@ class BaseStore:
     def list_zones(self, camera_id: str) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    def zone_counts(self) -> dict[str, dict[str, int]]:
+        """Kamera başına bölge türü sayıları — {camera_id: {kind: adet}}.
+
+        Sayım görevi açık ama çizgisi çizilmemiş kamera TANIM GEREĞİ hiçbir şey
+        üretemez; GPU harcar, panelde "çalışıyor" görünür. Arayüz bunu uyarı
+        olarak gösterebilsin diye tek sorguda toplanır — kamera başına ayrı
+        istek 100 kameralı kurulumda 100 sorgu demekti.
+        """
+        out: dict[str, dict[str, int]] = {}
+        for r in self._all("SELECT camera_id, kind, COUNT(*) AS n FROM zones"
+                           " GROUP BY camera_id, kind"):
+            out.setdefault(r["camera_id"], {})[r["kind"]] = int(r["n"])
+        return out
+
     def add_zone(self, camera_id: str, kind: str, name: str,
                  points: list, classes: list, direction: str) -> None:
         raise NotImplementedError
@@ -186,6 +200,20 @@ class BaseStore:
     def latest_health(self) -> list[dict[str, Any]]:
         """Kamera başına en son heartbeat."""
         raise NotImplementedError
+
+    def prune_camera_health(self, ts) -> int:
+        """`ts`'den eski heartbeat satırlarını siler; silinen satır sayısını döndürür.
+
+        Heartbeat kamera başına 5 saniyede bir satır yazar: 4 kamerada günde
+        ~69 bin, 20 kamerada ~345 bin satır. Tablo YALNIZCA kamera silinince
+        temizleniyordu, yani süresiz büyüyordu — ölçüm (2026-08-27): 4 günde
+        214 bin satır. Panelin durum sorgusu her kamera için MAX(id) tarar,
+        yani tablo büyüdükçe panel de yavaşlar. Geçmiş heartbeat KANIT DEĞİLDİR
+        (olay/kayıt satırlarına dokunulmaz); yalnız anlık durum için tutulur.
+        """
+        cur = self._x("DELETE FROM camera_health WHERE time < ?", (ts,))
+        self.commit()
+        return int(getattr(cur, "rowcount", 0) or 0)
 
     def delete_camera(self, cid: str) -> None:
         self._x("DELETE FROM cameras WHERE id=?", (cid,))

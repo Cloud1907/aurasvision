@@ -89,8 +89,18 @@
   .section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:2px 0 14px;}
   .section-head b{font-size:15px;}
   .taskset{display:inline-flex;gap:6px;flex-wrap:wrap;}
-  .taskpill{font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;background:rgba(8,9,11,.6);color:#9aa1a8;letter-spacing:.05em;text-transform:uppercase;}
+  /* Duvardaki görev etiketleri GERÇEK anahtardır. Eskiden salt göstergeydiler ve
+     Kameralar ekranındaki çalışan düğmelerle birebir aynı görünüyorlardı —
+     kullanıcı kameraya bakarken tıklıyor, hiçbir şey olmuyordu. */
+  .taskpill{font:inherit;font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;border:1px solid transparent;background:rgba(8,9,11,.6);color:#9aa1a8;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;transition:all var(--t);}
+  .taskpill:hover{border-color:var(--ink-3);color:var(--ink-2);}
   .taskpill.on{background:var(--accent-soft);color:var(--accent);}
+  .taskpill.on:hover{border-color:var(--accent);}
+  /* Görev açık ama çalışması için gereken bölge çizilmemiş — sessizce boşa
+     çalışmasın diye hem duvarda hem kamera listesinde işaretlenir. */
+  .taskpill.eksik{background:var(--warn-soft);color:var(--warn);}
+  .chipbtn.eksik{background:var(--warn-soft);border-color:var(--warn);color:var(--warn);}
+  .eksikrozet{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--warn);white-space:nowrap;}
   /* Kamera duvarı düzeni — operatör kaç bölme istediğini seçer (klasik VMS davranışı).
      Yoğun ızgara bilinçli: operatör ekranında boşluk değil GÖRÜNTÜ olmalı. */
   .tiles{display:grid;grid-template-columns:repeat(var(--cols,2),minmax(0,1fr));gap:8px;}
@@ -460,9 +470,28 @@ function themeBtn(){const dark=document.documentElement.getAttribute('data-theme
 
 let SYS={go2rtc:""};
 async function boot(){themeBtn();
-  let ben={};[CAMS,SYS,ben]=await Promise.all([api("/cameras"),api("/sysinfo").catch(()=>({go2rtc:""})),api("/ben").catch(()=>({}))]);
+  let ben={};[CAMS,SYS,ben,ZC]=await Promise.all([api("/cameras"),api("/sysinfo").catch(()=>({go2rtc:""})),api("/ben").catch(()=>({})),api("/zones/summary").catch(()=>({}))]);
   if(ben.ad)BEN={ad:ben.ad,rol:ben.rol};window._kulTanimli=!!ben.kullanici_tanimli;benRozet();
   render();startLiveCounts();startSysWatch();}
+
+/* --- Görev / bölge tutarlılığı ---
+   Kameraya özel çizgi yoksa worker (src/worker.py) config.yaml'daki ORTAK
+   varsayılan çizgiye düşer — bu GERÇEKTEN sayım üretir (ölçüldü 3 Eylül:
+   özel çizgisi olmayan bir kamera 30 dk'da 11 olay üretti), o yüzden bunu
+   hata gibi göstermek YANLIŞ POZİTİFTİ (ilk yazımın hatası). Tek GERÇEKTEN
+   sıfır üreten durum: bir ihlal (intrusion) alanı VARKEN özel çizgi YOKSA —
+   worker o zaman varsayılana değil `lines=[]`e düşer (bilinçli: ihlal alanı
+   sayım çizgisiyle karışmasın). Bkz. src/worker.py: "İhlal alanı varken
+   çizgi yoksa [] geçilir: None config varsayılanına düşerdi". */
+let ZC={};
+function bolgeEksik(cam){
+  const t=cam.tasks||{};
+  if(!t.count)return false;
+  const z=ZC[cam.id]||{};
+  return !z.line && !!z.intrusion;   // yalnız GERÇEKTEN sıfır üreten durum
+}
+const eksikKameralar=()=>CAMS.filter(bolgeEksik);
+async function zonesYenile(){try{ZC=await api("/zones/summary");}catch(e){}}
 
 /* --- Sistem durumu (kenar çubuğu) ---
    Eskiden sabit "sistem aktif" yazıyordu: DB düşse, worker ölse bile yeşil.
@@ -501,7 +530,14 @@ async function refreshLiveCounts(){try{const res=await api("/counts");LIVE_ACTIV
 if(active==="panel"){const ov=document.querySelector("#pn-gorev");const y=overviewStats();
   if(ov&&ov.outerHTML!==y)ov.outerHTML=y;}}catch(e){}}
 function startLiveCounts(){clearInterval(window._countTimer);refreshLiveCounts();window._countTimer=setInterval(refreshLiveCounts,2000);}
-function taskPills(c){const t=c.tasks||{};return `<span class="taskset"><span class="taskpill ${t.count?'on':''}">Sayım</span><span class="taskpill ${t.plate?'on':''}">Plaka</span><span class="taskpill ${t.face?'on':''}">Yüz</span></span>`;}
+/* Duvardaki görev anahtarları. Karo tıklaması tek kamera görünümünü açtığı için
+   stopPropagation şart: görev açıp kapatmak görüntüyü tam ekrana ZIPLATMAMALI. */
+function taskPills(c){const t=c.tasks||{};
+  return `<span class="taskset">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"]].map(([k,l])=>{
+    const eksik=k==="count"&&bolgeEksik(c);
+    const ipucu=eksik?`${l} açık ama ihlal alanı çizgiyi geçersiz kılıyor — özel çizgi çiz`:`${l} görevini aç/kapat`;
+    return `<button type="button" class="taskpill ${t[k]?'on':''} ${eksik?'eksik':''}" title="${esc(ipucu)}"
+      onclick="event.stopPropagation();toggleTask('${esc(c.id)}','${k}')">${l}${eksik?' ⚠':''}</button>`;}).join("")}</span>`;}
 /* Canlı ekran özeti — eskiden "Toplam giriş: —" gibi anlamsız kutular vardı:
    hangi kamera, hangi görev, veri neden yok belli değildi. Artık her sayı
    HANGİ kameralara ait olduğunu söyler ve boşsa nedenini yazar. */
@@ -798,7 +834,7 @@ const SCREENS={
     try{
       const [st,uyari,ozet,ark]=await Promise.all([
         api("/status"),api("/alerts?limit=8&pending=true"),
-        api("/events/summary?hours=24"),api("/recordings/stats")]);
+        api("/events/summary?hours=24"),api("/recordings/stats"),zonesYenile()]);
       const sorunlu=(st.bilesenler||[]).filter(b=>!b.ok);
       const olay=(ozet.cameras||[]).reduce((n,c)=>n+c.count,0);
       const gb=(ark.total_bytes||0)/(1024**3);
@@ -810,6 +846,13 @@ const SCREENS={
              sorunlu.length?"var(--danger)":"var(--ok)")+
         kutu("Bekleyen uyarı",uyari.length,uyari.length?"operatör onayı bekliyor":"tümü kabul edildi",
              uyari.length?"var(--danger)":"")+
+        // Yalnız sorun varken görünür: "sayım açık, çizgi yok" kamera hiçbir şey
+        // üretmez ama her ekranda sağlıklı görünür — tek sessiz arıza sınıfı buydu.
+        (eksikKameralar().length
+          ? kutu("Eksik yapılandırma",eksikKameralar().length,
+                 esc(eksikKameralar().map(c=>c.name).join(", "))+" · sayım çizgisi yok",
+                 "var(--warn)")
+          : "")+
         kutu("Kamera",CAMS.length,`${(ark.cameras||[]).length} kamera kaydediliyor`)+
         kutu("Son 24 saat",olay,"olay kaydedildi")+
         kutu("Arşiv",gb<1?`${(gb*1024).toFixed(0)} MB`:`${gb.toFixed(1)} GB`,
@@ -827,7 +870,8 @@ const SCREENS={
         const durum=!taze?["boşta","var(--ink-3)"]:fps>0.1?[`${fps.toFixed(1)} fps`,"var(--ok)"]:["kare yok","var(--danger)"];
         return `<div class="row"><span class="av" style="background:var(--accent-soft);color:var(--accent);">${svg('cams',16)}</span>
           <div style="flex:1;min-width:0;"><div style="font-weight:700;">${esc(c.name)}</div>
-            <div class="mut-s">${Object.entries(c.tasks||{}).filter(([,v])=>v).map(([k])=>({count:'Sayım',plate:'Plaka',face:'Yüz'}[k])).join(' · ')||'görev yok'}</div></div>
+            <div class="mut-s">${["count","plate","face"].filter(k=>(c.tasks||{})[k]).map(k=>({count:'Sayım',plate:'Plaka',face:'Yüz'}[k])).join(' · ')||'analiz görevi yok'}${
+              bolgeEksik(c)?` · <b style="color:var(--warn)">⚠ ihlal alanı çizgiyi geçersiz kılıyor</b>`:""}</div></div>
           <span class="mut-s" style="color:${durum[1]};font-weight:700;">${durum[0]}</span></div>`}).join("");
     }catch(e){$("#pn-ust").innerHTML=`<div class="stat"><div class="k">Hata</div><div class="v">—</div><div class="s">${esc(String(e))}</div></div>`;}
   },
@@ -936,8 +980,12 @@ const SCREENS={
         <div class="camtur">${esc(kb.tur)}</div></td>
       <td class="camadr" title="${esc(maskUrl(c.source))}">${esc(kb.adres)}</td>
       <td><span class="rowstat ${d.k}"><i></i>${esc(d.t)}</span></td>
-      <td><span class="gorevler">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["record","Kayıt"]].map(([k,l])=>
-        `<button class="chipbtn ${(k==="record"?t[k]!==false:t[k])?'on':''}" title="${k==='record'?'Sürekli kaydı aç/kapat (NVR arşivi)':l+' görevini aç/kapat'}" onclick="toggleTask('${esc(c.id)}','${k}')">${l}</button>`).join("")}</span></td>
+      <td><span class="gorevler">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["record","Kayıt"]].map(([k,l])=>{
+        const eksik=k==="count"&&bolgeEksik(c);
+        const ip=k==='record'?'Sürekli kaydı aç/kapat (NVR arşivi)'
+                :eksik?`${l} açık ama ihlal alanı çizgiyi geçersiz kılıyor — özel çizgi çiz`:`${l} görevini aç/kapat`;
+        return `<button class="chipbtn ${(k==="record"?t[k]!==false:t[k])?'on':''} ${eksik?'eksik':''}" title="${esc(ip)}" onclick="toggleTask('${esc(c.id)}','${k}')">${l}${eksik?' ⚠':''}</button>`;}).join("")}
+        ${bolgeEksik(c)?`<a class="eksikrozet" title="Sayım çizgisi çiz" onclick="window._zc='${esc(c.id)}';go('zones')">⚠ çizgi gerekiyor</a>`:""}</span></td>
       <td><span class="eylem">
         <button class="btn sm ico" title="düzenle" onclick='openCamForm(${JSON.stringify({id:c.id,name:c.name,source:c.source,url_sub:c.url_sub||""}).replace(/'/g,"&#39;")})'>${svg('zones',14)}</button>
         <button class="btn sm ico" title="sil" onclick="delCam('${esc(c.id)}','${esc(c.name)}')">${svg('x',14)}</button></span></td></tr>`;};
@@ -1061,6 +1109,10 @@ const SCREENS={
   test(){
     const preferred=CAMS.find(c=>c.tasks&&(c.tasks.face||c.tasks.count||c.tasks.plate))||CAMS[0]||{};
     const camId=window._tc||preferred.id;window._tc=camId;
+    // Kaynak: canlı akış mı, arşivdeki bir an mı. Canlıda geçmiş bir olayı
+    // yeniden yakalamak imkânsızdı — araç geçtiğinde ekranda olman gerekiyordu.
+    const tsrc=window._tsrc||"canli";window._tsrc=tsrc;
+    if(tsrc==="arsiv")setTimeout(()=>arsivAraligi(camId),0);
     const cam=CAMS.find(c=>c.id===camId)||preferred;
     const enabled=["face","count","plate"].filter(k=>(cam.tasks||{})[k]);
     // 'analyze' (Hepsi) her zaman seçilebilir — görev listesinde olmadığı için fallback'e düşmesin
@@ -1080,6 +1132,16 @@ const SCREENS={
             <label for="tcam">Kamera</label>
             <select id="tcam" style="width:100%;" onchange="window._tc=this.value;window._tk=null;SCREENS.test()">${CAMS.map(c=>`<option value="${esc(c.id)}" ${c.id===camId?'selected':''}>${esc(c.name)}</option>`).join("")}</select>
             <div class="hint mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(maskUrl(cam.source||""))}</div></div>
+          <div class="field" style="margin:0;">
+            <label>Kaynak</label>
+            <div class="seg">${[["canli","Canlı"],["arsiv","Kayıttan"]].map(([v,l])=>
+              `<button class="${tsrc===v?'on':''}" onclick="window._tsrc='${v}';SCREENS.test()">${l}</button>`).join("")}</div></div>
+          ${tsrc==="arsiv"?`
+          <div class="field" style="margin:0;min-width:230px;">
+            <label for="tat">Hangi an</label>
+            <input type="datetime-local" id="tat" step="1" style="width:100%;" value="${esc(window._tat||"")}"
+                   onchange="window._tat=this.value"/>
+            <div class="hint" id="tarange">arşiv aralığı yükleniyor…</div></div>`:""}
           <div class="field" style="margin:0;">
             <label>Ne çalıştırılsın</label>
             <div class="seg">${kinds.map(k=>`<button class="${k[0]===kind?'on':''}" onclick="window._tk='${k[0]}';SCREENS.test()">${k[1]}</button>`).join("")}</div></div>
@@ -1398,7 +1460,7 @@ async function saveZones(){
   const st=$("#zstatus");
   try{
     const r=await api("/zones",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({camera:window._zc,zones:ZONES})});
-    if(r.ok){temizle();toast(`${r.count} çizim kaydedildi`);}
+    if(r.ok){temizle();await zonesYenile();toast(`${r.count} çizim kaydedildi`);}
     else if(st){st.textContent="⚠ kaydedilemedi: "+(r.detail||"bilinmeyen hata");st.style.color="var(--danger)";}
   }catch(e){
     // 500 vb. JSON olmayan yanıtta api() fırlatır — kullanıcı sessiz kalmasın
@@ -1423,15 +1485,45 @@ async function stopTest(){
 const cancelBand=msg=>`<div class="card pad" style="display:flex;align-items:center;gap:12px;">
   <span class="av" style="background:var(--warn-soft);color:var(--warn);">${svg('stop',16)}</span>
   <div><div style="font-weight:700;">${esc(msg)}</div><div class="mut-s">Analiz sonlandırıldı.</div></div></div>`;
+/* Arşiv aralığı — "hangi an" alanına ne yazacağını bilmek için. Kullanıcıya boş
+   bir takvim vermek, kaydın hangi saatleri kapsadığını bilmeden tahmin ettirmekti;
+   alan da en son segmentin başına ayarlanır (en olası test noktası). */
+async function arsivAraligi(camId){
+  const el=$("#tarange");if(!el)return;
+  try{
+    const r=await api(`/recordings?camera=${encodeURIComponent(camId)}&limit=20000`);
+    if(!r||!r.length){el.textContent="bu kamerada kayıt yok";el.style.color="var(--warn)";return;}
+    const zam=s=>new Date(String(s).replace(" ","T"));
+    let bas=zam(r[0].start_time),son=bas;
+    for(const x of r){const d=zam(x.start_time);if(d<bas)bas=d;if(d>son)son=d;}
+    const yerel=d=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,19);
+    el.textContent=`arşiv: ${bas.toLocaleString("tr-TR")} → ${son.toLocaleString("tr-TR")} · ${r.length} segment`;
+    el.style.color="";
+    const inp=$("#tat");
+    if(inp&&!window._tat){window._tat=yerel(son);inp.value=window._tat;}
+  }catch(e){el.textContent="arşiv okunamadı";el.style.color="var(--danger)";}
+}
+
 async function runTest(){
   const camera=window._tc,kind=window._tk;
+  // Arşiv modunda seçilen anı kapsayan segment analiz edilir; canlıda alan boş gider.
+  const at=(window._tsrc==="arsiv")?(window._tat||""):"";
+  if(window._tsrc==="arsiv"&&!at){toast("Önce arşivden bir an seçin","warn");return;}
   // Stale-loop koruması: her yeni çalıştırma sayacı artırır; eski poll döngüleri bayatlar ve sessizce çıkar
   window._runSeq=(window._runSeq||0)+1;const myRun=window._runSeq;
   setRun("başlıyor…");
   setRes(`<div class="card pad"><div class="skel" style="height:60px;border-radius:10px;"></div></div>`);
   try{
-    const {job_id}=await api("/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({camera,kind,realtime:window._trt!==false})});
+    const yanit=await api("/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({camera,kind,realtime:window._trt!==false,at})});
     if(window._runSeq!==myRun)return; // bayat: yeni test başladı, panele dokunma
+    // Arşivde o an kayıt yoksa/budandıysa sunucu 404 + detail döner — job_id gelmez.
+    if(!yanit||!yanit.job_id){
+      setRun(`<span style="color:var(--danger);">${esc((yanit&&yanit.detail)||"analiz başlatılamadı")}</span>`);
+      setRes(`<div class="card pad"><div class="mut-s">${esc((yanit&&yanit.detail)||"Bilinmeyen hata")}</div></div>`);
+      return;
+    }
+    const {job_id}=yanit;
+    if(yanit.arsiv)toast(`Arşiv segmenti: ${yanit.arsiv}`,"ok",4000);
     currentJobId=job_id;setStopBtn(true);
     let st,shownSeq=-1;
     for(let i=0;i<1500;i++){
@@ -2044,10 +2136,18 @@ async function toggleTask(cid,key){
   const t=Object.assign({count:false,plate:false,face:false,record:true},c.tasks||{});t[key]=!t[key];
   const r=await api(`/cameras/${encodeURIComponent(cid)}/tasks`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:t})});
   if(r&&r.ok){
-    c.tasks=r.tasks;SCREENS.cams();
+    c.tasks=r.tasks;
+    // AKTİF ekran yeniden çizilir. Sabit SCREENS.cams() çağrısı, duvardan görev
+    // değiştirildiğinde operatörü izlediği görüntüden koparıp listeye atıyordu.
+    if(SCREENS[active])SCREENS[active]();
+    const ad={count:"Sayım",plate:"Plaka",face:"Yüz",record:"Kayıt"}[key]||key;
+    toast(`${c.name} · ${ad} ${t[key]?"açıldı":"kapatıldı"}`,"ok",2500);
     // Görevi AÇARKEN worker yoksa kullanıcı bunu anında bilsin
     if(t[key]&&!workerCalisiyor())
       toast("Görev kaydedildi. Analiz servisi çalışmadığı için olay üretilmeyecek.","warn",8000);
+    // İhlal alanı varken özel çizgi yoksa worker sessizce sayımı devre dışı bırakır — açar açmaz söyle
+    if(key==="count"&&t.count&&bolgeEksik(c))
+      toast(`${ad} açıldı ama bu kamerada bir ihlal alanı var ve özel çizgi yok — Bölgeler ekranından çizmeden sayı üretilmez.`,"warn",9000);
   }
 }
 async function delCam(id,ad){

@@ -22,7 +22,7 @@ import secrets
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import cv2
@@ -143,6 +143,14 @@ def _sync_go2rtc() -> None:
     lines = ["# Otomatik üretilir (src/server.py) — kamera eklendikçe yenilenir.",
              "streams:"]
 
+    # go2rtc iki biçimde koşar: compose konteyneri (docker profili) ya da tek
+    # makinede bin/go2rtc.exe. Dosya kaynağının yolu ve ffmpeg'in yeri buna bağlı.
+    _yerel_go2rtc = any((ROOT / "bin" / ad).exists() for ad in ("go2rtc.exe", "go2rtc"))
+    _ff = ROOT / "bin" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    # Konteynerde ffmpeg imajın içinde ve PATH'te; tek makinede PATH'te olmayabilir
+    # (Windows'ta genelde yoktur) — yanına konulan ikili mutlak yolla çağrılır.
+    ffmpeg = str(_ff) if (_yerel_go2rtc and _ff.exists()) else "ffmpeg"
+
     def _go2rtc_src(src: str, kamera_basliklari: str = "") -> str:
         if src.startswith(("http://", "https://")):
             # Kameraya özgü başlık varsa genel ayarı EZER — farklı sağlayıcılar
@@ -159,18 +167,23 @@ def _sync_go2rtc() -> None:
                 # 93 sn'de 15 donma, her biri ~5.5 sn; izleyicide "donuyor
                 # sonra hızlanıyor"). Okuma gerçek zamana sabitlenir; 1.05,
                 # kaynağa yetişememe birikimini önleyen küçük pay.
-                return (f'exec:ffmpeg -readrate 1.05 -headers "{hdr}" -i "{src}"'
+                return (f'exec:{ffmpeg} -readrate 1.05 -headers "{hdr}" -i "{src}"'
                         " -an -c copy -f rtsp {output}")
             # Başlıksız HTTP/HLS de aynı patlama sorununu yaşar → aynı tempo
-            return (f'exec:ffmpeg -readrate 1.05 -i "{src}"'
+            return (f'exec:{ffmpeg} -readrate 1.05 -i "{src}"'
                     " -an -c copy -f rtsp {output}")
         if src.startswith(("rtsp://", "rtmp://")):
             return src
         # Dosya kaynağı → sonsuz döngülü RTSP (gerçek kamera simülasyonu).
-        # compose ./data/videos'u konteynerde /data/videos'a mount eder.
+        # Yol go2rtc'nin NEREDE koştuğuna bağlı: compose ./data/videos'u
+        # konteynerde /data/videos'a mount eder, ama tek makine profilinde
+        # (bin/go2rtc.exe) böyle bir mount yoktur — kök-mutlak yol Windows'ta
+        # hiç açılmaz; akış 404 verir, kayıt servisi her turda boş döner.
         # -an şart: sesli dosyada ffmpeg 8'in -re temposu bozuluyor (~0.56x
         # besleme → oynatıcı geride kalır, tampon boşalır, akış baştan başlar)
-        return (f"exec:ffmpeg -re -stream_loop -1 -i /{src.lstrip('/')}"
+        yol = (str((ROOT / src).resolve()) if _yerel_go2rtc
+               else "/" + src.lstrip("/"))
+        return (f'exec:{ffmpeg} -re -stream_loop -1 -i "{yol}"'
                 " -an -c copy -f rtsp {output}")
 
     for c in _cameras():
@@ -999,7 +1012,7 @@ def api_status():
     s = _store()
     try:
         simdi = datetime.now(timezone.utc)
-        taze, ureten, durgun = 0, 0, []
+        taze, ureten, bekleyen, durgun = 0, 0, 0, []
         for h in s.latest_health():
             t = str(h.get("time") or "")
             try:
@@ -1013,22 +1026,30 @@ def api_status():
             taze += 1
             if float(h.get("fps") or 0) > 0.1:
                 ureten += 1
+            elif str(h.get("status") or "") == "idle":
+                # Dosya kaynağı: bir geçiş biter, worker.loop_interval kadar bekler,
+                # baştan başlar. O aralıkta fps sıfırdır ama ARIZA YOKTUR. Bunu
+                # "durgun" saymak paneli demo/dosya kurulumlarında sürekli kırmızı
+                # tutuyordu — sürekli yanan lamba, gerçek arıza gününde okunmaz.
+                # (RTSP kaynakta akış hiç bitmez; bu dal yalnız dosyada çalışır.)
+                bekleyen += 1
             else:
                 durgun.append(str(h.get("camera_id") or "?"))
         kamera = len(_cameras())
     finally:
         s.close()
 
+    _bekleme = f" · {bekleyen} kamera görev arası" if bekleyen else ""
     if not taze:
         detay, ok = "çalışmıyor — sürekli analiz yok", False
-    elif ureten == 0:
+    elif ureten == 0 and not bekleyen:
         detay, ok = (f"{taze} kamera bağlı ama KARE ÜRETMİYOR "
                      f"({', '.join(durgun[:3])}) — kaynak erişilemiyor olabilir"), False
     elif durgun:
         detay, ok = (f"{ureten}/{taze} kamera işleniyor · durgun: "
-                     f"{', '.join(durgun[:3])}"), False
+                     f"{', '.join(durgun[:3])}{_bekleme}"), False
     else:
-        detay, ok = f"{ureten}/{kamera} kamera işleniyor", True
+        detay, ok = f"{ureten}/{kamera} kamera işleniyor{_bekleme}", True
     bilesenler.append({"ad": "Analiz worker", "ok": ok, "detay": detay, "ms": 0})
 
     # Kayıt servisi ayrı bileşen: mevzuat gereği çalışıyor olmalı, sessizce
@@ -1221,6 +1242,20 @@ class ZonePayload(BaseModel):
     zones: list[dict]   # [{kind, name, points:[[x,y]..], classes:[..], direction}]
 
 
+@app.get("/api/zones/summary")
+def api_zone_summary():
+    """Kamera başına bölge sayıları — arayüz "görev açık, bölge yok" uyarısı için.
+
+    Kamera listesi ve duvar bu tek çağrıyla eksik yapılandırmayı işaretler;
+    aksi hâlde her kamera için ayrı /api/zones isteği gerekirdi.
+    """
+    s = _store()
+    try:
+        return s.zone_counts()
+    finally:
+        s.close()
+
+
 @app.get("/api/zones")
 def api_get_zones(camera: str = Query(...)):
     s = _store()
@@ -1278,6 +1313,48 @@ class RunPayload(BaseModel):
     camera: str
     kind: str = "count"   # count | plate | face | analyze
     realtime: bool = True  # dosya kaynağını kamera hızında oynat (bkz. _frame_pusher)
+    # Boşsa kameranın CANLI kaynağı analiz edilir. Doluysa (ISO zaman damgası)
+    # o anı kapsayan ARŞİV segmenti analiz edilir — "istediğim ana gidip
+    # analizin ne okuduğunu göreyim" ihtiyacı. Canlıda geçmiş bir olayı
+    # yeniden yakalamak mümkün değildi; araç geçtiğinde orada olman gerekiyordu.
+    at: str = ""
+
+
+def _arsiv_segment(camera_id: str, an: str) -> tuple[str, str]:
+    """(mutlak dosya yolu, etiket) — `an` anını KAPSAYAN kayıt segmenti.
+
+    Yol kayıt kökünün altında çözülmek ZORUNDA: değer istemciden geliyor ve
+    doğrulanmazsa '../' ile dosya sisteminin geri kalanı analiz kaynağı
+    yapılabilirdi. Segment diskte yoksa (arşiv budaması sildiyse) bu ayrı bir
+    durumdur ve öyle söylenir — "kayıt yok" ile karıştırılmaz.
+    """
+    from .recorder import kayit_kok
+    try:
+        hedef = datetime.fromisoformat(an)
+    except ValueError:
+        raise HTTPException(400, "Geçersiz zaman biçimi")
+    if hedef.tzinfo is None:
+        hedef = hedef.astimezone()
+    s = _store()
+    try:
+        kayitlar = s.list_recordings(camera_id, None, None, 20000)
+    finally:
+        s.close()
+    kok = kayit_kok(cfg).resolve()
+    for r in kayitlar:
+        try:
+            bas = datetime.fromisoformat(str(r["start_time"]))
+        except ValueError:
+            continue
+        son = bas + timedelta(seconds=float(r["duration"] or 60))
+        if bas <= hedef <= son:
+            yol = (kok / str(r["path"])).resolve()
+            if not yol.is_relative_to(kok):
+                raise HTTPException(400, "Kayıt yolu arşiv dışına çıkıyor")
+            if not yol.exists():
+                raise HTTPException(404, "Segment diskte yok — arşiv budaması silmiş olabilir")
+            return str(yol), f"{bas:%d.%m.%Y %H:%M:%S}"
+    raise HTTPException(404, "Bu kameranın o anda kaydı yok")
 
 
 def _webify(video_rel: str) -> None:
@@ -1418,7 +1495,7 @@ class _SandboxStore:
     def close(self): pass
 
 
-def _run_analysis(job_id: str, p: "RunPayload") -> None:
+def _run_analysis(job_id: str, p: "RunPayload", arsiv_yolu: str = "") -> None:
     job = JOBS[job_id]
     cam = _camera(p.camera)
     if not cam:
@@ -1429,6 +1506,10 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
         job.update(stage="sırada bekliyor (başka analiz çalışıyor)")
         RUN_LOCK.acquire()
     source = cam["source"]; stem = Path(source).stem
+    # Arşiv koşusu: kaynak canlı akış değil, seçilen anı kapsayan mp4 segmenti.
+    # Aşağıdaki go2rtc röle mantığı ATLANMALI — o yalnız canlı akışlar içindir.
+    if arsiv_yolu:
+        source = arsiv_yolu; stem = Path(source).stem
     # Canlı HTTP/HLS kaynağı go2rtc RTSP rölesinden alınır (recorder ile aynı
     # gerekçe): ffmpeg ham HLS'i segment segment okur — 6 sn'lik patlama +
     # bekleme. Test önizlemesinde "hızlanıp donuyor" olarak görülen buydu;
@@ -1548,6 +1629,12 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
 
 @app.post("/api/run")
 def api_run(p: RunPayload):
+    # Arşiv segmenti EN BAŞTA çözülür: hata varsa (kayıt yok / budanmış / geçersiz
+    # zaman) istemci düzgün bir HTTP hatası alsın. Aşağıdaki iptal adımından sonra
+    # çözseydik, başarısız bir istek çalışan analizi boşuna öldürmüş olurdu.
+    arsiv = ("", "")
+    if p.at:
+        arsiv = _arsiv_segment(p.camera, p.at)
     # Yeni koşu eski koşuyu bekletmez: çalışan tüm job'lar iptale çekilir
     # (nihai "cancelled" durumunu analiz thread'i yazar). Check-and-set kilit
     # altında: thread'in az önce yazdığı terminal durum ezilmez.
@@ -1562,9 +1649,9 @@ def api_run(p: RunPayload):
     while len(JOBS) > 50:   # eski job kayıtları birikmesin
         JOBS.pop(next(iter(JOBS)))
     JOBS[job_id] = {"status": "running", "stage": "başlıyor", "summary": {}, "videos": [],
-                    "cancel": threading.Event()}
-    threading.Thread(target=_run_analysis, args=(job_id, p), daemon=True).start()
-    return {"job_id": job_id}
+                    "arsiv": arsiv[1], "cancel": threading.Event()}
+    threading.Thread(target=_run_analysis, args=(job_id, p, arsiv[0]), daemon=True).start()
+    return {"job_id": job_id, "arsiv": arsiv[1]}
 
 
 @app.get("/api/run/{job_id}")
