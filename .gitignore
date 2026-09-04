@@ -12,6 +12,7 @@ __pycache__/
 
 # Veri & çıktı
 data/videos/
+data/gt-*.json
 output/
 *.db
 *.sqlite
