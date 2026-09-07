@@ -1316,13 +1316,13 @@ const SCREENS={
     const tsrc=window._tsrc||"canli";window._tsrc=tsrc;
     if(tsrc==="arsiv")setTimeout(()=>arsivAraligi(camId),0);
     const cam=CAMS.find(c=>c.id===camId)||preferred;
-    const enabled=["face","count","plate"].filter(k=>(cam.tasks||{})[k]);
+    const enabled=["face","count","plate","fire"].filter(k=>(cam.tasks||{})[k]);
     // 'analyze' (Hepsi) her zaman seçilebilir — görev listesinde olmadığı için fallback'e düşmesin
     const kind=(window._tk&&(window._tk==="analyze"||!enabled.length||enabled.includes(window._tk)))?window._tk:(enabled[0]||"face");window._tk=kind;
-    const kinds=[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["analyze","Hepsi"]];
+    const kinds=[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["fire","Yangın"],["analyze","Hepsi"]];
     // Bu kamerada ne tanımlı — kullanıcı çalıştırmadan önce ne olacağını bilmeli
-    const acik=["count","plate","face"].filter(k=>(cam.tasks||{})[k]);
-    const etiket={count:"Sayım",plate:"Plaka",face:"Yüz"};
+    const acik=["count","plate","face","fire"].filter(k=>(cam.tasks||{})[k]);
+    const etiket={count:"Sayım",plate:"Plaka",face:"Yüz",fire:"Yangın"};
     $("#tact").innerHTML=`<button class="btn pri" onclick="runTest()">${svg('play',15)} Analizi çalıştır</button>`;
     $("#content").innerHTML=`<div class="card pad" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;">
         <span class="av" style="background:var(--warn-soft);color:var(--warn);">i</span>
@@ -1738,9 +1738,11 @@ async function runTest(){
       if(st.frame_seq&&st.frame_seq!==shownSeq){shownSeq=st.frame_seq;const f=$("#liveframe");if(f){f.src=`/api/run/${job_id}/frame?seq=${st.frame_seq}${tokq()}`;f.style.display="block";const ph=$("#liveph");if(ph)ph.remove();}}
       // Metrikler görüntünün YANINDA akar; "analyze"da aktif aşamanın paneli gösterilir
       const stage=st.stage||"";
-      if(stage.startsWith("Yüz")&&st.face_live)renderLiveFace(st.face_live);
+      if(stage.startsWith("Yangın")&&st.fire_live)renderLiveFire(st.fire_live);
+      else if(stage.startsWith("Yüz")&&st.face_live)renderLiveFace(st.face_live);
       else if(stage.startsWith("Plaka")&&st.live)renderLive(st.live);
       else if(st.count_live)renderLiveCount(st.count_live);
+      else if(st.fire_live)renderLiveFire(st.fire_live);
       else if(st.face_live)renderLiveFace(st.face_live);
       else if(st.live&&st.live.length)renderLive(st.live);
       await new Promise(r=>setTimeout(r,150));
@@ -1820,6 +1822,15 @@ function renderLiveCount(live){
     </div>`);
   if(rows._keys&&cnt.textContent!=String(rows._keys.size))cnt.textContent=rows._keys.size;
 }
+function fireRows(olaylar){
+  return (olaylar||[]).slice().reverse().map(o=>`<div class="row"><span class="av" style="background:${o.durum==="alarm"?"var(--danger-soft)":"var(--warn-soft)"};color:${o.durum==="alarm"?"var(--danger)":"var(--warn)"};">${o.durum==="alarm"?"!":"?"}</span>
+    <div style="flex:1;"><div style="font-weight:700;">${o.durum==="alarm"?"ALARM":"Ön uyarı"} · ${esc(o.sinif)}</div><div class="mut-s">güven %${Math.round((o.conf||0)*100)} · kare ${o.frame} · ${o.ts} sn</div></div>
+    ${o.snapshot?`<img class="kanit" src="/media/${esc(o.snapshot)}${tokq().replace('&','?')}" alt="kanıt" onclick="kanitAc('${esc(o.snapshot)}')" style="width:96px;border-radius:6px;cursor:zoom-in;"/>`:""}</div>`).join("");
+}
+function renderLiveFire(live){
+  const tgt=_tm();if(!tgt)return;
+  tgt.innerHTML=`<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin-bottom:14px;"><div class="metric"><div class="k">Canlı yangın · işlenen kare</div><div class="v">${live.frames||0}</div><div class="mut-s">2×2 karo, zamansal doğrulama</div></div><div class="metric" ${live.on_uyari?'style="border:1px solid var(--warn);"':''}><div class="k">Ön uyarı</div><div class="v">${live.on_uyari||0}</div><div class="mut-s">pencerede doğrulanan odak</div></div><div class="metric" ${live.alarm?'style="border:1px solid var(--danger);"':''}><div class="k">Alarm</div><div class="v">${live.alarm||0}</div><div class="mut-s">ön uyarı sürdü → kanıt + klip</div></div></div><div class="card"><div style="padding:12px 16px;border-bottom:1px solid var(--line);font-weight:700;display:flex;align-items:center;gap:8px;">${svg('events',17)} Yangın olayları</div>${fireRows(live.olaylar)||'<div class="empty">Alev/duman izleniyor. Tek kare alarm üretmez; pencere içinde doğrulama bekleniyor.</div>'}</div>`;
+}
 function renderLiveFace(live){
   const matches=(live.matches||[]).map(m=>`<div class="row"><span class="av" style="background:var(--danger-soft);color:var(--danger);">!</span><div style="flex:1;"><div style="font-weight:700;">${esc(m.name)}</div><div class="mut-s">${esc(m.label||'')} · ${esc(m.list_type||'')}</div></div><span class="mono mut-s">${m.score}</span></div>`).join("");
   const tgt=_tm();if(!tgt)return;
@@ -1850,6 +1861,7 @@ function renderResult(s,videos){
   if(s.plate){const al=s.plate.alerts||[],vt=s.plate.voted||[];
     const list=vt.length?vt.slice(0,10).map(v=>`${esc(v.plate)}<span class="mut-s"> ×${v.count}</span>`).join(" · "):(s.plate.plates||[]).slice(0,10).map(esc).join(" · ");
     m.push(`<div class="metric" ${al.length?'style="border:1px solid var(--danger);"':''}><div class="k">Plaka · ${s.plate.total} okuma → ${vt.length} araç (oylama)</div><div class="mono" style="margin-top:4px;font-size:13px;line-height:1.9;">${list||'—'}</div>${al.length?`<div class="chip" style="background:var(--danger-soft);color:var(--danger);margin-top:8px;">⚠ ${al.length} kara liste: ${esc(al.map(a=>a.plate).join(", "))}</div>`:''}</div>`);}
+  if(s.fire){m.push(`<div class="metric" ${s.fire.alarm?'style="border:1px solid var(--danger);"':(s.fire.on_uyari?'style="border:1px solid var(--warn);"':'')}><div class="k">Yangın/duman erken uyarı</div><div class="v">${s.fire.alarm} <span class="mut" style="font-size:15px;">alarm</span> · ${s.fire.on_uyari} <span class="mut" style="font-size:15px;">ön uyarı</span></div><div class="mut-s">${s.fire.frames} kare işlendi · ${esc(s.fire.feragat||'')}</div>${fireRows(s.fire.olaylar)?`<div style="margin-top:10px;">${fireRows(s.fire.olaylar)}</div>`:''}</div>`);}
   if(s.face){const al=s.face.alerts||[];m.push(`<div class="metric" ${al.length?'style="border:1px solid var(--danger);"':''}><div class="k">Yüz (anonim) · kişi</div><div class="v">${s.face.detections}</div><div class="mut-s">E:${s.face.male} · K:${s.face.female} · ort. yaş ${s.face.avg_age}</div>${al.length?`<div class="chip" style="background:var(--danger-soft);color:var(--danger);margin-top:8px;">⚠ ${al.length} liste eşleşmesi: ${esc(al.map(a=>a.name).join(", "))}</div>`:''}</div>`);}
   const cb="?t="+Date.now()+tokq();  // cache-buster + erişim anahtarı
   const vids=(videos||[]).map((v,i)=>`<div class="card pad" style="margin-top:14px;"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;"><div style="font-weight:700;display:flex;align-items:center;gap:8px;">${svg('play',17)} Sonuç videosu ${videos.length>1?i+1:''}</div><a class="btn sm" href="${v}${cb}" target="_blank" rel="noopener">Yeni sekmede aç</a></div><video src="${v}${cb}" controls preload="metadata" style="width:100%;display:block;border-radius:var(--r-lg);border:1px solid var(--line);background:#000;box-shadow:var(--shadow);"></video></div>`).join("");

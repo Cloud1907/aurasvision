@@ -1477,6 +1477,23 @@ def api_save_zones(payload: ZonePayload):
         s.close()
 
 
+def _saved_fire_zones(camera_id: str) -> tuple[list[dict], list[dict]]:
+    """(izleme alanları, maskeler) — kind='fire' / 'firemask' (worker ile aynı kural)."""
+    s = _store()
+    try:
+        izleme, maske = [], []
+        for z in s.list_zones(camera_id):
+            if len(z.get("points") or []) < 3:
+                continue
+            if z["kind"] == "fire":
+                izleme.append({"name": z.get("name") or "Izleme alani", "points": z["points"]})
+            elif z["kind"] == "firemask":
+                maske.append({"name": z.get("name") or "Maske", "points": z["points"]})
+        return izleme, maske
+    finally:
+        s.close()
+
+
 def _saved_intrusions(camera_id: str) -> list[dict]:
     """Kameranın 'intrusion' bölgeleri [{name,points,classes}] — ihlal alanları."""
     out: list[dict] = []
@@ -1509,7 +1526,7 @@ def _saved_lines(camera_id: str) -> list[dict]:
 
 class RunPayload(BaseModel):
     camera: str
-    kind: str = "count"   # count | plate | face | analyze
+    kind: str = "count"   # count | plate | face | fire | analyze
     realtime: bool = True  # dosya kaynağını kamera hızında oynat (bkz. _frame_pusher)
     # Boşsa kameranın CANLI kaynağı analiz edilir. Doluysa (ISO zaman damgası)
     # o anı kapsayan ARŞİV segmenti analiz edilir — "istediğim ana gidip
@@ -1805,6 +1822,59 @@ def _run_analysis(job_id: str, p: "RunPayload", arsiv_yolu: str = "") -> None:
             summary["face"] = {"detections": res.detections, "male": res.male, "female": res.female,
                                "avg_age": round(res.avg_age, 1), "alerts": res.matches}
             videos.append(f"/media/{stem}_face.mp4")
+        if job["cancel"].is_set():
+            with JOBS_STATE_LOCK:
+                job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
+            return
+        # Yangın: tek başına seçilince her zaman; "Hepsi"de yalnız kamerada görev
+        # açıksa (model yüklemesi ~35 sn — istemeyen kullanıcıya bekletilmez).
+        if p.kind == "fire" or (p.kind == "analyze" and (cam.get("tasks") or {}).get("fire")):
+            job.update(stage="Yangın çalışıyor")
+            job["fire_live"] = {"frames": 0, "on_uyari": 0, "alarm": 0, "olaylar": []}
+            from .fire import FERAGAT, run_fire
+            izleme, maske = _saved_fire_zones(p.camera)
+            fl = job["fire_live"]
+
+            def _on_fire(o):
+                fl[o["durum"]] = fl.get(o["durum"], 0) + 1
+                fl["olaylar"].append({"durum": o["durum"], "sinif": o["sinif"],
+                                      "conf": o["conf"], "ts": o["ts_seconds"],
+                                      "frame": o["frame_idx"], "snapshot": o.get("snapshot", ""),
+                                      "clip": o.get("clip", "")})
+                fl["olaylar"] = fl["olaylar"][-30:]
+
+            # Sonuç videosu: run_fire kendisi yazmaz (canlı hat için gereksiz);
+            # burada annotated kareler _count/_plate ile aynı yere yazılır.
+            import cv2
+            out_dir = Path(cfg.get("paths.output_dir", "output"))
+            out_dir.mkdir(parents=True, exist_ok=True)
+            vid_path = out_dir / f"{stem}_fire.mp4"
+            yazici: dict = {}
+
+            def _on_fire_frame(kare):
+                fl["frames"] += 1
+                if "w" not in yazici:
+                    h, w = kare.shape[:2]
+                    yazici["w"] = cv2.VideoWriter(str(vid_path), cv2.VideoWriter_fourcc(*"mp4v"),
+                                                  8.0, (w, h))
+                if yazici["w"].isOpened():
+                    yazici["w"].write(kare)
+                push_frame(kare)
+
+            s.start_run("fire", source)
+            try:
+                res = run_fire(source, cfg, store=kum, camera_id=p.camera,
+                               bolgeler=izleme, maskeler=maske,
+                               on_event=_on_fire, on_alert=_on_fire,
+                               on_frame=_on_fire_frame, should_stop=job["cancel"].is_set)
+            finally:
+                if "w" in yazici:
+                    yazici["w"].release()
+            summary["fire"] = {"frames": res.frames, "on_uyari": len(res.on_uyarilar),
+                               "alarm": len(res.alarmlar), "olaylar": fl["olaylar"],
+                               "feragat": FERAGAT}
+            if "w" in yazici:
+                videos.append(f"/media/{stem}_fire.mp4")
         if job["cancel"].is_set():
             with JOBS_STATE_LOCK:
                 job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])

@@ -68,3 +68,29 @@ class KaroTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KameraCooldownTest(unittest.TestCase):
+    """Gerçek yangında alev yer değiştirir, IoU bağı kopar, her yeni odak ayrı alarm
+    üretirdi (FURG mangal: 30 sn'de 35 alarm). Kamera düzeyi cooldown: ilk alarmdan
+    sonra cooldown dolana dek başka odak alarm/ön uyarı YAYMAZ."""
+
+    def test_yeni_odak_cooldown_icinde_alarm_uretmez(self):
+        from src.fire import DumanTakip
+        t = DumanTakip(1000, 1000, dogrulama_kare=2, alarm_sn=1.0, cooldown_sn=60.0, pencere_sn=10.0)
+        olaylar = []
+        # odak A: 0-2 sn → ön uyarı + alarm
+        for i in range(6):
+            olaylar += t.guncelle([("fire", 10, 10, 50, 50, 0.9)], i * 0.5)
+        self.assertEqual([o["durum"] for o in olaylar], ["on_uyari", "alarm"])
+        # odak B (uzak, IoU 0) 3-6 sn: kamera alarmda → HİÇ olay yok
+        olaylar = []
+        for i in range(6):
+            olaylar += t.guncelle([("fire", 800, 800, 900, 900, 0.9)], 3.0 + i * 0.5)
+        self.assertEqual(olaylar, [])
+        # cooldown dolunca süren yangın (B odağı sessizce alarm durumundaydı)
+        # TEK hatırlatma alarmı verir — ön uyarıya geri düşmez
+        olaylar = []
+        for i in range(6):
+            olaylar += t.guncelle([("fire", 800, 800, 900, 900, 0.9)], 65.0 + i * 0.5)
+        self.assertEqual([o["durum"] for o in olaylar], ["alarm"])

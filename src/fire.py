@@ -125,6 +125,12 @@ class DumanTakip:
         self.maskeler = _piksel_poligonlar(maskeler, w, h)
         self.odaklar: list[dict[str, Any]] = []
         self._sonraki_id = 1
+        # KAMERA düzeyi alarm cooldown'u. Odak-başına cooldown yetmiyor: gerçek
+        # yangında alev yer değiştirdikçe (IoU bağı kopar) her yeni odak kendi
+        # alarmını üretiyordu — FURG mangal videosunda 30 sn'de 35 alarm (ölçüm
+        # 2026-09-07). Aynı kamerada bir alarm verildikten sonra cooldown dolana
+        # dek yeni odaklar alarm/ön uyarı YAYMAZ; hatırlatma tek odaktan gelir.
+        self._kamera_son_alarm = -1e9
 
     def _gecerli(self, kutu) -> bool:
         cx = (kutu[0] + kutu[2]) / 2.0
@@ -187,17 +193,22 @@ class DumanTakip:
         n = len(o["vurus"])
         if n < self.dogrulama:
             return []
+        sessiz = ts - self._kamera_son_alarm < self.cooldown   # kamera alarmda
         if o["durum"] == "izle":
             o["durum"] = "on_uyari"
             o["onay_ts"] = o["vurus"][0]     # doğrulamanın BAŞLADIĞI an
-            return [self._olay(o, "on_uyari", ts, n)]
+            return [] if sessiz else [self._olay(o, "on_uyari", ts, n)]
         if o["durum"] == "on_uyari" and ts - o["onay_ts"] >= self.alarm_sn:
             o["durum"] = "alarm"
             o["son_alarm"] = ts
+            if sessiz:
+                return []
+            self._kamera_son_alarm = ts
             return [self._olay(o, "alarm", ts, n)]
         # Süren yangın sessizleşmesin: cooldown dolunca hatırlatılır
-        if o["durum"] == "alarm" and ts - o["son_alarm"] >= self.cooldown:
+        if o["durum"] == "alarm" and ts - o["son_alarm"] >= self.cooldown and not sessiz:
             o["son_alarm"] = ts
+            self._kamera_son_alarm = ts
             return [self._olay(o, "alarm", ts, n)]
         return []
 

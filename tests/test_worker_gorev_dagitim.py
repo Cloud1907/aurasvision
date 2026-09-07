@@ -45,7 +45,7 @@ class GorevThreadIzolasyonuTest(unittest.TestCase):
     def test_hatasiz_gorev_normal_calisir(self):
         with patch("src.worker._gorev_calistir") as m:
             _gorev_thread_calistir("count", "rtsp://x", None, None, "kamera-204", None, [])
-            m.assert_called_once_with("count", "rtsp://x", None, None, "kamera-204", None, [], None)
+            m.assert_called_once_with("count", "rtsp://x", None, None, "kamera-204", None, [], None, None)
 
 
 if __name__ == "__main__":
