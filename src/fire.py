@@ -280,6 +280,41 @@ def _alarm_kanitla(cfg, olay: dict, kare, halka, camera_id: str,
                                fps=efektif_fps)
 
 
+def _karo_birlestir(tespitler: list[tuple], iou_esik: float = 0.5) -> list[tuple]:
+    """Bindirmeli karolarda aynı nesne iki kez çıkar: aynı sınıf + IoU ≥ eşik → yüksek güvenli kalır."""
+    sirali = sorted(tespitler, key=lambda t: -float(t[5]))
+    kalan: list[tuple] = []
+    for t in sirali:
+        if any(t[0] == k[0] and _iou(t[1:5], k[1:5]) >= iou_esik for k in kalan):
+            continue
+        kalan.append(t)
+    return kalan
+
+
+def tespit_karolu(ded, kare, n: int, bindirme: float = 0.08) -> list[tuple]:
+    """Kareyi n×n bindirmeli karoya böler, her karoyu ayrı geçirir, kutuları geri taşır.
+
+    Neden: dedektör 512'ye küçültür; 2K kadrajda kovada yeni tutuşan alev ~10
+    piksele iner ve ilk 10-15 sn GÖRÜLMEZ. Saha ölçümü (docs/olcumler-yangin-saha-
+    2026-09-02.md): tek karede ilk alev tespiti tutuşmadan 14 sn sonra, 2×2 karoda
+    3 sn sonra; tespitli kare oranı 100/550 → 349/550. Maliyet n² kat inference —
+    yangın hattı zaten seyrek (stride) koştuğu için kabul edilebilir.
+    """
+    if n <= 1:
+        return ded.tespit(kare)
+    h, w = kare.shape[:2]
+    kh, kw = h // n, w // n
+    ph, pw = int(kh * bindirme), int(kw * bindirme)
+    out: list[tuple] = []
+    for i in range(n):
+        for j in range(n):
+            y0, x0 = max(0, i * kh - ph), max(0, j * kw - pw)
+            y1, x1 = min(h, (i + 1) * kh + ph), min(w, (j + 1) * kw + pw)
+            for s, bx1, by1, bx2, by2, c in ded.tespit(kare[y0:y1, x0:x1]):
+                out.append((s, bx1 + x0, by1 + y0, bx2 + x0, by2 + y0, c))
+    return _karo_birlestir(out)
+
+
 def _ciz(kare, tespitler) -> Any:
     """Canlı görünüm için tespitleri kareye çizer (ultralytics plot yerine)."""
     import cv2
@@ -305,6 +340,7 @@ def run_fire(source: str, cfg, store=None, camera_id: str = "",
                                     cfg.get("detect.vid_stride", 3))))
     camera_id = camera_id or Path(source).stem
     ded = _dedektor_kur(cfg)
+    karo = int(cfg.get("fire.tiles", 1))   # 2 = 2×2 karo (erken/küçük alev için)
     cap, w, h, fps = _kaynak_ac(source, cfg)
     takip = _takip_kur(cfg, w, h, bolgeler, maskeler)
 
@@ -324,7 +360,7 @@ def run_fire(source: str, cfg, store=None, camera_id: str = "",
                 continue          # stride: her N karede bir analiz
             sonuc.frames += 1
             halka.append(kare.copy())
-            tespitler = ded.tespit(kare)
+            tespitler = tespit_karolu(ded, kare, karo)
             for olay in takip.guncelle(tespitler, ham_idx / fps):
                 olay["camera_id"] = camera_id
                 olay["frame_idx"] = ham_idx

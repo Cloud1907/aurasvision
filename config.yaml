@@ -236,7 +236,15 @@ fire:
   model: models/fire.pt
   classes: {0: smoke, 1: fire}   # D-Fire sınıf sırası
   conf: 0.35            # tespit güven eşiği (tek başına alarm ANLAMINA GELMEZ)
+                        # Saha ölçümü (docs/olcumler-yangin-saha-2026-09-02.md): 0,35'te
+                        # aşırı pozlanmış kapı "duman" sanıldı (1 sahte alarm); 0,45'te
+                        # sahte alarm 0, alarm gecikmesi +3-16 sn. Sahaya göre seç.
   imgsz: 640
+  # Kare bölme: 2 = kare 2×2 bindirmeli karoya bölünür, her karo ayrı geçer.
+  # Dedektör 512'ye küçülttüğü için 2K kadrajda yeni tutuşan alev ~10 piksele
+  # iner ve ilk 10-15 sn görülmez. Ölçüm: ilk alev tespiti tutuşmadan 14 sn →
+  # 3 sn'ye indi (2×2). Maliyet 4× inference; 1 = kapalı.
+  tiles: 2
   vid_stride: 3         # her N karede bir işle
 
   # ── Zamansal doğrulama — hattın asıl değeri burada ──
