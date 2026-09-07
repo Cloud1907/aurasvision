@@ -22,7 +22,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 # record: kameranın NVR kaydı (analiz değil arşiv). Varsayılan AÇIK — kayıt
 # bilinçli kapatılır; sessizce kapalı başlayan kamera sahada "o gün kayıt yok"
 # olarak patlar ve geri getirilemez.
-DEFAULT_TASKS = {"count": True, "plate": False, "face": False, "record": True}
+DEFAULT_TASKS = {"count": True, "plate": False, "face": False, "fire": False, "record": True}
 
 
 def open_store(cfg) -> "BaseStore":

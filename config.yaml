@@ -243,3 +243,57 @@ face:
                          # kompaktlanır, yine aşarsa en az görülenler canlı taramadan emekliye
                          # ayrılır (final sayıma yine girerler)
   track_timeout_seconds: 2.0   # nvdec: yüz bu kadar sn görünmezse track kapanır (tek olay yazılır)
+
+fire:
+  # YANGIN/DUMAN ERKEN UYARI — sertifikalı yangın alarm sistemi DEĞİLDİR.
+  # Video tabanlı tespit EN 54 kapsamında değil; mevcut yangın sistemini
+  # TAMAMLAR, yerine geçmez. Gerekçe: src/fire.py başlığı.
+
+  # ── Dedektör motoru — LİSANS KARARI, performans tercihi değil ──
+  # rfdetr      Apache-2.0 (RF-DETR N/S/M/L). Ticari kullanımda serbest,
+  #             ödeme yok, kaynak açma yükümlülüğü yok. VARSAYILAN.
+  #             DİKKAT: RF-DETR XL/2XL PML 1.0'dır ve desteklenmez.
+  # ultralytics AGPL-3.0. Kapalı kaynak üründe ya tüm kaynağı açmayı ya
+  #             Enterprise lisansı gerektirir; AGPL sunucu arkasında sunmayı
+  #             da dağıtım sayar. Yalnız geliştirme/karşılaştırma için.
+  engine: rfdetr
+  agpl_kabul: false   # true yapmadan AGPL motor YÜKLENMEZ (src/dedektor.py kapısı)
+
+  # Genel amaçlı ağırlık BU İŞİ YAPMAZ (COCO'da duman sınıfı yok).
+  # Eğitim/indirme: docs/yangin-modeli.md. Model yoksa hat AÇIK HATA verir,
+  # sessizce sıfır olay üretmez.
+  model: models/fire.pt
+  classes: {0: smoke, 1: fire}   # D-Fire sınıf sırası
+  conf: 0.35            # tespit güven eşiği (tek başına alarm ANLAMINA GELMEZ)
+                        # Saha ölçümü (docs/olcumler-yangin-saha-2026-09-02.md): 0,35'te
+                        # aşırı pozlanmış kapı "duman" sanıldı (1 sahte alarm); 0,45'te
+                        # sahte alarm 0, alarm gecikmesi +3-16 sn. Sahaya göre seç.
+  imgsz: 640
+  # Kare bölme: 2 = kare 2×2 bindirmeli karoya bölünür, her karo ayrı geçer.
+  # Dedektör 512'ye küçülttüğü için 2K kadrajda yeni tutuşan alev ~10 piksele
+  # iner ve ilk 10-15 sn görülmez. Ölçüm: ilk alev tespiti tutuşmadan 14 sn →
+  # 3 sn'ye indi (2×2). Maliyet 4× inference; 1 = kapalı.
+  tiles: 2
+  vid_stride: 3         # her N karede bir işle (dosya/CLI yolu: run_fire)
+  # akis motoru (canlı RTSP): yangın kademesinin kamera başına temposu. Doğrulama
+  # confirm_frames kare ister → 4 fps'te ön uyarı ≥1 sn, alarm +alarm_seconds.
+  # 2×2 karo = kare başına 4 geçiş; tek iş parçacığı, meşgulse kare atılır.
+  fps: 4
+  # Ana akıştan çöz (NVDEC/d3d11va): substream'de (896 px) küçük alev görülmez.
+  # false = substream (ucuz ama geç); saha ölçümü ana akış + 2×2 karo ile alındı.
+  use_main_stream: true
+
+  # ── Zamansal doğrulama — hattın asıl değeri burada ──
+  # Ölçüm: FIA/BRE bağımsız testinde video duman dedektörleri tek karede
+  # ortalama %58 (benzer renkli arka planda %52) başarı gösterdi; SmokeyNet'in
+  # baseline'ları geçme sebebi uzam-ZAMANSAL bilgi. Tek kare asla alarm olamaz.
+  window_seconds: 6.0   # doğrulama penceresi
+  confirm_frames: 4     # pencere içinde aynı odağı doğrulaması gereken kare sayısı
+  iou_link: 0.2         # kareler arası "aynı odak" sayılma eşiği
+  alarm_seconds: 3.0    # ön uyarı bu kadar SÜRERSE alarma yükselir
+  cooldown_seconds: 120 # süren yangın bu aralıkla hatırlatılır (spam değil, sessizlik de değil)
+  clip_seconds: 4.0     # kanıt klibi uzunluğu
+
+  # Bölgeler DB'den gelir (zones tablosu): kind='fire' izleme alanı (tanımlıysa
+  # yalnız içi değerlendirilir), kind='firemask' maske (kaynak makinesi, egzoz,
+  # güneş vuran pencere). ISO/TS 7240-30 kurulum standardının karşılığı.

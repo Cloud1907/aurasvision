@@ -91,7 +91,7 @@ class HatUctanUcaTest(unittest.TestCase):
             """Gerçek _Decoder ile aynı arayüz: grab()/durum()/stop_flag."""
             olusan = []
 
-            def __init__(self, cam_id, url, hw, extra=None):
+            def __init__(self, cam_id, url, hw, extra=None, hedef_fps=0.0):
                 super().__init__(daemon=True)
                 self.cam_id, self.url = cam_id, url
                 self.lock = threading.Lock()

@@ -178,6 +178,24 @@ def _saved_intrusions(store, camera_id: str) -> list[dict]:
             if z["kind"] == "intrusion" and len(z["points"] or []) >= 3]
 
 
+def _saved_fire_zones(store, camera_id: str) -> tuple[list[dict], list[dict]]:
+    """(izleme alanları, maskeler) — kind='fire' / 'firemask'.
+
+    Maske ISO/TS 7240-30'un karşılığıdır: kaynak makinesi, egzoz bacası veya
+    güneş vuran pencere maskelenmezse hat yanlış alarm üretir ve operatör
+    uyarılara bakmayı bırakır — sessiz sistemden daha kötüsü budur.
+    """
+    izleme, maske = [], []
+    for z in store.list_zones(camera_id):
+        if len(z.get("points") or []) < 3:
+            continue
+        if z["kind"] == "fire":
+            izleme.append({"name": z.get("name") or "Izleme alani", "points": z["points"]})
+        elif z["kind"] == "firemask":
+            maske.append({"name": z.get("name") or "Maske", "points": z["points"]})
+    return izleme, maske
+
+
 def _nvdec_kullanilabilir() -> str:
     """GPU hattı gerçekten çalışır mı — çalışmıyorsa NEDENİNİ döndürür ("" = çalışır).
 
@@ -215,8 +233,8 @@ def _canli_kaynak(source: str) -> bool:
 
 
 def _gorev_calistir(gorev: str, source: str, cfg, bstore, cid: str,
-                    lines, ihlaller, watch=None) -> None:
-    """Tek analiz görevini (count/plate/face) çalıştırır — dispatch tek yerde,
+                    lines, ihlaller, watch=None, fire_zones=None) -> None:
+    """Tek analiz görevini (count/plate/face/fire) çalıştırır — dispatch tek yerde,
     hem sıralı hem eşzamanlı (bkz. _run_camera) çağrı yolu bunu kullanır."""
     if gorev == "count":
         from .count import run_count
@@ -231,14 +249,21 @@ def _gorev_calistir(gorev: str, source: str, cfg, bstore, cid: str,
         from .face import run_face
         run_face(source, cfg, store=bstore, camera_id=cid, watch=watch,
                  should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
+    elif gorev == "fire":
+        # Yangın/duman erken uyarı (sertifikalı alarm DEĞİL — src/fire.py başlığı)
+        from .fire import run_fire
+        izleme, maske = fire_zones or ([], [])
+        run_fire(source, cfg, store=bstore, camera_id=cid,
+                 bolgeler=izleme, maskeler=maske,
+                 should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
 
 
 def _gorev_thread_calistir(gorev: str, source: str, cfg, bstore, cid: str,
-                           lines, ihlaller, watch=None) -> None:
+                           lines, ihlaller, watch=None, fire_zones=None) -> None:
     """_gorev_calistir'i AYRI thread'de sarar — bir görevin hatası diğerini
     (veya kamerayı) düşürmesin diye burada yutulur (bkz. _run_camera)."""
     try:
-        _gorev_calistir(gorev, source, cfg, bstore, cid, lines, ihlaller, watch)
+        _gorev_calistir(gorev, source, cfg, bstore, cid, lines, ihlaller, watch, fire_zones)
     except Exception as e:
         print(f"[worker] {cid}/{gorev} hata: {e}", flush=True)
 
@@ -266,6 +291,7 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             akis.kaydet(fresh.get("source") or source, fresh.get("http_headers") or "")
             tasks = fresh.get("tasks") or {}
             ihlaller = _saved_intrusions(rstore, cid)
+            fire_zones = _saved_fire_zones(rstore, cid)
             cizgiler = _saved_lines(rstore, cid)
             # İhlal alanı varken çizgi yoksa [] geçilir: None config varsayılanına düşerdi
             lines = cizgiler or ([] if ihlaller else None)
@@ -273,7 +299,7 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             rstore.close()
 
         did_work = False
-        aktif = [g for g in ("count", "plate", "face") if tasks.get(g)]
+        aktif = [g for g in ("count", "plate", "face", "fire") if tasks.get(g)]
         canli = _canli_kaynak(source)
         watch = None
         if "face" in aktif:
@@ -294,7 +320,7 @@ def _run_camera(cam: dict, cfg, bus) -> None:
                 _STAGE[cid] = "+".join(aktif)
                 gorev_threads = [threading.Thread(
                     target=_gorev_thread_calistir,
-                    args=(g, source, cfg, bstore, cid, lines, ihlaller, watch),
+                    args=(g, source, cfg, bstore, cid, lines, ihlaller, watch, fire_zones),
                     daemon=True) for g in aktif]
                 for t in gorev_threads:
                     t.start()
@@ -304,7 +330,8 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             else:
                 for gorev in aktif:
                     _STAGE[cid] = gorev
-                    _gorev_calistir(gorev, source, cfg, bstore, cid, lines, ihlaller, watch)
+                    _gorev_calistir(gorev, source, cfg, bstore, cid, lines, ihlaller, watch,
+                                    fire_zones)
                     did_work = True
             _STAGE[cid] = "idle"
         except Exception as e:

@@ -50,12 +50,17 @@ class _Decoder(threading.Thread):
     """
 
     def __init__(self, cam_id: str, url: str, hwaccel_adaylari: list[str],
-                 extra_opts: dict | None = None) -> None:
+                 extra_opts: dict | None = None, hedef_fps: float = 0.0) -> None:
         super().__init__(daemon=True, name=f"dec-{cam_id}")
         self.cam_id = cam_id
         self.url = url
         self.adaylar = list(hwaccel_adaylari)
         self.extra_opts = extra_opts or {}
+        # Analiz temposu: her çözülen kare BGR'ye çevrilmez, yalnız bu tempoya
+        # (×1,5 pay) yetecek kadarı. NV12→BGR dönüşümü CPU'da (swscale); ana
+        # akışta 2880×1616 @25 fps ≈ 1 çekirdek/kamera, analiz 5 fps alırken
+        # 20 karesi çöpe gidiyordu (ölçüm 2026-09-07). 0 = hepsini çevir.
+        self.hedef_fps = float(hedef_fps or 0.0)
         self.lock = threading.Lock()
         self.latest = None          # BGR (H,W,3) uint8
         self.latest_ts = 0.0        # kaynağın kare zamanı (sn), yoksa duvar saati
@@ -104,9 +109,19 @@ class _Decoder(threading.Thread):
                 self.status = "ok"
                 bekle = 2.0
                 n, t0 = 0, time.time()
+                son_cevrim = 0.0
                 for frame in cont.decode(vs):
                     if self.stop_flag:
                         return
+                    n += 1
+                    if n % 50 == 0:
+                        self.fps = 50 / max(time.time() - t0, 1e-6)
+                        t0 = time.time()
+                    if self.hedef_fps > 0:
+                        simdi = time.monotonic()
+                        if simdi - son_cevrim < 1.0 / (1.5 * self.hedef_fps):
+                            continue      # çözüldü, çevrilmedi — analiz bunu zaten almayacaktı
+                        son_cevrim = simdi
                     try:
                         bgr = frame.to_ndarray(format="bgr24")
                     except Exception:
@@ -121,10 +136,6 @@ class _Decoder(threading.Thread):
                         self.wh = (bgr.shape[1], bgr.shape[0])
                         self.seq += 1
                     self.decoded += 1
-                    n += 1
-                    if n % 50 == 0:
-                        self.fps = 50 / max(time.time() - t0, 1e-6)
-                        t0 = time.time()
                 # akış bitti (dosya sonu / kopma) → yeniden bağlan
                 self.status = "no_signal"
             except Exception as e:
@@ -187,7 +198,11 @@ def kaynak_url(cam: dict, cfg, gorevler: dict) -> tuple[str, str]:
     go2rtc = (cfg.get("go2rtc.url", "") or "").rstrip("/")
     sub_ok = bool(cam.get("url_sub")) and bool(cfg.get("detect.use_substream", True))
     plaka = bool(gorevler.get("plate")) and bool(cfg.get("plate.use_main_stream", True))
-    sub = sub_ok and not plaka
+    # Yangın da ana akış ister: dedektör 512'ye küçültür, substream'de (896 px)
+    # yeni tutuşan alev 2×2 karoyla bile görülmez (docs/olcumler-yangin-saha-*).
+    # Ana akış burada NVDEC/d3d11va'da çözülür, CPU'ya eski yük binmez.
+    yangin = bool(gorevler.get("fire")) and bool(cfg.get("fire.use_main_stream", True))
+    sub = sub_ok and not (plaka or yangin)
     tip = "substream" if sub else "ana akış"
     if go2rtc:
         # go2rtc dosya kaynaklarını da (exec ffmpeg döngüsü) aynı adla yayınlar
@@ -208,6 +223,110 @@ def _ihlaller(store, cid: str) -> list[dict]:
              "classes": z.get("classes") or []}
             for z in store.list_zones(cid)
             if z["kind"] == "intrusion" and len(z["points"] or []) >= 3]
+
+
+def _yangin_bolgeleri(store, cid: str) -> tuple[list[dict], list[dict]]:
+    """(izleme alanları, maskeler) — zones kind='fire' / 'firemask' (worker._saved_fire_zones ile aynı)."""
+    izleme, maske = [], []
+    for z in store.list_zones(cid):
+        if len(z.get("points") or []) < 3:
+            continue
+        if z["kind"] == "fire":
+            izleme.append({"name": z.get("name") or "Izleme alani", "points": z["points"]})
+        elif z["kind"] == "firemask":
+            maske.append({"name": z.get("name") or "Maske", "points": z["points"]})
+    return izleme, maske
+
+
+class _YanginKademe:
+    """Yangın/duman erken uyarı kademesi — src/fire.py hattını akis motoruna bağlar.
+
+    Sayım batch'inden AYRI koşar: yangın dedektörü başka bir model (RF-DETR,
+    2×2 karo = kare başına 4 geçiş) ve kendi temposu var (`fire.fps`). Tek
+    iş parçacığı, kamera başına "meşgulse kareyi at" — GPU'yu sayım batch'iyle
+    paylaşır, kuyruk biriktirmez. Olaylar bus'a "fire" tipiyle gider; DB
+    yazımı + webhook olay.py'de (tek yol, ultralytics motoruyla aynı).
+    """
+
+    def __init__(self, cfg, bus) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        self.cfg = cfg
+        self.bus = bus
+        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="yangin")
+        self.fps = float(cfg.get("fire.fps", 4.0))
+        self.ded = None
+        self.ded_hata = ""
+        self.hat: dict[str, Any] = {}
+        self.hat_key: dict[str, str] = {}
+        self.busy: set[str] = set()
+        self.last: dict[str, float] = {}
+        self.kare_n = 0
+
+    def _dedektor(self):
+        if self.ded is None and not self.ded_hata:
+            from .fire import _dedektor_kur
+            try:
+                self.ded = _dedektor_kur(self.cfg)
+                karo = int(self.cfg.get("fire.tiles", 1))
+                print(f"{_ON} yangın dedektörü yüklendi: {self.cfg.get('fire.model')} · "
+                      f"motor {self.cfg.get('fire.engine', 'rfdetr')} · karo {karo}×{karo} · "
+                      f"hedef {self.fps} fps/kamera", flush=True)
+            except Exception as e:
+                # Sessiz sıfır olay değil, açık hata: yangın görevi açık kamerada
+                # hattın çalışmadığı logda görünsün (fire.model_yolu gerekçesi).
+                self.ded_hata = f"{e.__class__.__name__}: {e}"
+                print(f"{_ON} yangın dedektörü YÜKLENEMEDİ ({self.ded_hata}) — yangın "
+                      f"görevi açık kameralarda hat ÇALIŞMIYOR", flush=True)
+        return self.ded
+
+    def maybe_submit(self, cid: str, st: dict, bgr, ts: float, wh) -> None:
+        if ts - self.last.get(cid, -1e9) < 1.0 / max(self.fps, 0.1) or cid in self.busy:
+            return
+        if self._dedektor() is None:
+            return
+        self.last[cid] = ts
+        self.busy.add(cid)
+        self.pool.submit(self._run, cid, st, bgr, ts, wh)
+
+    def _run(self, cid: str, st: dict, bgr, ts: float, wh) -> None:
+        try:
+            from .fire import SINIF_ADLARI, YanginHatti
+            w, h = wh
+            izleme, maske = st.get("fire_tanim") or ([], [])
+            key = repr((izleme, maske, w, h))
+            if self.hat_key.get(cid) != key:
+                self.hat[cid] = YanginHatti(
+                    self.cfg, self.ded, w, h, cid, self.fps, izleme, maske, store=None,
+                    on_event=lambda o, c=cid: self._olay(c, o),
+                    on_alert=lambda o, c=cid: self._olay(c, o))
+                self.hat_key[cid] = key
+            tespitler = self.hat[cid].kare(bgr, ts, st["frame_idx"])
+            self.kare_n += 1
+            st["fire_dets"] = [
+                {"id": 0, "x1": round(float(x1) / w, 4), "y1": round(float(y1) / h, 4),
+                 "x2": round(float(x2) / w, 4), "y2": round(float(y2) / h, 4),
+                 "cls": SINIF_ADLARI.get(str(sn).lower(), str(sn)), "conf": round(float(c), 2)}
+                for sn, x1, y1, x2, y2, c in tespitler]
+            tasks = st["cam"].get("tasks") or {}
+            if not (tasks.get("count") or tasks.get("plate") or tasks.get("face")):
+                # Yalnız yangın açık kamerada batch yolu çizmiyor → canlı görünüm buradan
+                if st.get("push_dets"):
+                    st["push_dets"](st["fire_dets"], st["frame_idx"])
+                if st.get("push_frame"):
+                    st["push_frame"](_annotate(bgr, st["fire_dets"], w, h, None, None))
+        except Exception as e:
+            print(f"{_ON} {cid}: yangın kademesi hatası: {e}", flush=True)
+        finally:
+            self.busy.discard(cid)
+
+    def _olay(self, cid: str, o: dict) -> None:
+        print(f"{_ON} {cid}: YANGIN {o['durum'].upper()} · {o['sinif']} conf {o['conf']} · "
+              f"{o['dogrulama']} kare / {o['sure']} sn"
+              + (f" · kanıt {o.get('snapshot')}" if o.get("snapshot") else ""), flush=True)
+        # olay.py: durum=alarm → alerts satırı + webhook; ön uyarı yalnız log/panel
+        yuk = {k: v for k, v in o.items() if k != "kutu"}
+        yuk["kutu"] = [round(float(x), 1) for x in o.get("kutu", ())]
+        publish(self.bus, "fire", cid, yuk)
 
 
 def _annotate(bgr, dets: list[dict], w: int, h: int, sayac, ihlal):
@@ -310,6 +429,7 @@ def run_akis_worker(cams: list[dict], cfg, bus,
     watch = store.faces_with_embedding()
     store.close()
     stage2 = _SecondStage(cfg, bstore, watch)
+    yangin = _YanginKademe(cfg, bus)
 
     import os
     sec = os.environ.get("AURAS_CAMERAS", "")
@@ -319,13 +439,15 @@ def run_akis_worker(cams: list[dict], cfg, bus,
 
     def _ac(c: dict) -> None:
         url, tip = kaynak_url(c, cfg, c.get("tasks") or {})
-        d = _Decoder(c["id"], url, hw_adaylar, http_options(cfg, url))
+        d = _Decoder(c["id"], url, hw_adaylar, http_options(cfg, url),
+                     hedef_fps=float(c.get("detect_fps") or fps))
         d.start()
         decoders[c["id"]] = d
         state[c["id"]] = {"cam": c, "url": url, "tip": tip, "tracker": None,
                           "counter": None, "counter_key": None, "lines": [],
                           "ihlal": None, "ihlal_key": None, "prev": None,
                           "seq": 0, "frame_idx": 0, "next_ts": 0.0, "hb_idx": 0,
+                          "fire_dets": [], "fire_tanim": ([], []),
                           "push_frame": on_frame(c["id"]) if on_frame else None,
                           "push_dets": on_detections(c["id"]) if on_detections else None}
         print(f"{_ON} {c['id']}: {tip} <- {url.split('@')[-1]}", flush=True)
@@ -356,6 +478,7 @@ def run_akis_worker(cams: list[dict], cfg, bus,
             for cid, st in state.items():
                 st["lines"] = _cizgiler(s, cid)
                 st["ihlal_tanim"] = _ihlaller(s, cid)
+                st["fire_tanim"] = _yangin_bolgeleri(s, cid)
             stage2.watch = s.faces_with_embedding()
         finally:
             s.close()
@@ -389,6 +512,10 @@ def run_akis_worker(cams: list[dict], cfg, bus,
             st["seq"] = seq
             st["frame_idx"] += 1
             tasks = st["cam"].get("tasks") or {}
+            if tasks.get("fire"):
+                # Hareket filtresinden ÖNCE: duman yavaş, alev küçük — filtre
+                # ilk kareleri yutmasın. Kendi temposu/iş parçacığı var.
+                yangin.maybe_submit(cid, st, bgr, ts, wh)
             if not (tasks.get("count") or tasks.get("plate") or tasks.get("face")):
                 continue
             if motion_on:
@@ -465,6 +592,8 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                                             "x2": round(float(t[2]) / w, 4),
                                             "y2": round(float(t[3]) / h, 4),
                                             "cls": names.get(c, "obj"), "conf": round(cf, 2)})
+                    if st.get("fire_dets"):
+                        dets_ui = dets_ui + list(st["fire_dets"])
                     if st["push_dets"]:
                         st["push_dets"](dets_ui, st["frame_idx"])
                     if st["push_frame"]:
@@ -506,8 +635,11 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                 if health_cb:
                     health_cb(cid, du)
                 publish(bus, "health", cid, du)
+            yk, yangin.kare_n = yangin.kare_n, 0
             print(f"{_ON} inference {rate:.1f} kare/sn · CPU {kul.get('cpu_pct', '?')}% · "
-                  f"GPU {kul.get('gpu_pct', '?')}% · NVDEC {kul.get('nvdec_pct', '?')}%", flush=True)
+                  f"GPU {kul.get('gpu_pct', '?')}% · NVDEC {kul.get('nvdec_pct', '?')}%"
+                  + (f" · yangın {yk / max(now - last_hb_t, 1e-6):.1f} kare/sn" if yk else ""),
+                  flush=True)
         if now - last_refresh >= 30.0:
             last_refresh = now
             try:

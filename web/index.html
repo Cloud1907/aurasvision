@@ -549,7 +549,7 @@ function countBox(id){const c=LIVE_COUNTS[id];if(!LIVE_ACTIVE||!c)return `<div c
 /* Çizgi/bölge çizimi canlı görünümde de görünsün — operatör "sayım nerede sayıyor"
    sorusuna zones ekranına gitmeden cevap bulsun. points normalize [0,1] (bkz. zones()
    editörü px()), o yüzden viewBox="0 0 1 1" ile çözünürlükten bağımsız çizilir. */
-const ZONE_COL={line:"#22d3ee",zone:"#a78bfa",intrusion:"#f87171"};
+const ZONE_COL={line:"#22d3ee",zone:"#a78bfa",intrusion:"#f87171",fire:"#fb923c",firemask:"#6b7280"};
 function zoneSvg(zones){
   if(!zones||!zones.length)return "";
   const shape=z=>{
@@ -628,7 +628,7 @@ function startLiveCounts(){clearInterval(window._countTimer);refreshLiveCounts()
 /* Duvardaki görev anahtarları. Karo tıklaması tek kamera görünümünü açtığı için
    stopPropagation şart: görev açıp kapatmak görüntüyü tam ekrana ZIPLATMAMALI. */
 function taskPills(c){const t=c.tasks||{};
-  return `<span class="taskset">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"]].map(([k,l])=>{
+  return `<span class="taskset">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["fire","Yangın"]].map(([k,l])=>{
     const eksik=k==="count"&&bolgeEksik(c);
     const ipucu=eksik?`${l} açık ama ihlal alanı çizgiyi geçersiz kılıyor — özel çizgi çiz`:`${l} görevini aç/kapat`;
     return `<button type="button" class="taskpill ${t[k]?'on':''} ${eksik?'eksik':''}" title="${esc(ipucu)}"
@@ -782,7 +782,7 @@ function openCam(id,ad){
       <div class="camside">
         <div class="card pad">
           <div style="font-weight:700;margin-bottom:9px;">Ayarlar</div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">${gorevChip('count','Sayım')}${gorevChip('plate','Plaka')}${gorevChip('face','Yüz')}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">${gorevChip('count','Sayım')}${gorevChip('plate','Plaka')}${gorevChip('face','Yüz')}${gorevChip('fire','Yangın')}</div>
           <div class="mono mut-s" style="margin-top:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(maskUrl(cam.source||''))}">${esc(maskUrl(cam.source||''))}</div>
           <div class="mut-s" id="cv-zones" style="margin-top:6px;">çizgi/bölge yükleniyor…</div>
           <a class="mut-s" style="display:inline-block;margin-top:8px;" onclick="window._zc='${esc(id)}';go('zones')">Bölgeleri düzenle →</a>
@@ -799,7 +799,7 @@ function openCam(id,ad){
   api("/zones?camera="+encodeURIComponent(id)).then(z=>{
     ovWrap.insertAdjacentHTML("afterbegin",zoneSvg(z));
     const zc=m.querySelector("#cv-zones");
-    if(zc)zc.textContent=z.length?z.map(x=>`${x.kind==="line"?"Çizgi":x.kind==="intrusion"?"İhlal alanı":"Bölge"}: ${x.name}`).join(" · "):"Çizgi/bölge tanımlı değil";
+    if(zc)zc.textContent=z.length?z.map(x=>`${x.kind==="line"?"Çizgi":x.kind==="intrusion"?"İhlal alanı":x.kind==="fire"?"Yangın izleme":x.kind==="firemask"?"Yangın maskesi":"Bölge"}: ${x.name}`).join(" · "):"Çizgi/bölge tanımlı değil";
     const cizgiler=z.filter(x=>x.kind==="line");
     if(cizgiler.length&&sayimKart&&sayimRows){
       sayimKart.style.display="block";
@@ -1067,7 +1067,7 @@ const SCREENS={
         const durum=!taze?["boşta","var(--ink-3)"]:fps>0.1?[`${fps.toFixed(1)} fps${dus}`,"var(--ok)"]:["kare yok","var(--danger)"];
         return `<div class="row"><span class="av" style="background:var(--accent-soft);color:var(--accent);">${svg('cams',16)}</span>
           <div style="flex:1;min-width:0;"><div style="font-weight:700;">${esc(c.name)}</div>
-            <div class="mut-s">${["count","plate","face"].filter(k=>(c.tasks||{})[k]).map(k=>({count:'Sayım',plate:'Plaka',face:'Yüz'}[k])).join(' · ')||'analiz görevi yok'}${
+            <div class="mut-s">${["count","plate","face","fire"].filter(k=>(c.tasks||{})[k]).map(k=>({count:'Sayım',plate:'Plaka',face:'Yüz',fire:'Yangın'}[k])).join(' · ')||'analiz görevi yok'}${
               bolgeEksik(c)?` · <b style="color:var(--warn)">⚠ ihlal alanı çizgiyi geçersiz kılıyor</b>`:""}</div></div>
           <span class="mut-s" style="color:${durum[1]};font-weight:700;">${durum[0]}</span></div>`}).join("");
     }catch(e){$("#pn-ust").innerHTML=`<div class="stat"><div class="k">Hata</div><div class="v">—</div><div class="s">${esc(String(e))}</div></div>`;}
@@ -2335,14 +2335,14 @@ function workerUyarisi(){
 }
 async function toggleTask(cid,key){
   const c=CAMS.find(x=>x.id===cid);if(!c)return;
-  const t=Object.assign({count:false,plate:false,face:false,record:true},c.tasks||{});t[key]=!t[key];
+  const t=Object.assign({count:false,plate:false,face:false,fire:false,record:true},c.tasks||{});t[key]=!t[key];
   const r=await api(`/cameras/${encodeURIComponent(cid)}/tasks`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:t})});
   if(r&&r.ok){
     c.tasks=r.tasks;
     // AKTİF ekran yeniden çizilir. Sabit SCREENS.cams() çağrısı, duvardan görev
     // değiştirildiğinde operatörü izlediği görüntüden koparıp listeye atıyordu.
     if(SCREENS[active])SCREENS[active]();
-    const ad={count:"Sayım",plate:"Plaka",face:"Yüz",record:"Kayıt"}[key]||key;
+    const ad={count:"Sayım",plate:"Plaka",face:"Yüz",fire:"Yangın",record:"Kayıt"}[key]||key;
     toast(`${c.name} · ${ad} ${t[key]?"açıldı":"kapatıldı"}`,"ok",2500);
     // Görevi AÇARKEN worker yoksa kullanıcı bunu anında bilsin
     if(t[key]&&!workerCalisiyor())

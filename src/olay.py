@@ -55,13 +55,32 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
                         snapshot=p.get("snapshot") or "")
         _web(cfg, {"tur": p.get("kind", "intrusion"), "ref": p.get("ref", ""),
                    "etiket": p.get("label", ""), "kamera": camera_id})
+    elif type_ == "fire":
+        # Yangın ERKEN UYARISI (sertifikalı alarm değil — src/fire.py). Ön uyarı
+        # panelde kalır, webhook YALNIZ alarmda gider: her ön uyarıyı santrale
+        # basmak alarmı değersizleştirir, gerçek alarmda kimse bakmaz olur.
+        from .fire import FERAGAT
+        if p.get("durum") == "alarm":
+            etiket = (f"{p.get('dogrulama', 0)} kare / {p.get('sure', 0)} sn"
+                      f" · {FERAGAT}")
+            store.add_alert("fire_warning", p.get("sinif", "duman"), "fire",
+                            etiket, camera_id, snapshot=p.get("snapshot", ""))
+            _web(cfg, {"tur": "fire_warning", "ref": p.get("sinif", "duman"),
+                       "etiket": etiket, "kamera": camera_id,
+                       "kanit": p.get("snapshot", ""), "klip": p.get("clip", "")})
     elif type_ == "vektor":
         # Görünüm araması örneği (base64 float16, arama.BOYUT boyutlu)
         import base64
         import numpy as np
         v = np.frombuffer(base64.b64decode(p["vec"]), dtype="float16").astype("float32")
-        store.add_nesne_vektor(camera_id, p.get("sinif"), p.get("kutu", ""),
-                               p.get("kucuk", ""), v)
+        try:
+            store.add_nesne_vektor(camera_id, p.get("sinif"), p.get("kutu", ""),
+                                   p.get("kucuk", ""), v)
+        except NotImplementedError:
+            # Görünüm araması pgvector ister; SQLite (tek makine) profilinde tablo
+            # yok. Her örnekte "[bus] olay yazılamadı (vektor)" basmak logu
+            # gerçek hatalar görünmez olana dek dolduruyordu — sessizce atlanır.
+            pass
     elif type_ == "health":
         store.add_camera_health(camera_id, p.get("fps"), p.get("dropped"),
                                 p.get("status", "ok"))
