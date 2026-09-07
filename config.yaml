@@ -38,8 +38,12 @@ go2rtc:
   config_path: go2rtc/go2rtc.yaml   # API kameralardan otomatik üretir
 
 worker:
-  engine: nvdec       # nvdec: GB10 GPU pipeline (NVDEC+batch TensorRT, ADR-0003)
-                      # ultralytics: eski motor (Mac/CPU geliştirme + fallback)
+  engine: auto        # auto: makineye göre seçilir (src/donanim.py) —
+                      #   nvdec: GB10/Linux+NVIDIA GPU hattı (PyNvVideoCodec+TensorRT, ADR-0003)
+                      #   akis : taşınabilir motor — Windows/Linux, her GPU/CPU (PyAV donanım
+                      #          decode + tek batch YOLO + kamera başına takip, src/akis_motoru.py)
+                      #   ultralytics: eski motor (yalnız dosya kaynağı deneme kipi; RTSP'de
+                      #          her kareyi CPU'da çözer, 6 kamerada makineyi doyurdu)
   # Kamera/worker oranı (GB10 ölçümü, docs/olcumler-gb10.md): worker başına ~48
   # kamera tam 5 fps'te taşınır (GPU ~%40); 100 kamera = 2 worker süreci
   # (AURAS_CAMERAS=... ile bölüştür). Tek worker 96 kamerada ~3.6 fps/kam'a düşer.
@@ -62,9 +66,20 @@ paths:
   video_dir: data/videos
 
 detect:
-  model: yolo11s.engine  # TensorRT FP16 dinamik batch (GB10; üret:
-                         # yolo export model=yolo11s.pt format=engine half=True dynamic=True batch=32)
-                         # GPU'suz geliştirmede (Mac) yolo11n.pt kullan
+  # Analiz kaynağı: kameranın substream'i varsa (url_sub) analiz ONDAN koşar —
+  # 2880×1616 yerine 896×512 çözmek decode yükünü ~10× düşürür; YOLO zaten
+  # 640'a küçültüyor, sayım doğruluğu değişmez (Frigate/Milestone ile aynı ilke).
+  # Plaka görevi açık kamera ana akışta kalır (plate.use_main_stream).
+  use_substream: true
+  # Donanım decode adayları: boş = donanim.py OS'e göre seçer (cuda, d3d11va,
+  # dxva2, qsv, vaapi, videotoolbox). "none" = yazılım decode'a zorla.
+  hwaccel: []
+  model: yolo11s.pt      # Windows/RTX kurulumu: CUDA'lı torch (cu130) ile GPU'da koşar.
+                         # yolo11s.engine (TensorRT) YALNIZ engine dosyası bu makinede
+                         # üretildiyse kullanılabilir — .engine karta özeldir, taşınmaz
+                         # ve dosya yoksa fallback yoktur (src/detect.py):
+                         # yolo export model=yolo11s.pt format=engine half=True dynamic=True batch=32
+                         # GPU'suz makinede yolo11n.pt yapın.
   fps: 5                 # nvdec motoru: kamera başına analiz temposu (substream hedefi)
   conf: 0.35             # tespit güven eşiği
   iou: 0.5
@@ -132,6 +147,9 @@ intrusion:
   cooldown_seconds: 30.0   # aynı track aynı alanda tekrar alarm üretene dek geçecek süre
 
 plate:
+  # Plaka OCR piksel ister (min_plate_width_px): plaka görevi açık kamera ana
+  # akıştan çözülür. false yapılırsa substream'den okur (uzak plaka okunmaz).
+  use_main_stream: true
   # fast-alpr varsayılan modelleri (TR için ileride fine-tune)
   detector: yolo-v9-t-384-license-plate-end2end
   # OCR alternatifleri (fast-plate-ocr 1.x ile gelir, indirme otomatik):

@@ -374,7 +374,16 @@ def main() -> None:
     if not cams:
         raise SystemExit("İşlenecek kamera yok")
 
-    engine = (cfg.get("worker.engine", "ultralytics") or "ultralytics").lower()
+    from . import donanim
+    prof = donanim.profil()
+    print(f"[worker] donanım: {donanim.ozet_satiri()}", flush=True)
+    engine = (cfg.get("worker.engine", "auto") or "auto").lower()
+    if engine == "auto":
+        # Makine ne ise o: nvdec (GB10/Linux+NVIDIA, PyNvVideoCodec+TensorRT) >
+        # akis (taşınabilir: PyAV hwaccel + batch YOLO, her OS/GPU/CPU).
+        # ultralytics motoru yalnız açıkça istenirse (dosya kaynağı deneme kipi).
+        engine = prof["oneri"]["engine"]
+        print(f"[worker] motor=auto → {engine}", flush=True)
     if engine == "nvdec":
         # GB10 GPU pipeline (ADR-0003): NVDEC decode + batch TensorRT + tracker.
         # PyNvVideoCodec/TensorRT her platformda YOK (ör. Windows wheel'i belirsiz);
@@ -382,9 +391,8 @@ def main() -> None:
         # yavaş ama çalışır. Sessiz çökme sahada "worker açık ama olay yok" demek.
         sebep = _nvdec_kullanilabilir()
         if sebep:
-            print(f"[worker] nvdec motoru kullanılamıyor ({sebep}) — ultralytics "
-                  f"motoruna düşülüyor. Kalıcı çözüm: config.yaml → "
-                  f"worker.engine: ultralytics", flush=True)
+            print(f"[worker] nvdec motoru kullanılamıyor ({sebep}) — taşınabilir "
+                  f"akis motoruna düşülüyor (config.yaml → worker.engine: auto)", flush=True)
         else:
             try:
                 from .gpu_engine import run_gpu_worker
@@ -396,11 +404,28 @@ def main() -> None:
                 # Çalışma anında patlarsa (sürücü uyumsuzluğu, engine dosyası başka
                 # karta ait, VRAM yetmedi) worker ÖLMEZ — yavaş motorla devam eder.
                 print(f"[worker] nvdec motoru çalışırken hata verdi "
-                      f"({e.__class__.__name__}: {e}) — ultralytics motoruna "
+                      f"({e.__class__.__name__}: {e}) — akis motoruna "
                       f"düşülüyor", flush=True)
 
     _onizleme_sunucusu_baslat(int(cfg.get("worker.preview_port", 8801)))
-    print(f"[worker] {len(cams)} kamera: {', '.join(c['id'] for c in cams)}")
+    if engine in ("akis", "nvdec"):
+        # nvdec buraya yalnız çalışamayınca düşer → taşınabilir motor devralır
+        # (ultralytics'e değil: o yol CPU'yu doyuran eski hattır).
+        from .akis_motoru import run_akis_worker
+
+        def _hb(cid: str, du: dict) -> None:
+            _STAGE[cid] = du.get("stage", "akis")
+        print(f"[worker] motor=akis, {len(cams)} kamera: "
+              f"{', '.join(c['id'] for c in cams)}", flush=True)
+        try:
+            run_akis_worker(cams, cfg, bus, on_frame=_onizleme_itici,
+                            on_detections=_tespit_itici, health_cb=_hb)
+            return
+        except Exception as e:
+            print(f"[worker] akis motoru çalışırken hata verdi "
+                  f"({e.__class__.__name__}: {e}) — ultralytics motoruna "
+                  f"düşülüyor", flush=True)
+    print(f"[worker] motor=ultralytics, {len(cams)} kamera: {', '.join(c['id'] for c in cams)}")
     threads = [threading.Thread(target=_run_camera, args=(c, cfg, bus), daemon=True)
                for c in cams]
     for t in threads:

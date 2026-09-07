@@ -503,7 +503,7 @@ class SqliteStore(BaseStore):
     def latest_health(self) -> list[dict[str, Any]]:
         # MAX(time) saniye çözünürlüğünde eşitlik yapar → en son satırı id ile seç
         return self._all(
-            "SELECT camera_id, time, status, fps FROM camera_health"
+            "SELECT camera_id, time, status, fps, dropped FROM camera_health"
             " WHERE id IN (SELECT MAX(id) FROM camera_health GROUP BY camera_id)")
 
     def recent_events(self, limit: int = 50, tur: str = "",
@@ -660,7 +660,7 @@ class PgStore(BaseStore):
 
     def latest_health(self) -> list[dict[str, Any]]:
         rows = self._all(
-            "SELECT DISTINCT ON (camera_id) camera_id, time, status, fps"
+            "SELECT DISTINCT ON (camera_id) camera_id, time, status, fps, dropped"
             " FROM camera_health ORDER BY camera_id, time DESC")
         for r in rows:
             r["time"] = str(r["time"])

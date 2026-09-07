@@ -96,17 +96,11 @@ while ($true) {
     # tek makinede kendi .exe'si — yalnız ikili varsa bizim işimiz.
     $go2 = Join-Path $Kok "bin\go2rtc.exe"
     if (Test-Path $go2) {
-        # Yapılandırma go2rtc çalışırken değiştiyse süreci düşür — döngünün altındaki
-        # "çalışmıyorsa başlat" dalı onu yeni dosyayla geri getirir.
-        if (Test-Path $go2rtcCfg) {
-            $z = (Get-Item $go2rtcCfg).LastWriteTimeUtc
-            if ($cfgZaman -and $z -gt $cfgZaman -and (Get-Process go2rtc -ErrorAction SilentlyContinue)) {
-                Yaz "go2rtc yapılandırması değişti — akışlar yenileniyor"
-                Get-Process go2rtc -ErrorAction SilentlyContinue | Stop-Process -Force
-                Start-Sleep -Seconds 2
-            }
-            $cfgZaman = $z
-        }
+        # Yapılandırma değişince go2rtc ARTIK yeniden başlatılmaz: sunucu farkı
+        # go2rtc stream API'siyle çalışan sürece uygular (src/server.py
+        # _go2rtc_farki_uygula). Restart tüm kayıt/analiz bağlantılarını
+        # düşürüyordu (kayit.log'da her kamera eklemede 6× 10054). YAML yalnız
+        # açılışta okunur.
         if (-not (Get-Process go2rtc -ErrorAction SilentlyContinue)) {
             $cfg = Join-Path $Kok "go2rtc\go2rtc.yaml"
             if (-not (Test-Path $cfg)) { New-Item -ItemType Directory -Force (Split-Path $cfg) | Out-Null; New-Item -ItemType File $cfg -Force | Out-Null }

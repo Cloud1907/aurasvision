@@ -217,25 +217,68 @@ def _sync_go2rtc() -> None:
         if c.get("url_sub"):
             _stream_bloklari(f"{c['id']}{SUB_SUFFIX}", str(c["url_sub"]), _hdr)
     yeni = "\n".join(lines) + "\n"
-    if path.exists() and path.read_text(encoding="utf-8") == yeni:
+    eski = path.read_text(encoding="utf-8") if path.exists() else ""
+    if eski == yeni:
         return   # değişiklik yok → çalışan akışları kesme
     path.write_text(yeni, encoding="utf-8")
+    # YAML yalnız AÇILIŞ içindir. Çalışan go2rtc'ye fark, yeniden başlatmadan
+    # stream API'siyle uygulanır: restart TÜM tüketicileri (kayıt, analiz,
+    # izleyiciler) düşürüyordu — sahada her kamera ekleme 6 kamerada kayıt
+    # kesintisi (10054) üretti. Eklenen/değişen akış PUT, silinen DELETE.
+    _go2rtc_farki_uygula(_yaml_akislari(eski), _yaml_akislari(yeni))
 
-    # go2rtc çalışırken YAML'ı KENDİLİĞİNDEN okumaz; yeniden yüklemesi söylenmezse
-    # "kamera ekledim ama canlıda görünmüyor" olur. Yalnız config değiştiğinde
-    # tetiklenir (akışlar ~2 sn kesilir). exec: kaynakları çalışma-zamanı stream
-    # API'sinden eklenemediği için (go2rtc güvenlik kısıtı) restart tek yol.
+
+def _yaml_akislari(metin: str) -> dict[str, list[str]]:
+    """Ürettiğimiz go2rtc YAML'ından {akış adı: [kaynaklar]} çıkarır (yalnız kendi
+    biçimimiz: 'streams:' altında '  ad: "src"' ya da '  ad:' + '    - "src"')."""
+    out: dict[str, list[str]] = {}
+    ad = None
+    icinde = False
+    for satir in metin.splitlines():
+        if satir.startswith("streams:"):
+            icinde = True
+            continue
+        if not icinde or not satir.strip() or satir.lstrip().startswith("#"):
+            continue
+        if satir.startswith("    - "):
+            if ad is not None:
+                out[ad].append(json.loads(satir[6:].strip()))
+        elif satir.startswith("  ") and ":" in satir:
+            ad, _, deger = satir.strip().partition(":")
+            out[ad] = [json.loads(deger.strip())] if deger.strip() else []
+        else:
+            break
+    return out
+
+
+def _go2rtc_farki_uygula(eski: dict[str, list[str]], yeni: dict[str, list[str]]) -> None:
+    import urllib.parse
     import urllib.request
 
     base = (cfg.get("go2rtc.url", "") or "").rstrip("/")
     if not base:
         return
-    try:
-        urllib.request.urlopen(
-            urllib.request.Request(f"{base}/api/restart", method="POST"), timeout=4).close()
-    except Exception as e:
-        print(f"[go2rtc] yeniden yükleme başarısız ({e}) — yeni kamera canlıda "
-              f"görünmeyebilir, konteyneri yeniden başlatın", flush=True)
+    hata = []
+    for ad in [a for a in eski if a not in yeni]:
+        try:
+            urllib.request.urlopen(urllib.request.Request(
+                f"{base}/api/streams?src={urllib.parse.quote(ad, safe='')}",
+                method="DELETE"), timeout=4).close()
+        except Exception as e:
+            hata.append(f"{ad} sil: {e}")
+    for ad, kaynaklar in yeni.items():
+        if eski.get(ad) == kaynaklar:
+            continue
+        q = "&".join(["name=" + urllib.parse.quote(ad, safe="")] +
+                     ["src=" + urllib.parse.quote(k, safe="") for k in kaynaklar])
+        try:
+            urllib.request.urlopen(urllib.request.Request(
+                f"{base}/api/streams?{q}", method="PUT"), timeout=4).close()
+        except Exception as e:
+            hata.append(f"{ad} ekle: {e}")
+    if hata:
+        print(f"[go2rtc] akış güncellenemedi: {'; '.join(hata)} — go2rtc yeniden "
+              f"başlatılınca YAML'dan yüklenecek", flush=True)
 
 
 def _camera(camera_id: str) -> dict | None:
@@ -1019,7 +1062,23 @@ def api_status():
             return "henüz vektör yok (nesne görülünce başlar)"
         return f"{n:,} nesne dizinde · son yazım {str(son)[:19]}".replace(",", ".")
 
+    def _donanim():
+        """CPU doygunsa (%95+) her şey gecikir: canlı akış vekili, olay yazımı,
+        panel. Bu sessizce yaşanmasın diye kırmızı bileşen."""
+        from . import donanim
+        k = donanim.kullanim()
+        p = donanim.profil()
+        cpu = k.get("cpu_pct")
+        gpu = f" · GPU %{k['gpu_pct']}" if "gpu_pct" in k else ""
+        dec = f" · NVDEC %{k['nvdec_pct']}" if "nvdec_pct" in k else ""
+        hw = ",".join(p.get("hwaccel") or []) or "yazılım decode"
+        detay = f"CPU %{cpu if cpu is not None else '?'}{gpu}{dec} · hwaccel {hw}"
+        if cpu is not None and cpu >= 95:
+            raise RuntimeError(f"CPU doygun — {detay}")
+        return detay
+
     olc("Veritabanı", _db)
+    olc("Donanım", _donanim)
     olc("Olay yolu", _redis)
     olc("Olay işleyici", _ingestor)
     olc("Canlı akış", _go2rtc)
@@ -1117,6 +1176,23 @@ def api_sysinfo(request: Request):
     return {"go2rtc": go2rtc}
 
 
+@app.get("/api/donanim")
+def api_donanim():
+    """Donanım profili + anlık kaynak kullanımı (Sistem ekranı kartı).
+
+    "GPU var ama kullanılmıyor" panelde görünmeli: NVDEC %0 iken CPU %99
+    olan kurulum bir gün sessizce bulunmuştu (docs/denetim-2026-09-05-*)."""
+    from . import donanim
+    s = _store()
+    try:
+        saglik = s.latest_health()
+    finally:
+        s.close()
+    return {"profil": donanim.profil(), "kullanim": donanim.kullanim(),
+            "motor": (cfg.get("worker.engine", "auto") or "auto"),
+            "kameralar": saglik}
+
+
 @app.websocket("/api/stream")
 async def api_stream(ws: WebSocket):
     """Canlı akışı go2rtc'den vekiller (MSE/WebRTC sinyalleşmesi dahil).
@@ -1184,8 +1260,9 @@ async def api_stream(ws: WebSocket):
                 pass
         try:
             await ws.close()
-        except RuntimeError:
-            pass   # zaten kapanmış
+        except Exception:
+            pass   # zaten kapanmış (RuntimeError) ya da istemci kopmuş
+                   # (WebSocketDisconnect) — sunucu.log'a traceback basmasın
 
 
 def _worker_detections(camera: str) -> dict:

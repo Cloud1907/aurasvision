@@ -134,3 +134,20 @@ Redis Streams + PostgreSQL/TimescaleDB/pgvector), tablo şeması ve faz planı:
 ## Demo videolar
 
 `data/videos/` (repoya girmez). Açık kaynak örnekler: [intel-iot-devkit/sample-videos](https://github.com/intel-iot-devkit/sample-videos).
+
+## Motor seçimi — Windows / Linux, her GPU/CPU
+
+`config.yaml → worker.engine: auto` (varsayılan) makineyi ölçer (`python -m src.donanim`)
+ve motoru seçer:
+
+| Motor | Ne zaman | Decode | Inference |
+|---|---|---|---|
+| `nvdec` | Linux + NVIDIA, PyNvVideoCodec + TensorRT kuruluysa (GB10) | NVDEC, GPU'da kalır | tek batch TensorRT |
+| `akis` | diğer her makine (Windows/Linux, NVIDIA/Intel/AMD/CPU) | PyAV donanım decode: cuda, d3d11va, dxva2, qsv, vaapi, videotoolbox; yoksa yazılım | tek YOLO örneği, kameralar tek batch'te |
+| `ultralytics` | yalnız dosya kaynağı deneme kipi | CPU, her kare | kamera başına model |
+
+Analiz varsayılan olarak **substream**'den koşar (`detect.use_substream`), plaka
+görevi açık kamera ana akıştan. Kaynak go2rtc'den alınır (kameraya tek bağlantı).
+Ölçüm (6 kamera, i3-10100 + RTX 3050): eski yol CPU %99 / NVDEC %0 / 3-4 fps;
+`akis` motoru CPU %46 / NVDEC %10-30 / kamera başına 5 fps — bkz.
+`docs/denetim-2026-09-05-kararlilik-kaynak.md`, plan: `docs/sprint-plani-2026-09.md`.

@@ -106,6 +106,8 @@
   .tiles{display:grid;grid-template-columns:repeat(var(--cols,2),minmax(0,1fr));gap:8px;}
   .tiles.auto{grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;}
   .tile{border-radius:10px;}
+  .nav-gelismis{opacity:.7;margin-top:10px;}
+  .stallct{font-size:10px;margin-left:4px;}
   /* Karo üstü kontroller: normalde gizli, üzerine gelince belirir — görüntüyü kapatmaz */
   .tileact{position:absolute;right:10px;bottom:10px;display:flex;gap:6px;opacity:0;transition:opacity var(--t);z-index:3;}
   .tile:hover .tileact{opacity:1;}
@@ -363,6 +365,14 @@ const NAV=[
 const TITLES={panel:["Panel","Sistem özeti"],
   sys:["Sistem","Bileşen durumu ve arşiv"],
   live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım çizgisi ve ihlal alanı"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],arama:["Arama","Arşivde serbest metinle nesne bul"],rapor:["Raporlar","Kamera bazlı günlük faaliyet"],events:["Olaylar","Sayım, plaka ve yüz"],lists:["Tanıma listeleri","Plaka ve yüz tanıma · kara liste, VIP, izinli"]};
+/* BASİT GÖRÜNÜM (varsayılan): operatörün günlük işi 6 ekrandır — Panel, Canlı,
+   Olaylar, Kayıtlar, Kameralar, Sistem. Arama/Rapor/Listeler/Bölgeler/Test
+   "Gelişmiş" altında açılır; tercih tarayıcıda kalır. Ekranlar hep erişilebilir
+   (go('zones') gibi), yalnız menü sadeleşir — kullanıcı geri bildirimi:
+   "basit bir arayüz olmalı". */
+const NAV_BASIT=new Set(["panel","live","events","rec","cams","sys"]);
+let GELISMIS=false;try{GELISMIS=localStorage.getItem("vai-gelismis")==="1";}catch(e){}
+function gelismisAc(v){GELISMIS=v;try{localStorage.setItem("vai-gelismis",v?"1":"0");}catch(e){}render();}
 let CAMS=[],active="panel";
 let LIVE_COUNTS={},LIVE_ACTIVE=false;
 const $=s=>document.querySelector(s);
@@ -645,7 +655,10 @@ function overviewStats(){
 }
 function render(){
   // Grup başlıkları NAV tanımından gelir — sekme eklerken menü kodu değişmesin
-  $("#nav").innerHTML=NAV.map(n=>(n[3]?`<div class="lbl">${n[3]}</div>`:"")+navHtml(n)).join("");
+  const gorunur=NAV.filter(n=>GELISMIS||NAV_BASIT.has(n[0])||n[0]===active);
+  // Basit görünümde grup başlıkları da sadeleşir: tek liste + Gelişmiş anahtarı
+  $("#nav").innerHTML=gorunur.map(n=>(GELISMIS&&n[3]?`<div class="lbl">${n[3]}</div>`:"")+navHtml(n)).join("")+
+    `<a class="nav-gelismis" onclick="gelismisAc(${GELISMIS?'false':'true'})" title="${GELISMIS?'Menüyü sadeleştir':'Arama, raporlar, listeler, bölgeler ve test ekranlarını göster'}">${svg(GELISMIS?'x':'bolt')}<span>${GELISMIS?'Basit görünüm':'Gelişmiş…'}</span></a>`;
   clearInterval(window._liveTimer);clearInterval(window._tileTimer);
   Object.values(window._analizTimers||{}).forEach(clearInterval);window._analizTimers={};
   const t=TITLES[active];$("#ttl").textContent=t[0];$("#tsub").textContent=t[1];$("#tact").innerHTML="";
@@ -908,6 +921,10 @@ function watchTiles(){
     if(r.bottom<0||r.top>innerHeight)return;         // ekran dışı — değerlendirme yok
     const ct=v.currentTime,moved=ct>(el._ct||0)+0.05;
     el._ct=ct;
+    // Takılma sayacı: canlı oynarken (görüldü) 2 sn boyunca ilerlemeyen kare bir
+    // takılmadır. Sayı karoda görünür; operatör "takılıyor" derken artık sayı var.
+    if(!moved&&el._seen&&(el._stall||0)===0){el._takilma=(el._takilma||0)+1;
+      const s=tile.querySelector(".stallct");if(s)s.textContent=`· ${el._takilma} takılma`;}
     el._stall=moved?0:(el._stall||0)+1;
     if(moved)el._seen=true;
     // Histerezis — rozet titremesin: bağlantı GERÇEKTEN koptuysa (soket kapalı) hızlı
@@ -923,6 +940,34 @@ function watchTiles(){
     if(b)b.textContent=s==="live"?"CANLI":s==="wait"?"BAĞLANIYOR":"ÇEVRİMDIŞI";
   });
   window._tileTimer=setInterval(tick,2000);tick();
+}
+
+/* --- Donanım ve kaynak kartı (Sistem ekranı) ---
+   "GPU var ama kullanılmıyor" ya da "CPU %99" panelde görünmeli; sahada bu
+   sessiz kalınca video takılması ağ sorunu sanılıyordu. Kaynak: /api/donanim. */
+async function donanimKart(){
+  const el=$("#sy-don");if(!el)return;
+  try{
+    const d=await api("/donanim");const p=d.profil||{},k=d.kullanim||{};
+    const yuzde=(v,esik)=>v==null?"—":`<b style="color:${v>=esik?'var(--danger)':v>=esik*0.75?'var(--warn)':'var(--ok)'};">%${v}</b>`;
+    const gpu=p.gpu?`${esc(p.gpu)} · ${Math.round((p.vram_mb||0)/1024)} GB`:"GPU yok (CPU decode + CPU inference)";
+    const hw=(p.hwaccel||[]).length?p.hwaccel.join(", "):"yazılım decode";
+    const kam=(d.kameralar||[]).map(h=>{
+      const c=CAMS.find(x=>x.id===h.camera_id)||{};
+      const fps=+(h.fps||0),dr=h.dropped==null?"":` · düşen ${h.dropped}`;
+      return `<div class="row"><div style="flex:1;"><b>${esc(c.name||h.camera_id)}</b>
+        <div class="mut-s mono">${esc(h.status||"")}${dr}</div></div>
+        <span class="mut-s mono" style="color:${fps>0.1?'var(--ok)':'var(--danger)'};">${fps.toFixed(1)} fps</span></div>`;}).join("");
+    el.innerHTML=`<div style="padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;display:flex;gap:9px;align-items:center;flex-wrap:wrap;">
+        Donanım ve kaynaklar <span class="mut-s" style="font-weight:400;">· ${esc(p.os||"")} · ${p.cekirdek||"?"} çekirdek · ${p.ram_gb||"?"} GB RAM · motor <span class="mono">${esc(d.motor||"auto")}→${esc((p.oneri||{}).engine||"?")}</span></span>
+        <button class="btn sm" style="margin-left:auto;" onclick="donanimKart()">Yenile</button></div>
+      <div class="overview" style="padding:12px 16px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+        <div class="stat"><div class="k">CPU</div><div class="v">${yuzde(k.cpu_pct,95)}</div><div class="s">RAM %${k.ram_pct??"—"}</div></div>
+        <div class="stat"><div class="k">GPU</div><div class="v">${yuzde(k.gpu_pct,95)}</div><div class="s">${k.vram_used_mb!=null?`VRAM ${k.vram_used_mb}/${k.vram_total_mb} MB`:esc(gpu)}</div></div>
+        <div class="stat"><div class="k">Donanım decode</div><div class="v">${k.nvdec_pct!=null?yuzde(k.nvdec_pct,101):"—"}</div><div class="s">${esc(hw)}</div></div>
+        <div class="stat"><div class="k">Model</div><div class="v" style="font-size:15px;">${esc((p.oneri||{}).model||"")}</div><div class="s">${esc(gpu)}</div></div></div>
+      ${kam||'<div class="empty">Analiz servisi henüz sağlık bildirmedi.</div>'}`;
+  }catch(e){el.innerHTML=`<div class="empty">Donanım bilgisi alınamadı: ${esc(String(e))}</div>`;}
 }
 
 /* --- Kullanıcı yönetimi (RBAC) — Sistem ekranı kartı ---
@@ -1018,7 +1063,8 @@ const SCREENS={
       $("#pn-kam").innerHTML=CAMS.map(c=>{
         const h=hs[c.id],fps=h?+(h.fps||0):0;
         const taze=h&&(Date.now()-new Date(String(h.time).replace(' ','T')+(String(h.time).includes('+')?'':'Z')))<15000;
-        const durum=!taze?["boşta","var(--ink-3)"]:fps>0.1?[`${fps.toFixed(1)} fps`,"var(--ok)"]:["kare yok","var(--danger)"];
+        const dus=h&&h.dropped?` · ${h.dropped} düşen`:"";
+        const durum=!taze?["boşta","var(--ink-3)"]:fps>0.1?[`${fps.toFixed(1)} fps${dus}`,"var(--ok)"]:["kare yok","var(--danger)"];
         return `<div class="row"><span class="av" style="background:var(--accent-soft);color:var(--accent);">${svg('cams',16)}</span>
           <div style="flex:1;min-width:0;"><div style="font-weight:700;">${esc(c.name)}</div>
             <div class="mut-s">${["count","plate","face"].filter(k=>(c.tasks||{})[k]).map(k=>({count:'Sayım',plate:'Plaka',face:'Yüz'}[k])).join(' · ')||'analiz görevi yok'}${
@@ -1059,6 +1105,7 @@ const SCREENS={
           <div style="font-weight:700;margin-bottom:4px;">Mobil erişim</div>
           <div class="mut-s" style="margin-bottom:12px;">Telefonla QR'ı okutun; mobil arayüz yetkili şekilde açılır, adres ve anahtar yazmanız gerekmez.</div>
           <div id="sy-qr"><button class="btn" onclick="mobilQR()">${svg('cams',15)} QR kodu göster</button></div></div>
+        <div class="card" style="margin-bottom:18px;" id="sy-don"><div class="empty">donanım bilgisi yükleniyor…</div></div>
         ${kullaniciKart()}
         <div class="card pad">
           <div style="font-weight:700;margin-bottom:8px;">Tanılama</div>
@@ -1067,6 +1114,7 @@ const SCREENS={
             • Bu ekranın görüntüsü<br>
             • Sorunun hangi adımda çıktığı</div></div>`;
       api("/recordings/root").then(r=>{const el=$("#ark-yol");if(el)el.textContent=r.path;}).catch(()=>{});
+      donanimKart();
       kullaniciYukle();
     }catch(e){$("#sy-b").innerHTML=`<div class="card pad"><b style="color:var(--danger);">Sistem bilgisi alınamadı</b><div class="mut-s">${esc(String(e))}</div></div>`;}
   },
@@ -1100,7 +1148,7 @@ const SCREENS={
           <button title="Analiz görünümü (tespit kutuları, ~1 sn'de bir)" onclick="toggleAnaliz('${esc(c.id)}',this)">${svg('events',15)}</button>
           <button title="Tek kamera görünümü" onclick="openCam('${esc(c.id)}','${esc(c.name)}')">${svg('live',15)}</button>
           <button title="Kayıtlara git" onclick="window._rc='${esc(c.id)}';go('rec')">${svg('play',15)}</button></span>
-        <span class="live"><i></i> <b>${SYS.go2rtc?'BAĞLANIYOR':'CANLI'}</b></span>
+        <span class="live"><i></i> <b>${SYS.go2rtc?'BAĞLANIYOR':'CANLI'}</b><span class="stallct mut-s" title="2 sn'den uzun süren kare duraklaması sayısı (sayfa açıldığından beri)"></span></span>
         <span class="nm">${esc(c.name)} ${taskPills(c)}</span>
         ${countBox(c.id)}
       </div>`).join("")}</div>`;
