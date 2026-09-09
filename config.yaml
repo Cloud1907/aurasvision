@@ -287,10 +287,19 @@ fire:
   # Ölçüm: FIA/BRE bağımsız testinde video duman dedektörleri tek karede
   # ortalama %58 (benzer renkli arka planda %52) başarı gösterdi; SmokeyNet'in
   # baseline'ları geçme sebebi uzam-ZAMANSAL bilgi. Tek kare asla alarm olamaz.
+  # Ölçüm 2026-09-07/08 (kamera-210, ofis kapısı, 36 sahte / 0 gerçek alarm):
+  # 4 kare ≈ 1,5 sn ve 3 sn alarm, kapıdan geçen kişinin süresine sığıyordu
+  # (alarm süreleri 3-5 sn). Gerçek yangın dakikalarca sürer, geçen kişi
+  # sürmez; alarm gecikmesi 1-3 sn → ~10 sn'ye çıkar (bilinçli bedel).
   window_seconds: 6.0   # doğrulama penceresi
-  confirm_frames: 4     # pencere içinde aynı odağı doğrulaması gereken kare sayısı
+  confirm_frames: 8     # pencere içinde aynı odağı doğrulaması gereken kare sayısı (2,5 fps'te ~3 sn)
   iou_link: 0.2         # kareler arası "aynı odak" sayılma eşiği
-  alarm_seconds: 3.0    # ön uyarı bu kadar SÜRERSE alarma yükselir
+  alarm_seconds: 10.0   # ön uyarı bu kadar SÜRERSE alarma yükselir
+  # Kişi bastırma: sayım hattının kişi kutusuyla bu oranda örtüşen alev/duman
+  # tespiti atılır (kesişim / tespit alanı). Aynı ölçümde "duman"ların tamamı
+  # kot pantolon, "alev"lerin çoğu parlak giysiydi. Yalnız count/plate/face
+  # görevi de açık kamerada çalışır (kişi kutusu oradan gelir). 0 = kapalı.
+  person_overlap: 0.5
   cooldown_seconds: 120 # süren yangın bu aralıkla hatırlatılır (spam değil, sessizlik de değil)
   clip_seconds: 4.0     # kanıt klibi uzunluğu
 

@@ -102,6 +102,36 @@ def _piksel_poligonlar(bolgeler, w: int, h: int) -> list[list[tuple[float, float
     return cikti
 
 
+def _ortusme_orani(kutu, kisi) -> float:
+    """Kesişim alanı / tespit kutusu alanı (IoU değil: küçük alev kutusu büyük
+    kişi kutusunun içindeyse IoU düşük kalır, bu oran 1'e yaklaşır)."""
+    x1 = max(kutu[0], kisi[0]); y1 = max(kutu[1], kisi[1])
+    x2 = min(kutu[2], kisi[2]); y2 = min(kutu[3], kisi[3])
+    kesisim = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    alan = max(1e-6, (kutu[2] - kutu[0]) * (kutu[3] - kutu[1]))
+    return kesisim / alan
+
+
+def kisi_bastir(tespitler, kisiler, oran: float = 0.5) -> list:
+    """Kişi kutusuyla `oran` ve üstünde örtüşen alev/duman tespitlerini atar.
+
+    Gerekçe (ölçüm 2026-09-07/08, kamera-210 ofis, 36 sahte alarm, 0 gerçek):
+    dedektör kapıdan geçen kişinin kot pantolonunu "duman", parlak giysiyi
+    "alev" sandı. Kişi üstünde yangın olmaz; sayım hattı zaten kişiyi
+    biliyor. Yanan kişi senaryosu bilinçli kapsam dışı — o ölçekteki alev
+    kişi kutusundan taşar ve bu oranın altında kalır.
+    """
+    if not kisiler or oran <= 0:
+        return list(tespitler)
+    kalan = []
+    for d in tespitler:
+        kutu = (float(d[1]), float(d[2]), float(d[3]), float(d[4]))
+        if any(_ortusme_orani(kutu, k) >= oran for k in kisiler):
+            continue
+        kalan.append(d)
+    return kalan
+
+
 class DumanTakip:
     """Kareler arası duman/alev odaklarını izler; kademeli uyarı üretir.
 
@@ -113,7 +143,8 @@ class DumanTakip:
                  dogrulama_kare: int = 4, iou_baglama: float = 0.2,
                  alarm_sn: float = 3.0, cooldown_sn: float = 120.0,
                  bolgeler: list[dict] | None = None,
-                 maskeler: list[dict] | None = None) -> None:
+                 maskeler: list[dict] | None = None,
+                 kisi_oran: float = 0.5) -> None:
         self.pencere = float(pencere_sn)
         self.dogrulama = int(dogrulama_kare)
         self.iou_baglama = float(iou_baglama)
@@ -123,6 +154,11 @@ class DumanTakip:
         self.bolgeler = _piksel_poligonlar(bolgeler, w, h)
         # Maske: içine düşen tespit hiç değerlendirilmez (ISO/TS 7240-30).
         self.maskeler = _piksel_poligonlar(maskeler, w, h)
+        # Kişi bastırma: kişi kutusuyla bu oranda örtüşen alev/duman tespiti
+        # değerlendirilmez. Ölçüm 2026-09-08 (kamera-210, ofis, 36 sahte alarm):
+        # "duman" tespitlerinin tamamı kapıdan geçen kişilerin bacağı/kotu,
+        # "alev"lerin çoğu kişi üstündeki parlak giysiydi. 0 = kapalı.
+        self.kisi_oran = float(kisi_oran)
         self.odaklar: list[dict[str, Any]] = []
         self._sonraki_id = 1
         # KAMERA düzeyi alarm cooldown'u. Odak-başına cooldown yetmiyor: gerçek
@@ -153,12 +189,17 @@ class DumanTakip:
                 en_iyi, en_iou = o, s
         return en_iyi
 
-    def guncelle(self, tespitler, ts: float) -> list[dict]:
+    def guncelle(self, tespitler, ts: float, kisiler=None) -> list[dict]:
         """tespitler: [(sinif, x1, y1, x2, y2, conf)] piksel. Yeni olayları döndürür.
+
+        `kisiler`: aynı kadrajdaki kişi kutuları [(x1, y1, x2, y2)] piksel
+        (sayım hattının YOLO çıktısı). Verilirse kişiyle örtüşen tespit atılır.
 
         Dönen olaylar yalnız DURUM DEĞİŞİMLERİdir (ve cooldown dolmuş alarm
         tekrarları); her karede olay üretmez — aksi hâlde panel spam olur.
         """
+        if kisiler and self.kisi_oran > 0:
+            tespitler = kisi_bastir(tespitler, kisiler, self.kisi_oran)
         kullanilan: set[int] = set()
         for d in tespitler:
             sinif = SINIF_ADLARI.get(str(d[0]).lower(), str(d[0]).lower())
@@ -261,6 +302,7 @@ def _takip_kur(cfg, w: int, h: int, bolgeler, maskeler) -> DumanTakip:
         alarm_sn=cfg.get("fire.alarm_seconds", 3.0),
         cooldown_sn=cfg.get("fire.cooldown_seconds", 120.0),
         bolgeler=bolgeler, maskeler=maskeler,
+        kisi_oran=cfg.get("fire.person_overlap", 0.5),
     )
 
 
@@ -371,11 +413,18 @@ class YanginHatti:
         self.on_event = on_event
         self.on_alert = on_alert
 
-    def kare(self, bgr, ts: float, frame_idx: int) -> list[tuple]:
-        """Bir kareyi işler; tespitleri (sinif, x1, y1, x2, y2, conf) döndürür."""
+    def kare(self, bgr, ts: float, frame_idx: int, kisiler=None) -> list[tuple]:
+        """Bir kareyi işler; tespitleri (sinif, x1, y1, x2, y2, conf) döndürür.
+
+        `kisiler`: kadrajdaki kişi kutuları (piksel) — sayım hattından gelir,
+        kişiyle örtüşen tespit bastırılır (`kisi_bastir`). Dönen liste
+        bastırma SONRASIdır: panel, kişi üstündeki sahte kutuyu da görmesin.
+        """
         self.sonuc.frames += 1
         self.halka.append(bgr.copy())
         tespitler = tespit_karolu(self.ded, bgr, self.karo)
+        if kisiler and self.takip.kisi_oran > 0:
+            tespitler = kisi_bastir(tespitler, kisiler, self.takip.kisi_oran)
         for olay in self.takip.guncelle(tespitler, ts):
             olay["camera_id"] = self.camera_id
             olay["frame_idx"] = frame_idx

@@ -17,10 +17,11 @@ Kriter → test eşlemesi (EARS):
   K8 model yoksa AÇIK hata             → test_model_dosyasi_yoksa_acik_hata
   K9 feragat etiketi zorunlu           → test_alarm_etiketi_feragat_tasir
   +  pencere dışı vuruş sayılmaz       → test_pencere_disinda_kalan_vuruslar_sayilmaz
+  K10 kişi üstündeki tespit bastırılır → KisiBastirma (ölçüm 2026-09-08: 36 sahte alarm)
 """
 import unittest
 
-from src.fire import FERAGAT, DumanTakip, alarm_etiketi, model_yolu
+from src.fire import FERAGAT, DumanTakip, alarm_etiketi, kisi_bastir, model_yolu
 
 # Kadraj ortasında sabit bir duman kutusu (piksel) — 640x480 kare varsayımı.
 KUTU = (300, 200, 380, 300)
@@ -205,3 +206,43 @@ class KanitKlibi(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KisiBastirma(unittest.TestCase):
+    """K10: kişi kutusuyla örtüşen alev/duman tespiti değerlendirilmez.
+
+    Ölçüm 2026-09-07/08 (kamera-210, ofis): 36 sahte alarmın "duman"ları
+    kapıdan geçen kişinin kot pantolonu, "alev"leri parlak giysiydi.
+    """
+    KISI = (280, 150, 400, 330)      # KUTU'yu (300,200,380,300) tamamen kapsar
+
+    def test_kisi_icindeki_tespit_atilir(self):
+        self.assertEqual(kisi_bastir(tespit(), [self.KISI], 0.5), [])
+
+    def test_kisiden_uzak_tespit_kalir(self):
+        uzak = (10, 10, 60, 60)
+        self.assertEqual(kisi_bastir(tespit(), [uzak], 0.5), tespit())
+
+    def test_oran_kesisim_bolu_tespit_alanidir_iou_degil(self):
+        """Küçük alev kutusu büyük kişi kutusunun içinde: IoU düşük, oran 1."""
+        kucuk = (330, 240, 340, 250)
+        self.assertEqual(kisi_bastir(tespit(kucuk), [self.KISI], 0.5), [])
+
+    def test_kisiden_tasan_buyuk_alev_kalir(self):
+        """Yanan kişi / kişi yanındaki büyük alev: örtüşme oranın altında → kalır."""
+        buyuk = (100, 100, 600, 450)    # kişi bu kutunun küçük bir parçası
+        self.assertEqual(len(kisi_bastir(tespit(buyuk), [self.KISI], 0.5)), 1)
+
+    def test_sifir_oran_bastirmayi_kapatir(self):
+        self.assertEqual(kisi_bastir(tespit(), [self.KISI], 0.0), tespit())
+
+    def test_takip_kisi_ile_alarm_uretmez(self):
+        t = takip(dogrulama_kare=4, kisi_oran=0.5)
+        olaylar = []
+        for i in range(20):
+            olaylar += t.guncelle(tespit(), i * 0.5, kisiler=[self.KISI])
+        self.assertEqual(olaylar, [])
+
+    def test_takip_kisi_yokken_davranis_degismez(self):
+        t = takip(dogrulama_kare=4, kisi_oran=0.5)
+        self.assertTrue(besle(t, 4))

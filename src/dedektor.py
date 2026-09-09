@@ -169,8 +169,14 @@ def _rfdetr_yukle(model: str):
     try:
         from rfdetr import RFDETRSmall
     except ImportError as e:
-        raise ImportError(
-            "rfdetr paketi kurulu değil (Apache-2.0, ticari serbest). "
-            "Kurulum: pip install rfdetr — ayrıntı docs/yangin-modeli.md"
-        ) from e
+        # Paket gerçekten yoksa e.name == "rfdetr"; aksi hâlde bağımlılığı ya da
+        # başka iş parçacığının yarım kalmış import'u patlamıştır (2026-09-09:
+        # worker açılışında SigLIP/timm yüklenirken "kurulu değil" sanıldı).
+        # Asıl hata mesajda GÖRÜNSÜN, yoksa yanlış teşhis konur.
+        if getattr(e, "name", None) == "rfdetr":
+            raise ImportError(
+                "rfdetr paketi kurulu değil (Apache-2.0, ticari serbest). "
+                "Kurulum: pip install rfdetr — ayrıntı docs/yangin-modeli.md"
+            ) from e
+        raise ImportError(f"rfdetr import edilemedi (paket var, bağımlılık/yarış): {e}") from e
     return RFDETRSmall(pretrain_weights=model)

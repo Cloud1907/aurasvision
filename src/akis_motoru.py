@@ -238,6 +238,15 @@ def _yangin_bolgeleri(store, cid: str) -> tuple[list[dict], list[dict]]:
     return izleme, maske
 
 
+# Sayım batch'inden gelen kişi kutularının yangın kademesi için geçerlilik süresi (sn).
+# Hareket filtresi durgun sahnede batch'i atlar; kapıda duran kişi bu süre boyunca
+# hâlâ bastırılır, sonra kutu bayat sayılır (kişi gitmiş olabilir).
+_KISI_TAZE = 5.0
+# Yangın dedektörü yükleme denemesi: sayı ve aralık (sn).
+_YUKLEME_DENEME = 5
+_YUKLEME_ARALIK = 30.0
+
+
 class _YanginKademe:
     """Yangın/duman erken uyarı kademesi — src/fire.py hattını akis motoruna bağlar.
 
@@ -256,6 +265,8 @@ class _YanginKademe:
         self.fps = float(cfg.get("fire.fps", 4.0))
         self.ded = None
         self.ded_hata = ""
+        self.deneme = 0            # yükleme denemesi sayısı (_YUKLEME_DENEME'ye kadar)
+        self.son_deneme = 0.0
         self.hat: dict[str, Any] = {}
         self.hat_key: dict[str, str] = {}
         self.busy: set[str] = set()
@@ -263,20 +274,34 @@ class _YanginKademe:
         self.kare_n = 0
 
     def _dedektor(self):
-        if self.ded is None and not self.ded_hata:
-            from .fire import _dedektor_kur
-            try:
-                self.ded = _dedektor_kur(self.cfg)
-                karo = int(self.cfg.get("fire.tiles", 1))
-                print(f"{_ON} yangın dedektörü yüklendi: {self.cfg.get('fire.model')} · "
-                      f"motor {self.cfg.get('fire.engine', 'rfdetr')} · karo {karo}×{karo} · "
-                      f"hedef {self.fps} fps/kamera", flush=True)
-            except Exception as e:
-                # Sessiz sıfır olay değil, açık hata: yangın görevi açık kamerada
-                # hattın çalışmadığı logda görünsün (fire.model_yolu gerekçesi).
-                self.ded_hata = f"{e.__class__.__name__}: {e}"
-                print(f"{_ON} yangın dedektörü YÜKLENEMEDİ ({self.ded_hata}) — yangın "
-                      f"görevi açık kameralarda hat ÇALIŞMIYOR", flush=True)
+        if self.ded is not None:
+            return self.ded
+        # Yükleme kalıcı değil YENİDEN DENENİR: 2026-09-09 açılışında rfdetr
+        # import'u, ikinci kademe SigLIP/timm'i yüklerken (yarım import) patladı
+        # ve hat yeniden başlatılana dek kapalı kaldı. Aralıklı deneme, üst sınır.
+        if self.ded_hata and (self.deneme >= _YUKLEME_DENEME
+                              or time.time() - self.son_deneme < _YUKLEME_ARALIK):
+            return None
+        from .fire import _dedektor_kur
+        self.deneme += 1
+        self.son_deneme = time.time()
+        try:
+            self.ded = _dedektor_kur(self.cfg)
+            self.ded_hata = ""
+            karo = int(self.cfg.get("fire.tiles", 1))
+            print(f"{_ON} yangın dedektörü yüklendi: {self.cfg.get('fire.model')} · "
+                  f"motor {self.cfg.get('fire.engine', 'rfdetr')} · karo {karo}×{karo} · "
+                  f"hedef {self.fps} fps/kamera", flush=True)
+        except Exception as e:
+            # Sessiz sıfır olay değil, açık hata: yangın görevi açık kamerada
+            # hattın çalışmadığı logda görünsün (fire.model_yolu gerekçesi).
+            self.ded_hata = f"{e.__class__.__name__}: {e}"
+            son = self.deneme >= _YUKLEME_DENEME
+            print(f"{_ON} yangın dedektörü YÜKLENEMEDİ ({self.deneme}/{_YUKLEME_DENEME}: "
+                  f"{self.ded_hata}) — "
+                  + ("VAZGEÇİLDİ, yangın görevi açık kameralarda hat ÇALIŞMIYOR"
+                     if son else f"{_YUKLEME_ARALIK:.0f} sn sonra yeniden denenecek"),
+                  flush=True)
         return self.ded
 
     def maybe_submit(self, cid: str, st: dict, bgr, ts: float, wh) -> None:
@@ -300,7 +325,11 @@ class _YanginKademe:
                     on_event=lambda o, c=cid: self._olay(c, o),
                     on_alert=lambda o, c=cid: self._olay(c, o))
                 self.hat_key[cid] = key
-            tespitler = self.hat[cid].kare(bgr, ts, st["frame_idx"])
+            kisiler = None
+            kk = st.get("kisi_kutular")
+            if kk and time.time() - kk[0] <= _KISI_TAZE:
+                kisiler = kk[1]
+            tespitler = self.hat[cid].kare(bgr, ts, st["frame_idx"], kisiler=kisiler)
             self.kare_n += 1
             st["fire_dets"] = [
                 {"id": 0, "x1": round(float(x1) / w, 4), "y1": round(float(y1) / h, 4),
@@ -488,6 +517,10 @@ def run_akis_worker(cams: list[dict], cfg, bus,
         if i % 8 == 7:
             time.sleep(1.0)
     refresh_db()
+    if any((st["cam"].get("tasks") or {}).get("fire") for st in state.values()):
+        # Ana iş parçacığında, döngü ve ikinci kademe başlamadan ÖNCE yükle:
+        # iş parçacıkları arası import yarışı (SigLIP ↔ rfdetr) burada olmaz.
+        yangin._dedektor()
     print(f"{_ON} {len(state)} kamera · model={model_ad} · hedef {fps} fps · "
           f"hwaccel adayları: {','.join(hw_adaylar) or 'yok (yazılım)'} · "
           f"{donanim.ozet_satiri()}", flush=True)
@@ -536,6 +569,13 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                 for (xyxy, confs, cls), (cid, st, bgr, (w, h), ts) in zip(sonuc, meta[i0:i0 + batch_max]):
                     tasks = st["cam"].get("tasks") or {}
                     dets_ui: list[dict] = []
+                    if tasks.get("fire"):
+                        # Yangın kademesi kişi üstündeki sahte alev/dumanı bastırsın
+                        # (fire.kisi_bastir). Hareket filtresi batch'i atlarsa kutu
+                        # eskir; kademe _KISI_TAZE sn'den eskisini kullanmaz.
+                        st["kisi_kutular"] = (wall, [tuple(map(float, xyxy[i]))
+                                                     for i in range(len(cls))
+                                                     if int(cls[i]) == _PERSON_CLASS])
                     if tasks.get("count"):
                         keep = np.array([int(c) in count_classes for c in cls], dtype=bool)
                         # ihlal alanı insan dışı sınıf da isteyebilir
