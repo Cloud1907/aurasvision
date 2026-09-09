@@ -16,6 +16,10 @@ onnxruntime>=1.18.0        # Apple Silicon: CPU provider (POC için yeterli)
 #   pip install onnxruntime-gpu --index-url https://pypi.jetson-ai-lab.io/sbsa/cu130
 # TensorRT engine (detect.model: yolo11s.engine) için: pip install tensorrt
 
+# --- Donanım profili / kaynak telemetrisi (src/donanim.py) ---
+psutil>=5.9                 # CPU/RAM yüzdesi (her OS)
+nvidia-ml-py>=12.0          # GPU/NVDEC yüzdesi (NVIDIA yoksa sessizce atlanır)
+
 # --- Web arayüzü ---
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
@@ -47,3 +51,5 @@ openpyxl>=3.1             # Raporlar ekranı Excel çıktısı (/api/rapor.xlsx)
 # --- Görünüm araması (src/arama.py) ---
 open_clip_torch>=3.0      # SigLIP (Apache-2.0) — arşivde serbest metinle nesne arama
 transformers>=4.40        # open_clip'in SigLIP tokenizer'ı için
+rfdetr>=1.1.0             # RF-DETR (Apache-2.0) — yangın dedektörü; ultralytics bağımlılığı YOK
+pyarrow>=17.0              # scripts/dfire_parquet_ac.py: D-Fire HF aynası parquet shard'larını okur (tek seferlik veri hazırlığı)

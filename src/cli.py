@@ -4,12 +4,14 @@ Alt komutlar:
   count    kişi sayma + çizgi geçişi (YOLO + ByteTrack)
   plate    plaka okuma (fast-alpr)
   face     yüz tespit + anonim demografi (InsightFace)
+  fire     yangın/duman ERKEN UYARI (sertifikalı alarm değil — src/fire.py)
   analyze  üçü birden tek videoda
 
 Örnek:
   python -m src.cli count   --source data/videos/people.mp4 --save
   python -m src.cli plate   --source data/videos/traffic.mp4
   python -m src.cli face    --source data/videos/people.mp4
+  python -m src.cli fire    --source data/videos/depo.mp4
   python -m src.cli analyze --source data/videos/scene.mp4 --save
 """
 from __future__ import annotations
@@ -72,6 +74,22 @@ def cmd_face(args, cfg) -> int:
     return 0
 
 
+def cmd_fire(args, cfg) -> int:
+    from .fire import FERAGAT, run_fire
+
+    store = open_store(cfg)
+    store.start_run("fire", args.source, {"model": cfg.get("fire.model")})
+    res = run_fire(args.source, cfg, store=store, camera_id=_cam_id(args.source))
+    store.close()
+    print(f"✓ Yangın taraması bitti — ön uyarı: {len(res.on_uyarilar)}  "
+          f"ALARM: {len(res.alarmlar)}  (kare: {res.frames})")
+    for a in res.alarmlar:
+        print(f"   ! {a['sinif']}  {a['dogrulama']} kare / {a['sure']} sn  "
+              f"@ {a['ts_seconds']} sn   kanit: {a.get('snapshot') or '-'}")
+    print(f"   {FERAGAT}")
+    return 0
+
+
 def cmd_analyze(args, cfg) -> int:
     rc = 0
     print("── Sayım ──")
@@ -95,7 +113,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     for name, help_ in [("count", "kişi sayma"), ("plate", "plaka okuma"),
-                        ("face", "yüz + anonim demografi"), ("analyze", "üçü birden")]:
+                        ("face", "yüz + anonim demografi"),
+                        ("fire", "yangın/duman erken uyarı (sertifikalı alarm DEĞİL)"),
+                        ("analyze", "üçü birden")]:
         sp = sub.add_parser(name, help=help_)
         sp.add_argument("--source", required=True, help="video dosyası / kamera id (0)")
         sp.add_argument("--save", action="store_true", help="annotated video kaydet")
@@ -109,8 +129,8 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config)
     print(f"[device: {select_device(cfg.get('device', 'auto'))}]")
 
-    dispatch = {"count": cmd_count, "plate": cmd_plate,
-                "face": cmd_face, "analyze": cmd_analyze}
+    dispatch = {"count": cmd_count, "plate": cmd_plate, "face": cmd_face,
+                "fire": cmd_fire, "analyze": cmd_analyze}
     return dispatch[args.command](args, cfg)
 
 

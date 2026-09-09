@@ -3,21 +3,12 @@
 
 device: auto            # auto | mps | cuda | cpu  (auto: MPS > CUDA > CPU)
 
-# Kameralar — POC'ta demo videolar kamera gibi tanımlı.
+# Kameralar — panelden eklenenler veritabanında tutulur; buradaki liste onlara
+# EKLENİR (store.merged_cameras). Demo videolar 2026-08-27'de kaldırıldı: gerçek
+# kamera bağlandıktan sonra döngüde işlenmeye devam edip GPU ve disk harcıyor,
+# raporlara da sahte sayı yazıyorlardı. Demo istenirse buraya geri eklenir.
 # Üretimde source: rtsp://kullanıcı:şifre@ip:554/stream (şifre .env'den, hardcode yok).
-cameras:
-  - id: giris
-    name: "Giriş Kapısı"
-    source: data/videos/people-detection.mp4
-    tasks: {count: true, plate: false, face: false}
-  - id: otopark
-    name: "Otopark (ANPR)"
-    source: data/videos/person-bicycle-car-detection.mp4
-    tasks: {count: false, plate: true, face: false}
-  - id: kasa
-    name: "Kasa Önü"
-    source: data/videos/store-aisle-detection.mp4
-    tasks: {count: true, plate: false, face: true}
+cameras: []
 
 server:
   host: 127.0.0.1
@@ -28,6 +19,12 @@ db:
   # PostgreSQL (Timescale+pgvector): DATABASE_URL ortam değişkeni öncelikli.
   # Boşsa SQLite'a düşer (yerel demo). Örn: postgresql://auras:auras@localhost:5433/auras
   url: ""
+  # Kamera heartbeat geçmişi (camera_health) bu süreden sonra budanır. Kamera
+  # başına 5 sn'de bir satır yazılır — 4 kamerada günde ~69 bin, 20 kamerada
+  # ~345 bin satır; budanmazsa tablo süresiz büyür ve panelin durum sorgusu
+  # (kamera başına MAX(id)) yavaşlar. Bu veri anlık durum içindir, KANIT değil;
+  # olay ve kayıt satırlarına dokunulmaz. 0 = budama yok.
+  health_keep_days: 30
 
 redis:
   # Olay veri yolu (worker → ingestor). REDIS_URL env öncelikli.
@@ -41,14 +38,23 @@ go2rtc:
   config_path: go2rtc/go2rtc.yaml   # API kameralardan otomatik üretir
 
 worker:
-  engine: nvdec       # nvdec: GB10 GPU pipeline (NVDEC+batch TensorRT, ADR-0003)
-                      # ultralytics: eski motor (Mac/CPU geliştirme + fallback)
+  engine: auto        # auto: makineye göre seçilir (src/donanim.py) —
+                      #   nvdec: GB10/Linux+NVIDIA GPU hattı (PyNvVideoCodec+TensorRT, ADR-0003)
+                      #   akis : taşınabilir motor — Windows/Linux, her GPU/CPU (PyAV donanım
+                      #          decode + tek batch YOLO + kamera başına takip, src/akis_motoru.py)
+                      #   ultralytics: eski motor (yalnız dosya kaynağı deneme kipi; RTSP'de
+                      #          her kareyi CPU'da çözer, 6 kamerada makineyi doyurdu)
   # Kamera/worker oranı (GB10 ölçümü, docs/olcumler-gb10.md): worker başına ~48
   # kamera tam 5 fps'te taşınır (GPU ~%40); 100 kamera = 2 worker süreci
   # (AURAS_CAMERAS=... ile bölüştür). Tek worker 96 kamerada ~3.6 fps/kam'a düşer.
   loop_interval: 30   # ultralytics motoru, dosya kaynakları: tur arası bekleme sn (0 = tek geçiş)
   batch_max: 32       # nvdec: tek TensorRT inference'ına girecek azami kare
   second_stage_interval: 0.7   # nvdec: plaka/yüz tetikleri arası asgari sn (kamera başına)
+  # Canlı görünümün "Analiz" modu (annotate edilmiş kare) worker'ın bu yerel
+  # porttan verdiği son kareyi server.py üzerinden proxy'ler (127.0.0.1'e bağlı,
+  # dışa kapalı). server.py ve worker.py AYNI config'i okuduğu için elle
+  # eşleştirme gerekmez.
+  preview_port: 8801
 
 motion:               # nvdec: hareket ön-filtresi (Y-düzlemi fark, GPU)
   enabled: true
@@ -60,9 +66,20 @@ paths:
   video_dir: data/videos
 
 detect:
-  model: yolo11s.engine  # TensorRT FP16 dinamik batch (GB10; üret:
-                         # yolo export model=yolo11s.pt format=engine half=True dynamic=True batch=32)
-                         # GPU'suz geliştirmede (Mac) yolo11n.pt kullan
+  # Analiz kaynağı: kameranın substream'i varsa (url_sub) analiz ONDAN koşar —
+  # 2880×1616 yerine 896×512 çözmek decode yükünü ~10× düşürür; YOLO zaten
+  # 640'a küçültüyor, sayım doğruluğu değişmez (Frigate/Milestone ile aynı ilke).
+  # Plaka görevi açık kamera ana akışta kalır (plate.use_main_stream).
+  use_substream: true
+  # Donanım decode adayları: boş = donanim.py OS'e göre seçer (cuda, d3d11va,
+  # dxva2, qsv, vaapi, videotoolbox). "none" = yazılım decode'a zorla.
+  hwaccel: []
+  model: yolo11s.pt      # Windows/RTX kurulumu: CUDA'lı torch (cu130) ile GPU'da koşar.
+                         # yolo11s.engine (TensorRT) YALNIZ engine dosyası bu makinede
+                         # üretildiyse kullanılabilir — .engine karta özeldir, taşınmaz
+                         # ve dosya yoksa fallback yoktur (src/detect.py):
+                         # yolo export model=yolo11s.pt format=engine half=True dynamic=True batch=32
+                         # GPU'suz makinede yolo11n.pt yapın.
   fps: 5                 # nvdec motoru: kamera başına analiz temposu (substream hedefi)
   conf: 0.35             # tespit güven eşiği
   iou: 0.5
@@ -95,7 +112,16 @@ record:
   # Kalite düşer; tek kamera görünümü ve analiz ana akışı kullanmaya devam eder.
   use_substream: false
   keep_days: 15
-  max_size_gb: 0           # 0 = kota yok. Doluluk riski varsa mutlaka ver (gün değil BOYUT güvenilir)
+  max_size_gb: 100         # Bu makinede 238 GB'lik tek disk var ve sistem de aynı diskte:
+                         # kotasız 7/24 kayıt diski doldurur, dolan diskte SQLite yazamaz.
+                         # 2026-09-02'de 60 → 100 GB: kamera sayısı 1'den 6'ya çıkınca
+                         # tüketim saatte 1,9 GB'den 11,3 GB'ye fırladı (hepsi ANA akıştan,
+                         # use_substream=false) ve 60 GB'lik arşiv ~5,3 saate düştü — plaka
+                         # doğruluk ölçümü için gereken bir günlük pencere sığmıyordu.
+                         # Ölçüm anında disk: 238 GB toplam, 106 GB boş; 100 GB kota ile
+                         # ~72 GB boş kalır. Kota aşılınca EN ESKİ segmentten silinir
+                         # (temizlik() → recordings_oldest, start_time'a göre artan).
+                         # Gün değil BOYUT güvenilir sınırdır.
 
 stream:
   # Bazı HLS/CDN kaynakları ve IP kameralar ek HTTP başlığı ister (Referer, User-Agent,
@@ -121,6 +147,9 @@ intrusion:
   cooldown_seconds: 30.0   # aynı track aynı alanda tekrar alarm üretene dek geçecek süre
 
 plate:
+  # Plaka OCR piksel ister (min_plate_width_px): plaka görevi açık kamera ana
+  # akıştan çözülür. false yapılırsa substream'den okur (uzak plaka okunmaz).
+  use_main_stream: true
   # fast-alpr varsayılan modelleri (TR için ileride fine-tune)
   detector: yolo-v9-t-384-license-plate-end2end
   # OCR alternatifleri (fast-plate-ocr 1.x ile gelir, indirme otomatik):
@@ -214,3 +243,66 @@ face:
                          # kompaktlanır, yine aşarsa en az görülenler canlı taramadan emekliye
                          # ayrılır (final sayıma yine girerler)
   track_timeout_seconds: 2.0   # nvdec: yüz bu kadar sn görünmezse track kapanır (tek olay yazılır)
+
+fire:
+  # YANGIN/DUMAN ERKEN UYARI — sertifikalı yangın alarm sistemi DEĞİLDİR.
+  # Video tabanlı tespit EN 54 kapsamında değil; mevcut yangın sistemini
+  # TAMAMLAR, yerine geçmez. Gerekçe: src/fire.py başlığı.
+
+  # ── Dedektör motoru — LİSANS KARARI, performans tercihi değil ──
+  # rfdetr      Apache-2.0 (RF-DETR N/S/M/L). Ticari kullanımda serbest,
+  #             ödeme yok, kaynak açma yükümlülüğü yok. VARSAYILAN.
+  #             DİKKAT: RF-DETR XL/2XL PML 1.0'dır ve desteklenmez.
+  # ultralytics AGPL-3.0. Kapalı kaynak üründe ya tüm kaynağı açmayı ya
+  #             Enterprise lisansı gerektirir; AGPL sunucu arkasında sunmayı
+  #             da dağıtım sayar. Yalnız geliştirme/karşılaştırma için.
+  engine: rfdetr
+  agpl_kabul: false   # true yapmadan AGPL motor YÜKLENMEZ (src/dedektor.py kapısı)
+
+  # Genel amaçlı ağırlık BU İŞİ YAPMAZ (COCO'da duman sınıfı yok).
+  # Eğitim/indirme: docs/yangin-modeli.md. Model yoksa hat AÇIK HATA verir,
+  # sessizce sıfır olay üretmez.
+  model: models/fire.pt
+  classes: {0: smoke, 1: fire}   # D-Fire sınıf sırası
+  conf: 0.35            # tespit güven eşiği (tek başına alarm ANLAMINA GELMEZ)
+                        # Saha ölçümü (docs/olcumler-yangin-saha-2026-09-02.md): 0,35'te
+                        # aşırı pozlanmış kapı "duman" sanıldı (1 sahte alarm); 0,45'te
+                        # sahte alarm 0, alarm gecikmesi +3-16 sn. Sahaya göre seç.
+  imgsz: 640
+  # Kare bölme: 2 = kare 2×2 bindirmeli karoya bölünür, her karo ayrı geçer.
+  # Dedektör 512'ye küçülttüğü için 2K kadrajda yeni tutuşan alev ~10 piksele
+  # iner ve ilk 10-15 sn görülmez. Ölçüm: ilk alev tespiti tutuşmadan 14 sn →
+  # 3 sn'ye indi (2×2). Maliyet 4× inference; 1 = kapalı.
+  tiles: 2
+  vid_stride: 3         # her N karede bir işle (dosya/CLI yolu: run_fire)
+  # akis motoru (canlı RTSP): yangın kademesinin kamera başına temposu. Doğrulama
+  # confirm_frames kare ister → 4 fps'te ön uyarı ≥1 sn, alarm +alarm_seconds.
+  # 2×2 karo = kare başına 4 geçiş; tek iş parçacığı, meşgulse kare atılır.
+  fps: 4
+  # Ana akıştan çöz (NVDEC/d3d11va): substream'de (896 px) küçük alev görülmez.
+  # false = substream (ucuz ama geç); saha ölçümü ana akış + 2×2 karo ile alındı.
+  use_main_stream: true
+
+  # ── Zamansal doğrulama — hattın asıl değeri burada ──
+  # Ölçüm: FIA/BRE bağımsız testinde video duman dedektörleri tek karede
+  # ortalama %58 (benzer renkli arka planda %52) başarı gösterdi; SmokeyNet'in
+  # baseline'ları geçme sebebi uzam-ZAMANSAL bilgi. Tek kare asla alarm olamaz.
+  # Ölçüm 2026-09-07/08 (kamera-210, ofis kapısı, 36 sahte / 0 gerçek alarm):
+  # 4 kare ≈ 1,5 sn ve 3 sn alarm, kapıdan geçen kişinin süresine sığıyordu
+  # (alarm süreleri 3-5 sn). Gerçek yangın dakikalarca sürer, geçen kişi
+  # sürmez; alarm gecikmesi 1-3 sn → ~10 sn'ye çıkar (bilinçli bedel).
+  window_seconds: 6.0   # doğrulama penceresi
+  confirm_frames: 8     # pencere içinde aynı odağı doğrulaması gereken kare sayısı (2,5 fps'te ~3 sn)
+  iou_link: 0.2         # kareler arası "aynı odak" sayılma eşiği
+  alarm_seconds: 10.0   # ön uyarı bu kadar SÜRERSE alarma yükselir
+  # Kişi bastırma: sayım hattının kişi kutusuyla bu oranda örtüşen alev/duman
+  # tespiti atılır (kesişim / tespit alanı). Aynı ölçümde "duman"ların tamamı
+  # kot pantolon, "alev"lerin çoğu parlak giysiydi. Yalnız count/plate/face
+  # görevi de açık kamerada çalışır (kişi kutusu oradan gelir). 0 = kapalı.
+  person_overlap: 0.5
+  cooldown_seconds: 120 # süren yangın bu aralıkla hatırlatılır (spam değil, sessizlik de değil)
+  clip_seconds: 4.0     # kanıt klibi uzunluğu
+
+  # Bölgeler DB'den gelir (zones tablosu): kind='fire' izleme alanı (tanımlıysa
+  # yalnız içi değerlendirilir), kind='firemask' maske (kaynak makinesi, egzoz,
+  # güneş vuran pencere). ISO/TS 7240-30 kurulum standardının karşılığı.

@@ -22,7 +22,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 # record: kameranın NVR kaydı (analiz değil arşiv). Varsayılan AÇIK — kayıt
 # bilinçli kapatılır; sessizce kapalı başlayan kamera sahada "o gün kayıt yok"
 # olarak patlar ve geri getirilemez.
-DEFAULT_TASKS = {"count": True, "plate": False, "face": False, "record": True}
+DEFAULT_TASKS = {"count": True, "plate": False, "face": False, "fire": False, "record": True}
 
 
 def open_store(cfg) -> "BaseStore":
@@ -116,6 +116,35 @@ class BaseStore:
     def list_zones(self, camera_id: str) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    def zone_counts(self) -> dict[str, dict[str, int]]:
+        """Kamera başına bölge türü sayıları — {camera_id: {kind: adet}}.
+
+        Sayım görevi açık ama çizgisi çizilmemiş kamera TANIM GEREĞİ hiçbir şey
+        üretemez; GPU harcar, panelde "çalışıyor" görünür. Arayüz bunu uyarı
+        olarak gösterebilsin diye tek sorguda toplanır — kamera başına ayrı
+        istek 100 kameralı kurulumda 100 sorgu demekti.
+        """
+        out: dict[str, dict[str, int]] = {}
+        for r in self._all("SELECT camera_id, kind, COUNT(*) AS n FROM zones"
+                           " GROUP BY camera_id, kind"):
+            out.setdefault(r["camera_id"], {})[r["kind"]] = int(r["n"])
+        return out
+
+    def all_zones(self) -> dict[str, list[dict[str, Any]]]:
+        """Tüm kameraların TAM bölge/çizgi geometrisi — {camera_id: [zone, ...]}.
+
+        Canlı duvar görünümü, kamera başına ayrı /api/zones isteği atmak yerine
+        tek çağrıda çizilecek çizgi/bölgeleri alır (zone_counts() ile aynı N+1
+        gerekçesi — burada sayı değil geometri lazım). points/classes'ın
+        SQLite/Postgres'te farklı ayrıştırılması gerektiğinden (bkz. list_zones)
+        alt sınıfların kendi list_zones'u kamera kamera çağrılır; kamera sayısı
+        küçük olduğundan (onlarca) bu, ayrı SQL yolu yazmaktan daha güvenli.
+        """
+        out: dict[str, list[dict[str, Any]]] = {}
+        for r in self._all("SELECT DISTINCT camera_id FROM zones"):
+            out[r["camera_id"]] = self.list_zones(r["camera_id"])
+        return out
+
     def add_zone(self, camera_id: str, kind: str, name: str,
                  points: list, classes: list, direction: str) -> None:
         raise NotImplementedError
@@ -186,6 +215,20 @@ class BaseStore:
     def latest_health(self) -> list[dict[str, Any]]:
         """Kamera başına en son heartbeat."""
         raise NotImplementedError
+
+    def prune_camera_health(self, ts) -> int:
+        """`ts`'den eski heartbeat satırlarını siler; silinen satır sayısını döndürür.
+
+        Heartbeat kamera başına 5 saniyede bir satır yazar: 4 kamerada günde
+        ~69 bin, 20 kamerada ~345 bin satır. Tablo YALNIZCA kamera silinince
+        temizleniyordu, yani süresiz büyüyordu — ölçüm (2026-08-27): 4 günde
+        214 bin satır. Panelin durum sorgusu her kamera için MAX(id) tarar,
+        yani tablo büyüdükçe panel de yavaşlar. Geçmiş heartbeat KANIT DEĞİLDİR
+        (olay/kayıt satırlarına dokunulmaz); yalnız anlık durum için tutulur.
+        """
+        cur = self._x("DELETE FROM camera_health WHERE time < ?", (ts,))
+        self.commit()
+        return int(getattr(cur, "rowcount", 0) or 0)
 
     def delete_camera(self, cid: str) -> None:
         self._x("DELETE FROM cameras WHERE id=?", (cid,))
@@ -460,7 +503,7 @@ class SqliteStore(BaseStore):
     def latest_health(self) -> list[dict[str, Any]]:
         # MAX(time) saniye çözünürlüğünde eşitlik yapar → en son satırı id ile seç
         return self._all(
-            "SELECT camera_id, time, status, fps FROM camera_health"
+            "SELECT camera_id, time, status, fps, dropped FROM camera_health"
             " WHERE id IN (SELECT MAX(id) FROM camera_health GROUP BY camera_id)")
 
     def recent_events(self, limit: int = 50, tur: str = "",
@@ -469,13 +512,16 @@ class SqliteStore(BaseStore):
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
                  TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
-                 NULL AS snapshot
+                 NULL AS snapshot, zone, direction, NULL AS conf
             FROM count_events
           UNION ALL
-          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot FROM plate_events
+          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot,
+                 NULL AS zone, NULL AS direction, conf
+            FROM plate_events
           UNION ALL
           SELECT time, 'face', camera_id,
-                 COALESCE(gender,'?')||' ~'||COALESCE(age,0), ts_seconds, frame_idx, NULL
+                 COALESCE(gender,'?')||' ~'||COALESCE(age,0), ts_seconds, frame_idx, NULL,
+                 NULL AS zone, NULL AS direction, NULL AS conf
             FROM face_events
         ) WHERE (?='' OR type=?) AND (?='' OR camera_id=?)
         ORDER BY time DESC, ts_seconds DESC LIMIT ?
@@ -614,7 +660,7 @@ class PgStore(BaseStore):
 
     def latest_health(self) -> list[dict[str, Any]]:
         rows = self._all(
-            "SELECT DISTINCT ON (camera_id) camera_id, time, status, fps"
+            "SELECT DISTINCT ON (camera_id) camera_id, time, status, fps, dropped"
             " FROM camera_health ORDER BY camera_id, time DESC")
         for r in rows:
             r["time"] = str(r["time"])
@@ -649,14 +695,16 @@ class PgStore(BaseStore):
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
                  TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
-                 NULL AS snapshot
+                 NULL AS snapshot, zone, direction, NULL::real AS conf
             FROM count_events
           UNION ALL
-          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot FROM plate_events
+          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot,
+                 NULL AS zone, NULL AS direction, conf
+            FROM plate_events
           UNION ALL
           SELECT time, 'face', camera_id,
                  COALESCE(gender, chr(63))||' ~'||COALESCE(age::text,'0'), ts_seconds, frame_idx,
-                 NULL
+                 NULL, NULL AS zone, NULL AS direction, NULL::real AS conf
             FROM face_events
         ) ev WHERE (?='' OR type=?) AND (?='' OR camera_id=?)
         ORDER BY time DESC, ts_seconds DESC NULLS LAST LIMIT ?

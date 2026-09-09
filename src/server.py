@@ -22,7 +22,7 @@ import secrets
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import cv2
@@ -140,8 +140,20 @@ def _sync_go2rtc() -> None:
         return
     path = ROOT / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["# Otomatik üretilir (src/server.py) — kamera eklendikçe yenilenir.",
-             "streams:"]
+    lines = ["# Otomatik üretilir (src/server.py) — kamera eklendikçe yenilenir."]
+
+    # go2rtc iki biçimde koşar: compose konteyneri (docker profili) ya da tek
+    # makinede bin/go2rtc.exe. Dosya kaynağının yolu ve ffmpeg'in yeri buna bağlı.
+    _yerel_go2rtc = any((ROOT / "bin" / ad).exists() for ad in ("go2rtc.exe", "go2rtc"))
+    _ff = ROOT / "bin" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    # Konteynerde ffmpeg imajın içinde ve PATH'te; tek makinede PATH'te olmayabilir
+    # (Windows'ta genelde yoktur) — yanına konulan ikili mutlak yolla çağrılır.
+    ffmpeg = str(_ff) if (_yerel_go2rtc and _ff.exists()) else "ffmpeg"
+    if _yerel_go2rtc and _ff.exists():
+        # go2rtc'nin KENDİ dahili "ffmpeg:" kaynak türü (aşağıdaki H.265 yedeği)
+        # de bu ikiliyi bulsun — yoksa PATH'te arar, Windows'ta genelde bulamaz.
+        lines.append(f"ffmpeg:\n  bin: {json.dumps(str(_ff))}")
+    lines.append("streams:")
 
     def _go2rtc_src(src: str, kamera_basliklari: str = "") -> str:
         if src.startswith(("http://", "https://")):
@@ -159,50 +171,114 @@ def _sync_go2rtc() -> None:
                 # 93 sn'de 15 donma, her biri ~5.5 sn; izleyicide "donuyor
                 # sonra hızlanıyor"). Okuma gerçek zamana sabitlenir; 1.05,
                 # kaynağa yetişememe birikimini önleyen küçük pay.
-                return (f'exec:ffmpeg -readrate 1.05 -headers "{hdr}" -i "{src}"'
+                return (f'exec:{ffmpeg} -readrate 1.05 -headers "{hdr}" -i "{src}"'
                         " -an -c copy -f rtsp {output}")
             # Başlıksız HTTP/HLS de aynı patlama sorununu yaşar → aynı tempo
-            return (f'exec:ffmpeg -readrate 1.05 -i "{src}"'
+            return (f'exec:{ffmpeg} -readrate 1.05 -i "{src}"'
                     " -an -c copy -f rtsp {output}")
         if src.startswith(("rtsp://", "rtmp://")):
             return src
         # Dosya kaynağı → sonsuz döngülü RTSP (gerçek kamera simülasyonu).
-        # compose ./data/videos'u konteynerde /data/videos'a mount eder.
+        # Yol go2rtc'nin NEREDE koştuğuna bağlı: compose ./data/videos'u
+        # konteynerde /data/videos'a mount eder, ama tek makine profilinde
+        # (bin/go2rtc.exe) böyle bir mount yoktur — kök-mutlak yol Windows'ta
+        # hiç açılmaz; akış 404 verir, kayıt servisi her turda boş döner.
         # -an şart: sesli dosyada ffmpeg 8'in -re temposu bozuluyor (~0.56x
         # besleme → oynatıcı geride kalır, tampon boşalır, akış baştan başlar)
-        return (f"exec:ffmpeg -re -stream_loop -1 -i /{src.lstrip('/')}"
+        yol = (str((ROOT / src).resolve()) if _yerel_go2rtc
+               else "/" + src.lstrip("/"))
+        return (f'exec:{ffmpeg} -re -stream_loop -1 -i "{yol}"'
                 " -an -c copy -f rtsp {output}")
 
-    for c in _cameras():
+    def _stream_bloklari(ad: str, src: str, kamera_basliklari: str) -> None:
         # Değer JSON ile alıntılanır: içinde ": " geçen kaynak (ör. -headers "Referer: ...")
         # alıntısız yazılınca go2rtc'nin YAML ayrıştırıcısı TÜM config'i reddediyor.
+        birincil = _go2rtc_src(src, kamera_basliklari)
+        if src.startswith(("rtsp://", "rtmp://")) and _yerel_go2rtc and _ff.exists():
+            # H.265/HEVC kaynaklar tarayıcıda (Chrome/Edge MSE) OYNAMAZ —
+            # MEDIA_ERR_DECODE ile sessizce siyah kare kalır (sahada yakalandı:
+            # REOLINK_CX810, codec hvc1...). go2rtc, tüketici h264 isteyip
+            # birincil kaynakta yoksa bu YEDEĞİ (ffmpeg ile anlık çevrim)
+            # kullanır — kaynak zaten h264 ise bu satır hiç TETİKLENMEZ
+            # (go2rtc talep eşleşince birincili kullanır), gereksiz CPU
+            # yükü doğmaz.
+            lines.append(f"  {ad}:")
+            lines.append(f"    - {json.dumps(birincil)}")
+            lines.append(f"    - {json.dumps(f'ffmpeg:{ad}#video=h264')}")
+        else:
+            lines.append(f"  {ad}: {json.dumps(birincil)}")
+
+    for c in _cameras():
         _hdr = str(c.get("http_headers") or "")
-        lines.append(f"  {c['id']}: {json.dumps(_go2rtc_src(str(c['source']), _hdr))}")
+        _stream_bloklari(c["id"], str(c["source"]), _hdr)
         # Kamera duvarı substream'i: IP kameraların düşük çözünürlüklü ikinci akışı.
         # Duvarda 100 kareyi tam çözünürlükte çözmek tarayıcıyı boğar; tam çözünürlük
         # yalnız tek-kamera görünümü ve analiz içindir.
         if c.get("url_sub"):
-            lines.append(f"  {c['id']}{SUB_SUFFIX}: {json.dumps(_go2rtc_src(str(c['url_sub']), _hdr))}")
+            _stream_bloklari(f"{c['id']}{SUB_SUFFIX}", str(c["url_sub"]), _hdr)
     yeni = "\n".join(lines) + "\n"
-    if path.exists() and path.read_text(encoding="utf-8") == yeni:
+    eski = path.read_text(encoding="utf-8") if path.exists() else ""
+    if eski == yeni:
         return   # değişiklik yok → çalışan akışları kesme
     path.write_text(yeni, encoding="utf-8")
+    # YAML yalnız AÇILIŞ içindir. Çalışan go2rtc'ye fark, yeniden başlatmadan
+    # stream API'siyle uygulanır: restart TÜM tüketicileri (kayıt, analiz,
+    # izleyiciler) düşürüyordu — sahada her kamera ekleme 6 kamerada kayıt
+    # kesintisi (10054) üretti. Eklenen/değişen akış PUT, silinen DELETE.
+    _go2rtc_farki_uygula(_yaml_akislari(eski), _yaml_akislari(yeni))
 
-    # go2rtc çalışırken YAML'ı KENDİLİĞİNDEN okumaz; yeniden yüklemesi söylenmezse
-    # "kamera ekledim ama canlıda görünmüyor" olur. Yalnız config değiştiğinde
-    # tetiklenir (akışlar ~2 sn kesilir). exec: kaynakları çalışma-zamanı stream
-    # API'sinden eklenemediği için (go2rtc güvenlik kısıtı) restart tek yol.
+
+def _yaml_akislari(metin: str) -> dict[str, list[str]]:
+    """Ürettiğimiz go2rtc YAML'ından {akış adı: [kaynaklar]} çıkarır (yalnız kendi
+    biçimimiz: 'streams:' altında '  ad: "src"' ya da '  ad:' + '    - "src"')."""
+    out: dict[str, list[str]] = {}
+    ad = None
+    icinde = False
+    for satir in metin.splitlines():
+        if satir.startswith("streams:"):
+            icinde = True
+            continue
+        if not icinde or not satir.strip() or satir.lstrip().startswith("#"):
+            continue
+        if satir.startswith("    - "):
+            if ad is not None:
+                out[ad].append(json.loads(satir[6:].strip()))
+        elif satir.startswith("  ") and ":" in satir:
+            ad, _, deger = satir.strip().partition(":")
+            out[ad] = [json.loads(deger.strip())] if deger.strip() else []
+        else:
+            break
+    return out
+
+
+def _go2rtc_farki_uygula(eski: dict[str, list[str]], yeni: dict[str, list[str]]) -> None:
+    import urllib.parse
     import urllib.request
 
     base = (cfg.get("go2rtc.url", "") or "").rstrip("/")
     if not base:
         return
-    try:
-        urllib.request.urlopen(
-            urllib.request.Request(f"{base}/api/restart", method="POST"), timeout=4).close()
-    except Exception as e:
-        print(f"[go2rtc] yeniden yükleme başarısız ({e}) — yeni kamera canlıda "
-              f"görünmeyebilir, konteyneri yeniden başlatın", flush=True)
+    hata = []
+    for ad in [a for a in eski if a not in yeni]:
+        try:
+            urllib.request.urlopen(urllib.request.Request(
+                f"{base}/api/streams?src={urllib.parse.quote(ad, safe='')}",
+                method="DELETE"), timeout=4).close()
+        except Exception as e:
+            hata.append(f"{ad} sil: {e}")
+    for ad, kaynaklar in yeni.items():
+        if eski.get(ad) == kaynaklar:
+            continue
+        q = "&".join(["name=" + urllib.parse.quote(ad, safe="")] +
+                     ["src=" + urllib.parse.quote(k, safe="") for k in kaynaklar])
+        try:
+            urllib.request.urlopen(urllib.request.Request(
+                f"{base}/api/streams?{q}", method="PUT"), timeout=4).close()
+        except Exception as e:
+            hata.append(f"{ad} ekle: {e}")
+    if hata:
+        print(f"[go2rtc] akış güncellenemedi: {'; '.join(hata)} — go2rtc yeniden "
+              f"başlatılınca YAML'dan yüklenecek", flush=True)
 
 
 def _camera(camera_id: str) -> dict | None:
@@ -986,7 +1062,23 @@ def api_status():
             return "henüz vektör yok (nesne görülünce başlar)"
         return f"{n:,} nesne dizinde · son yazım {str(son)[:19]}".replace(",", ".")
 
+    def _donanim():
+        """CPU doygunsa (%95+) her şey gecikir: canlı akış vekili, olay yazımı,
+        panel. Bu sessizce yaşanmasın diye kırmızı bileşen."""
+        from . import donanim
+        k = donanim.kullanim()
+        p = donanim.profil()
+        cpu = k.get("cpu_pct")
+        gpu = f" · GPU %{k['gpu_pct']}" if "gpu_pct" in k else ""
+        dec = f" · NVDEC %{k['nvdec_pct']}" if "nvdec_pct" in k else ""
+        hw = ",".join(p.get("hwaccel") or []) or "yazılım decode"
+        detay = f"CPU %{cpu if cpu is not None else '?'}{gpu}{dec} · hwaccel {hw}"
+        if cpu is not None and cpu >= 95:
+            raise RuntimeError(f"CPU doygun — {detay}")
+        return detay
+
     olc("Veritabanı", _db)
+    olc("Donanım", _donanim)
     olc("Olay yolu", _redis)
     olc("Olay işleyici", _ingestor)
     olc("Canlı akış", _go2rtc)
@@ -999,7 +1091,7 @@ def api_status():
     s = _store()
     try:
         simdi = datetime.now(timezone.utc)
-        taze, ureten, durgun = 0, 0, []
+        taze, ureten, bekleyen, durgun = 0, 0, 0, []
         for h in s.latest_health():
             t = str(h.get("time") or "")
             try:
@@ -1013,22 +1105,30 @@ def api_status():
             taze += 1
             if float(h.get("fps") or 0) > 0.1:
                 ureten += 1
+            elif str(h.get("status") or "") == "idle":
+                # Dosya kaynağı: bir geçiş biter, worker.loop_interval kadar bekler,
+                # baştan başlar. O aralıkta fps sıfırdır ama ARIZA YOKTUR. Bunu
+                # "durgun" saymak paneli demo/dosya kurulumlarında sürekli kırmızı
+                # tutuyordu — sürekli yanan lamba, gerçek arıza gününde okunmaz.
+                # (RTSP kaynakta akış hiç bitmez; bu dal yalnız dosyada çalışır.)
+                bekleyen += 1
             else:
                 durgun.append(str(h.get("camera_id") or "?"))
         kamera = len(_cameras())
     finally:
         s.close()
 
+    _bekleme = f" · {bekleyen} kamera görev arası" if bekleyen else ""
     if not taze:
         detay, ok = "çalışmıyor — sürekli analiz yok", False
-    elif ureten == 0:
+    elif ureten == 0 and not bekleyen:
         detay, ok = (f"{taze} kamera bağlı ama KARE ÜRETMİYOR "
                      f"({', '.join(durgun[:3])}) — kaynak erişilemiyor olabilir"), False
     elif durgun:
         detay, ok = (f"{ureten}/{taze} kamera işleniyor · durgun: "
-                     f"{', '.join(durgun[:3])}"), False
+                     f"{', '.join(durgun[:3])}{_bekleme}"), False
     else:
-        detay, ok = f"{ureten}/{kamera} kamera işleniyor", True
+        detay, ok = f"{ureten}/{kamera} kamera işleniyor{_bekleme}", True
     bilesenler.append({"ad": "Analiz worker", "ok": ok, "detay": detay, "ms": 0})
 
     # Kayıt servisi ayrı bileşen: mevzuat gereği çalışıyor olmalı, sessizce
@@ -1074,6 +1174,23 @@ def api_sysinfo(request: Request):
     if go2rtc.startswith(("http://localhost", "http://127.0.0.1")):
         go2rtc = f"{request.url.scheme}://{request.url.hostname}:1984"
     return {"go2rtc": go2rtc}
+
+
+@app.get("/api/donanim")
+def api_donanim():
+    """Donanım profili + anlık kaynak kullanımı (Sistem ekranı kartı).
+
+    "GPU var ama kullanılmıyor" panelde görünmeli: NVDEC %0 iken CPU %99
+    olan kurulum bir gün sessizce bulunmuştu (docs/denetim-2026-09-05-*)."""
+    from . import donanim
+    s = _store()
+    try:
+        saglik = s.latest_health()
+    finally:
+        s.close()
+    return {"profil": donanim.profil(), "kullanim": donanim.kullanim(),
+            "motor": (cfg.get("worker.engine", "auto") or "auto"),
+            "kameralar": saglik}
 
 
 @app.websocket("/api/stream")
@@ -1143,8 +1260,73 @@ async def api_stream(ws: WebSocket):
                 pass
         try:
             await ws.close()
+        except Exception:
+            pass   # zaten kapanmış (RuntimeError) ya da istemci kopmuş
+                   # (WebSocketDisconnect) — sunucu.log'a traceback basmasın
+
+
+def _worker_detections(camera: str) -> dict:
+    """Worker'ın 127.0.0.1'e bağlı önizleme sunucusundan tespit listesini çeker.
+
+    urllib BLOKLAR — event loop'u kilitlememek için asyncio.to_thread ile
+    çağıran taraf (api_detections) sarmalı. Worker kapalıysa/kamera işlenmiyorsa
+    boş liste döner (hata değil — bağlantı kopmadan önce birkaç kez normal).
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    port = int(cfg.get("worker.preview_port", 8801))
+    url = f"http://127.0.0.1:{port}/detections/{urllib.parse.quote(camera, safe='')}"
+    try:
+        with urllib.request.urlopen(url, timeout=1) as r:
+            return json.loads(r.read())
+    except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError):
+        return {"dets": [], "frame_idx": None}
+
+
+@app.websocket("/api/detections")
+async def api_detections(ws: WebSocket):
+    """Canlı video üstüne kutu çizmek için: worker'ın kare başına ürettiği tespit
+    listesini (bkz. count.py:on_detections, worker.py:_tespit_itici) tarayıcıya
+    WebSocket'le akıtır. Resim DEĞİL — {id,x1,y1,x2,y2,cls,conf} listesi, birkaç
+    onlarca bayt; video kendi hızında (go2rtc/MSE) akmaya devam eder, kutular
+    istemcide ÜSTÜNE çizilir (bkz. src/count.py docstring — "Analiz" JPEG modunun
+    slayt-gösterisi hissine alternatif).
+    """
+    import asyncio
+
+    q = ws.query_params
+    oturum = kimlik.coz(ws.cookies.get(kimlik.OTURUM_CEREZ, ""))
+    izinli = (API_TOKEN and secrets.compare_digest(q.get("token", ""), API_TOKEN)) \
+        or (oturum is not None and oturum["ad"] in _kullanici_rolleri()) \
+        or (not API_TOKEN and not _kullanici_var())
+    if not izinli:
+        await ws.close(code=1008)
+        return
+    camera = q.get("camera", "")
+    if not camera:
+        await ws.close(code=1011)
+        return
+    await ws.accept()
+    son_kare = None
+    try:
+        while True:
+            snap = await asyncio.to_thread(_worker_detections, camera)
+            # frame_idx değişmediyse (worker o kamerayı işlemiyor/duraklattı) yeniden
+            # göndermek boşuna trafik — istemci zaten aynı kutuları çizmiş durumda
+            if snap.get("frame_idx") != son_kare:
+                son_kare = snap.get("frame_idx")
+                await ws.send_json(snap)
+            await asyncio.sleep(0.12)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"[detections] {camera} akışı hata: {e}", flush=True)
+    finally:
+        try:
+            await ws.close()
         except RuntimeError:
-            pass   # zaten kapanmış
+            pass
 
 
 # go2rtc oynatıcı bileşeni: CORS başlığı göndermediği için tarayıcı onu başka
@@ -1216,9 +1398,60 @@ def api_snapshot(camera: str = Query(...), fresh: int = 0):
                     headers={"Cache-Control": "public, max-age=4"})
 
 
+@app.get("/api/live-frame")
+def api_live_frame(camera: str = Query(...)):
+    """Canlı görünümün "Analiz" modu: worker'ın o an ürettiği ANNOTATE edilmiş
+    (kutu + çizgi/bölge) kareyi verir (bkz. worker.py:_onizleme_itici).
+
+    Worker'ın önizleme portu 127.0.0.1'e bağlı ve kimlik doğrulamasız — burada
+    aynı-origin proxy'lenir ki tarayıcı doğrudan o porta erişmesin (operatörün
+    ağına kimliksiz görüntü servisi açılmasın). Worker kapalıysa veya o kamera
+    için henüz kare üretilmediyse 204 döner (hata değil — panel bunu sessizce
+    "henüz yok" olarak gösterir).
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    port = int(cfg.get("worker.preview_port", 8801))
+    url = f"http://127.0.0.1:{port}/frame/{urllib.parse.quote(camera, safe='')}"
+    try:
+        with urllib.request.urlopen(url, timeout=2) as r:
+            if r.status == 204:
+                return Response(status_code=204)
+            data = r.read()
+    except (urllib.error.URLError, TimeoutError, ConnectionError):
+        return Response(status_code=204)   # worker'ın önizleme sunucusu ayakta değil
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
 class ZonePayload(BaseModel):
     camera: str
     zones: list[dict]   # [{kind, name, points:[[x,y]..], classes:[..], direction}]
+
+
+@app.get("/api/zones/summary")
+def api_zone_summary():
+    """Kamera başına bölge sayıları — arayüz "görev açık, bölge yok" uyarısı için.
+
+    Kamera listesi ve duvar bu tek çağrıyla eksik yapılandırmayı işaretler;
+    aksi hâlde her kamera için ayrı /api/zones isteği gerekirdi.
+    """
+    s = _store()
+    try:
+        return s.zone_counts()
+    finally:
+        s.close()
+
+
+@app.get("/api/zones/all")
+def api_get_all_zones():
+    """Canlı duvar görünümü için tüm kameraların çizgi/bölge geometrisi tek çağrıda."""
+    s = _store()
+    try:
+        return s.all_zones()
+    finally:
+        s.close()
 
 
 @app.get("/api/zones")
@@ -1240,6 +1473,23 @@ def api_save_zones(payload: ZonePayload):
                        z.get("points", []), z.get("classes", []),
                        z.get("direction", "AtoB"))
         return {"ok": True, "count": len(payload.zones)}
+    finally:
+        s.close()
+
+
+def _saved_fire_zones(camera_id: str) -> tuple[list[dict], list[dict]]:
+    """(izleme alanları, maskeler) — kind='fire' / 'firemask' (worker ile aynı kural)."""
+    s = _store()
+    try:
+        izleme, maske = [], []
+        for z in s.list_zones(camera_id):
+            if len(z.get("points") or []) < 3:
+                continue
+            if z["kind"] == "fire":
+                izleme.append({"name": z.get("name") or "Izleme alani", "points": z["points"]})
+            elif z["kind"] == "firemask":
+                maske.append({"name": z.get("name") or "Maske", "points": z["points"]})
+        return izleme, maske
     finally:
         s.close()
 
@@ -1276,8 +1526,50 @@ def _saved_lines(camera_id: str) -> list[dict]:
 
 class RunPayload(BaseModel):
     camera: str
-    kind: str = "count"   # count | plate | face | analyze
+    kind: str = "count"   # count | plate | face | fire | analyze
     realtime: bool = True  # dosya kaynağını kamera hızında oynat (bkz. _frame_pusher)
+    # Boşsa kameranın CANLI kaynağı analiz edilir. Doluysa (ISO zaman damgası)
+    # o anı kapsayan ARŞİV segmenti analiz edilir — "istediğim ana gidip
+    # analizin ne okuduğunu göreyim" ihtiyacı. Canlıda geçmiş bir olayı
+    # yeniden yakalamak mümkün değildi; araç geçtiğinde orada olman gerekiyordu.
+    at: str = ""
+
+
+def _arsiv_segment(camera_id: str, an: str) -> tuple[str, str]:
+    """(mutlak dosya yolu, etiket) — `an` anını KAPSAYAN kayıt segmenti.
+
+    Yol kayıt kökünün altında çözülmek ZORUNDA: değer istemciden geliyor ve
+    doğrulanmazsa '../' ile dosya sisteminin geri kalanı analiz kaynağı
+    yapılabilirdi. Segment diskte yoksa (arşiv budaması sildiyse) bu ayrı bir
+    durumdur ve öyle söylenir — "kayıt yok" ile karıştırılmaz.
+    """
+    from .recorder import kayit_kok
+    try:
+        hedef = datetime.fromisoformat(an)
+    except ValueError:
+        raise HTTPException(400, "Geçersiz zaman biçimi")
+    if hedef.tzinfo is None:
+        hedef = hedef.astimezone()
+    s = _store()
+    try:
+        kayitlar = s.list_recordings(camera_id, None, None, 20000)
+    finally:
+        s.close()
+    kok = kayit_kok(cfg).resolve()
+    for r in kayitlar:
+        try:
+            bas = datetime.fromisoformat(str(r["start_time"]))
+        except ValueError:
+            continue
+        son = bas + timedelta(seconds=float(r["duration"] or 60))
+        if bas <= hedef <= son:
+            yol = (kok / str(r["path"])).resolve()
+            if not yol.is_relative_to(kok):
+                raise HTTPException(400, "Kayıt yolu arşiv dışına çıkıyor")
+            if not yol.exists():
+                raise HTTPException(404, "Segment diskte yok — arşiv budaması silmiş olabilir")
+            return str(yol), f"{bas:%d.%m.%Y %H:%M:%S}"
+    raise HTTPException(404, "Bu kameranın o anda kaydı yok")
 
 
 def _webify(video_rel: str) -> None:
@@ -1418,7 +1710,7 @@ class _SandboxStore:
     def close(self): pass
 
 
-def _run_analysis(job_id: str, p: "RunPayload") -> None:
+def _run_analysis(job_id: str, p: "RunPayload", arsiv_yolu: str = "") -> None:
     job = JOBS[job_id]
     cam = _camera(p.camera)
     if not cam:
@@ -1429,6 +1721,10 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
         job.update(stage="sırada bekliyor (başka analiz çalışıyor)")
         RUN_LOCK.acquire()
     source = cam["source"]; stem = Path(source).stem
+    # Arşiv koşusu: kaynak canlı akış değil, seçilen anı kapsayan mp4 segmenti.
+    # Aşağıdaki go2rtc röle mantığı ATLANMALI — o yalnız canlı akışlar içindir.
+    if arsiv_yolu:
+        source = arsiv_yolu; stem = Path(source).stem
     # Canlı HTTP/HLS kaynağı go2rtc RTSP rölesinden alınır (recorder ile aynı
     # gerekçe): ffmpeg ham HLS'i segment segment okur — 6 sn'lik patlama +
     # bekleme. Test önizlemesinde "hızlanıp donuyor" olarak görülen buydu;
@@ -1530,6 +1826,59 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
             with JOBS_STATE_LOCK:
                 job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
             return
+        # Yangın: tek başına seçilince her zaman; "Hepsi"de yalnız kamerada görev
+        # açıksa (model yüklemesi ~35 sn — istemeyen kullanıcıya bekletilmez).
+        if p.kind == "fire" or (p.kind == "analyze" and (cam.get("tasks") or {}).get("fire")):
+            job.update(stage="Yangın çalışıyor")
+            job["fire_live"] = {"frames": 0, "on_uyari": 0, "alarm": 0, "olaylar": []}
+            from .fire import FERAGAT, run_fire
+            izleme, maske = _saved_fire_zones(p.camera)
+            fl = job["fire_live"]
+
+            def _on_fire(o):
+                fl[o["durum"]] = fl.get(o["durum"], 0) + 1
+                fl["olaylar"].append({"durum": o["durum"], "sinif": o["sinif"],
+                                      "conf": o["conf"], "ts": o["ts_seconds"],
+                                      "frame": o["frame_idx"], "snapshot": o.get("snapshot", ""),
+                                      "clip": o.get("clip", "")})
+                fl["olaylar"] = fl["olaylar"][-30:]
+
+            # Sonuç videosu: run_fire kendisi yazmaz (canlı hat için gereksiz);
+            # burada annotated kareler _count/_plate ile aynı yere yazılır.
+            import cv2
+            out_dir = Path(cfg.get("paths.output_dir", "output"))
+            out_dir.mkdir(parents=True, exist_ok=True)
+            vid_path = out_dir / f"{stem}_fire.mp4"
+            yazici: dict = {}
+
+            def _on_fire_frame(kare):
+                fl["frames"] += 1
+                if "w" not in yazici:
+                    h, w = kare.shape[:2]
+                    yazici["w"] = cv2.VideoWriter(str(vid_path), cv2.VideoWriter_fourcc(*"mp4v"),
+                                                  8.0, (w, h))
+                if yazici["w"].isOpened():
+                    yazici["w"].write(kare)
+                push_frame(kare)
+
+            s.start_run("fire", source)
+            try:
+                res = run_fire(source, cfg, store=kum, camera_id=p.camera,
+                               bolgeler=izleme, maskeler=maske,
+                               on_event=_on_fire, on_alert=_on_fire,
+                               on_frame=_on_fire_frame, should_stop=job["cancel"].is_set)
+            finally:
+                if "w" in yazici:
+                    yazici["w"].release()
+            summary["fire"] = {"frames": res.frames, "on_uyari": len(res.on_uyarilar),
+                               "alarm": len(res.alarmlar), "olaylar": fl["olaylar"],
+                               "feragat": FERAGAT}
+            if "w" in yazici:
+                videos.append(f"/media/{stem}_fire.mp4")
+        if job["cancel"].is_set():
+            with JOBS_STATE_LOCK:
+                job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
+            return
         job.update(stage="Video hazırlanıyor")
         for v in videos:
             _webify(v)
@@ -1548,6 +1897,12 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
 
 @app.post("/api/run")
 def api_run(p: RunPayload):
+    # Arşiv segmenti EN BAŞTA çözülür: hata varsa (kayıt yok / budanmış / geçersiz
+    # zaman) istemci düzgün bir HTTP hatası alsın. Aşağıdaki iptal adımından sonra
+    # çözseydik, başarısız bir istek çalışan analizi boşuna öldürmüş olurdu.
+    arsiv = ("", "")
+    if p.at:
+        arsiv = _arsiv_segment(p.camera, p.at)
     # Yeni koşu eski koşuyu bekletmez: çalışan tüm job'lar iptale çekilir
     # (nihai "cancelled" durumunu analiz thread'i yazar). Check-and-set kilit
     # altında: thread'in az önce yazdığı terminal durum ezilmez.
@@ -1562,9 +1917,9 @@ def api_run(p: RunPayload):
     while len(JOBS) > 50:   # eski job kayıtları birikmesin
         JOBS.pop(next(iter(JOBS)))
     JOBS[job_id] = {"status": "running", "stage": "başlıyor", "summary": {}, "videos": [],
-                    "cancel": threading.Event()}
-    threading.Thread(target=_run_analysis, args=(job_id, p), daemon=True).start()
-    return {"job_id": job_id}
+                    "arsiv": arsiv[1], "cancel": threading.Event()}
+    threading.Thread(target=_run_analysis, args=(job_id, p, arsiv[0]), daemon=True).start()
+    return {"job_id": job_id, "arsiv": arsiv[1]}
 
 
 @app.get("/api/run/{job_id}")

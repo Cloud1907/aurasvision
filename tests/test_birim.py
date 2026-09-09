@@ -595,6 +595,15 @@ class TestBusStore:
         p = json.loads(r.mesajlar[0][1]["payload"])
         assert p["match_name"] == "Ali" and p["track_id"] == 3
 
+    def test_ihlal_alarmi_snapshotla_cokmez(self):
+        """count.py:on_alert HER ihlalde snapshot=... ile çağırıyor — imza eksikse
+        worker thread'i TypeError'la düşer (sahada yakalandı, bkz. bus.py yorumu)."""
+        r = SahteRedis()
+        BusStore(r).add_alert("intrusion", "İhlal 1", "intrusion",
+                              "track 5 · 3 sn", "kamera-206", snapshot="ev/k1.jpg")
+        p = json.loads(r.mesajlar[0][1]["payload"])
+        assert p["snapshot"] == "ev/k1.jpg"
+
 
 # ── SQLite store davranışları ──────────────────────────────────────
 class TestSqliteStore:
@@ -688,6 +697,19 @@ class TestTekMakineKipi:
         st = BusStore(bus)
         st.add_count_event("giris", 1, "in", "", 1.0, 1)   # sonrası çalışmaya devam
         assert len(bus.store.recent_events(tur="count")) == 1
+        bus.close()
+
+    def test_ihlal_alarmi_uctan_uca_snapshotla_dbye_yazilir(self, tmp_path, monkeypatch):
+        """count.py -> BusStore.add_alert(snapshot=...) -> YerelBus -> isle() -> DB.
+        Halkalardan biri kırıksa (bkz. bus.py/olay.py) worker thread'i çöker
+        (sahada yakalandı: kamera-206, ihlal alanı açık kamerada her alarmda)."""
+        bus = self._bus(tmp_path, monkeypatch)
+        st = BusStore(bus)
+        st.add_alert("intrusion", "İhlal 1", "intrusion", "track 5 · 3 sn",
+                    "kamera-206", snapshot="ev/k1.jpg")
+        alarmlar = bus.store.recent_alerts()
+        assert len(alarmlar) == 1
+        assert alarmlar[0]["snapshot"] == "ev/k1.jpg"
         bus.close()
 
 
