@@ -1533,6 +1533,13 @@ class RunPayload(BaseModel):
     # analizin ne okuduğunu göreyim" ihtiyacı. Canlıda geçmiş bir olayı
     # yeniden yakalamak mümkün değildi; araç geçtiğinde orada olman gerekiyordu.
     at: str = ""
+    # Dosya kaynağında ileri sarma: analiz bu saniyeden başlar (canlı akışta
+    # yok sayılır). 16 dakikalık saha videosunda alev 7,5. dakikada — başa
+    # sarıp beklemek test süresini boşa uzatıyordu.
+    basla_sn: float = 0.0
+    # Kamera hızının katı (realtime=True iken). 1 = gerçek zaman, 4 = dört kat
+    # hızlı önizleme; realtime=False zaten "GPU hızında" demektir.
+    hiz: float = 1.0
 
 
 def _arsiv_segment(camera_id: str, an: str) -> tuple[str, str]:
@@ -1632,7 +1639,7 @@ _LIVE_MIN_INTERVAL = 0.05   # sn — UI ~150ms poll'luyor, daha sık encode isra
 _LIVE_MAX_W = 960
 
 
-def _frame_pusher(job: dict, pace: float = 0.0):
+def _frame_pusher(job: dict, pace: float = 0.0, kaynak: str = ""):
     """Analiz modüllerinin on_frame callback'i: annotated kareyi throttle'layıp
     job["frame_jpeg"]'e koyar. UI /api/run/{id}/frame ile çeker.
 
@@ -1644,6 +1651,16 @@ def _frame_pusher(job: dict, pace: float = 0.0):
     state = {"t": 0.0, "t0": 0.0, "n": 0}
 
     def push(frame) -> None:
+        if kaynak:
+            # Dosya konumu UI'da "Video 7:31 / 15:52" olarak gösterilir; sarma
+            # sonrası tempo takvimi sıfırlanır (yoksa pusher atlanan süreyi
+            # "geride kaldım" sanıp hızlanmaz ama sarma anında sıçrama yapar).
+            k, sure = akis.konum(kaynak)
+            job["video_sn"] = round(k, 1)
+            job["video_sure_sn"] = round(sure, 1)
+            if job.pop("tempo_sifirla", False):
+                state["t0"] = 0.0
+                state["n"] = 0
         if pace > 0:
             if state["t0"] == 0.0:
                 state["t0"] = time.monotonic()
@@ -1678,8 +1695,11 @@ def _frame_pusher(job: dict, pace: float = 0.0):
     return push
 
 
-def _pace_seconds(source: str) -> float:
-    """İşlenen kare başına düşen kaynak süresi (vid_stride dahil). 0 = tempo yok."""
+def _pace_seconds(source: str, kind: str = "count") -> float:
+    """İşlenen kare başına düşen kaynak süresi (vid_stride dahil). 0 = tempo yok.
+
+    Yangın hattı kendi adımını kullanır (`fire.vid_stride`, vars. 3) — sayım
+    adımıyla hesaplanan tempo yangın önizlemesini 3 kat yavaş akıtıyordu."""
     if str(source).startswith(("rtsp://", "rtmp://", "http://", "https://")):
         return 0.0   # canlı kaynak zaten kendi hızında akar
     cap = cv2.VideoCapture(source)
@@ -1687,7 +1707,11 @@ def _pace_seconds(source: str) -> float:
     cap.release()
     if fps <= 0:
         return 0.0
-    return max(1, int(cfg.get("detect.vid_stride", 1))) / fps
+    if kind == "fire":
+        adim = cfg.get("fire.vid_stride", cfg.get("detect.vid_stride", 3))
+    else:
+        adim = cfg.get("detect.vid_stride", 1)
+    return max(1, int(adim)) / fps
 
 
 class _SandboxStore:
@@ -1736,7 +1760,19 @@ def _run_analysis(job_id: str, p: "RunPayload", arsiv_yolu: str = "") -> None:
             host = go2rtc.split("//", 1)[-1].split(":")[0] or "localhost"
             source = f"rtsp://{host}:8554/{p.camera}"
     s = None; summary: dict = {}; videos: list[str] = []
-    push_frame = _frame_pusher(job, _pace_seconds(source) if p.realtime else 0.0)
+    # Dosya kaynağı: ileri sarma + hız. Sarma yalnız kaynağı kendi okuyan
+    # hatlarda işler (fire/plate/face; count ultralytics'e devreder — akis.py).
+    dosya = akis.dosya_mi(source)
+    sarilabilir = dosya and p.kind in ("fire", "plate", "face")
+    hiz = max(0.25, min(float(p.hiz or 1.0), 32.0))
+    tempo = (_pace_seconds(source, p.kind) / hiz) if p.realtime else 0.0
+    if dosya:
+        akis.sar_sifirla(source)
+        if sarilabilir and p.basla_sn > 0:
+            akis.sar(source, p.basla_sn)
+        # Dosya yolu kimlik bilgisi taşımaz (RTSP URL'sinin aksine) — job'a yazılabilir
+        job.update(dosya=sarilabilir, kaynak_yolu=source, hiz=hiz)
+    push_frame = _frame_pusher(job, tempo, source if dosya else "")
     try:
         # Kuyrukta beklerken iptal edildiyse hiç başlama (kilit finally'de bırakılır)
         if job["cancel"].is_set():
@@ -1837,8 +1873,12 @@ def _run_analysis(job_id: str, p: "RunPayload", arsiv_yolu: str = "") -> None:
 
             def _on_fire(o):
                 fl[o["durum"]] = fl.get(o["durum"], 0) + 1
+                # ts_seconds işlenen kare sayacından türer; dosya sarıldıysa
+                # gerçek video konumu ayrıca verilir ("hangi dakikada" sorusu).
                 fl["olaylar"].append({"durum": o["durum"], "sinif": o["sinif"],
                                       "conf": o["conf"], "ts": o["ts_seconds"],
+                                      "video_sn": round(akis.konum(source)[0], 1)
+                                      if job.get("dosya") else None,
                                       "frame": o["frame_idx"], "snapshot": o.get("snapshot", ""),
                                       "clip": o.get("clip", "")})
                 fl["olaylar"] = fl["olaylar"][-30:]
@@ -1950,6 +1990,35 @@ def api_run_cancel(job_id: str):
         if j.get("status") == "running":
             j["status"] = "cancelling"
     return {"ok": True}
+
+
+class SarPayload(BaseModel):
+    sn: float            # hedef saniye; goreli=True ise mevcut konuma eklenir (+/-)
+    goreli: bool = False
+
+
+@app.post("/api/run/{job_id}/sar")
+def api_run_sar(job_id: str, p: SarPayload):
+    """Koşan DOSYA analizinde ileri/geri sarar (Test ekranı).
+
+    Hedef bir sonraki okunan karede uygulanır (akis._Sarilabilir). Canlı akışta
+    ve count hattında (ultralytics kendi okur) sarma yoktur — 400 döner ki UI
+    "çalışmadı" sanmasın.
+    """
+    j = JOBS.get(job_id)
+    if not j:
+        raise HTTPException(404, "job bulunamadı")
+    if j.get("status") != "running" or not j.get("dosya"):
+        raise HTTPException(400, "Sarma yalnız çalışan dosya analizinde (yangın/plaka/yüz) mümkün")
+    kaynak = j["kaynak_yolu"]
+    konum, sure = akis.konum(kaynak)
+    hedef = (konum + p.sn) if p.goreli else p.sn
+    if sure > 0:
+        hedef = min(hedef, max(0.0, sure - 1.0))   # sona sarınca hemen bitmesin
+    hedef = max(0.0, hedef)
+    akis.sar(kaynak, hedef)
+    j["tempo_sifirla"] = True
+    return {"ok": True, "hedef_sn": round(hedef, 1)}
 
 
 @app.get("/api/run/{job_id}/frame")

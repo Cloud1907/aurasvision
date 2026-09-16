@@ -1323,6 +1323,11 @@ const SCREENS={
     // Bu kamerada ne tanımlı — kullanıcı çalıştırmadan önce ne olacağını bilmeli
     const acik=["count","plate","face","fire"].filter(k=>(cam.tasks||{})[k]);
     const etiket={count:"Sayım",plate:"Plaka",face:"Yüz",fire:"Yangın"};
+    // Dosya kaynağı (canlı modda): başlangıç noktası + hız seçilebilir. Sarma
+    // yalnız kaynağı kendi okuyan hatlarda işler (yangın/plaka/yüz) — sayım
+    // akışı ultralytics'e devreder, orada sadece hız etkili (src/akis.py).
+    const dosya=tsrc==="canli"&&!/^(rtsp|rtmp|https?):\/\//i.test(cam.source||"");
+    const sarilabilir=dosya&&["fire","plate","face"].includes(kind);
     $("#tact").innerHTML=`<button class="btn pri" onclick="runTest()">${svg('play',15)} Analizi çalıştır</button>`;
     $("#content").innerHTML=`<div class="card pad" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;">
         <span class="av" style="background:var(--warn-soft);color:var(--warn);">i</span>
@@ -1351,6 +1356,14 @@ const SCREENS={
             <label>Tempo</label>
             <label class="mut-s" title="Kapalıyken analiz GPU hızında koşar; 50 saniyelik video 2 saniyede biter" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;height:38px;">
               <input type="checkbox" id="t-rt" ${window._trt===false?'':'checked'} onchange="window._trt=this.checked" style="width:auto;"> Kamera hızında oynat</label></div>
+          ${dosya?`
+          <div class="field" style="margin:0;">
+            <label>Hız</label>
+            <div class="seg" title="Kamera hızının katı; 'Kamera hızında oynat' kapalıyken GPU hızında koşar">${[1,2,4,8].map(h=>`<button class="${(window._thiz||1)===h?'on':''}" onclick="window._thiz=${h};SCREENS.test()">${h}×</button>`).join("")}</div></div>`:""}
+          ${sarilabilir?`
+          <div class="field" style="margin:0;">
+            <label for="t-bas">Başlangıç</label>
+            <input id="t-bas" placeholder="dk:sn" value="${esc(window._tbas||"")}" onchange="window._tbas=this.value" style="width:90px;" title="Dosyanın bu anından başlar (ör. 7:20). Koşarken de ileri sarabilirsiniz."></div>`:""}
           <div class="field" style="margin:0;">
             <label>&nbsp;</label>
             <button class="btn" id="btnStop" onclick="stopTest()" style="${currentJobId?'':'display:none;'}">${svg('stop',15)} Durdur</button>
@@ -1716,7 +1729,7 @@ async function runTest(){
   setRun("başlıyor…");
   setRes(`<div class="card pad"><div class="skel" style="height:60px;border-radius:10px;"></div></div>`);
   try{
-    const yanit=await api("/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({camera,kind,realtime:window._trt!==false,at})});
+    const yanit=await api("/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({camera,kind,realtime:window._trt!==false,at,basla_sn:mmss(window._tbas),hiz:window._thiz||1})});
     if(window._runSeq!==myRun)return; // bayat: yeni test başladı, panele dokunma
     // Arşivde o an kayıt yoksa/budandıysa sunucu 404 + detail döner — job_id gelmez.
     if(!yanit||!yanit.job_id){
@@ -1734,6 +1747,7 @@ async function runTest(){
       if(st.status==="done"||st.status==="error"||st.status==="cancelled"||st.cancelled)break; // "cancelling" geçicidir, beklemeye devam
       setRun(`<span style="color:var(--accent);">⏳ ${esc(st.stage||"çalışıyor")}…</span>`);
       ensureLivePanel();
+      if(st.dosya)renderSar(st,job_id);
       // Canlı annotated kare — yeni kare geldiyse (frame_seq arttıysa) img'i tazele
       if(st.frame_seq&&st.frame_seq!==shownSeq){shownSeq=st.frame_seq;const f=$("#liveframe");if(f){f.src=`/api/run/${job_id}/frame?seq=${st.frame_seq}${tokq()}`;f.style.display="block";const ph=$("#liveph");if(ph)ph.remove();}}
       // Metrikler görüntünün YANINDA akar; "analyze"da aktif aşamanın paneli gösterilir
@@ -1767,6 +1781,36 @@ async function runTest(){
   }
 }
 /* Canlı analiz paneli: üstte annotated kare, altında akan metrikler — bir kez kurulur */
+/* "7:20" | "440" → saniye; boş/geçersiz → 0 */
+const mmss=v=>{v=String(v||"").trim();if(!v)return 0;const m=v.match(/^(\d+):(\d{1,2})$/);if(m)return +m[1]*60+ +m[2];const n=parseFloat(v.replace(",","."));return isFinite(n)&&n>0?n:0;};
+const fmtSn=s=>{s=Math.max(0,Math.floor(s||0));return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;};
+/* Dosya analizinde ileri sarma çubuğu: konum + hızlı atlama + "git". Sunucu
+   hedefi bir sonraki okunan karede uygular; count hattında sunucu 400 döner. */
+function renderSar(st,job_id){
+  const el=$("#tsar");if(!el)return;
+  if(el.dataset.job!==job_id){
+    el.dataset.job=job_id;el.style.display="";
+    el.innerHTML=`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <span class="mono mut-s" id="tsar-pos" style="min-width:120px;"></span>
+      <div class="seg">
+        <button title="30 sn geri" onclick="sarTest('${job_id}',-30,true)">−30</button>
+        <button title="30 sn ileri" onclick="sarTest('${job_id}',30,true)">+30</button>
+        <button title="1 dk ileri" onclick="sarTest('${job_id}',60,true)">+1 dk</button>
+        <button title="5 dk ileri" onclick="sarTest('${job_id}',300,true)">+5 dk</button></div>
+      <input id="tsar-git" placeholder="dk:sn" style="width:80px;" onkeydown="if(event.key==='Enter')sarTest('${job_id}',mmss(this.value),false)">
+      <button class="btn sm" onclick="sarTest('${job_id}',mmss($('#tsar-git').value),false)">Git</button>
+      ${st.hiz&&st.hiz!==1?`<span class="chip" style="background:var(--accent-soft);color:var(--accent);">${st.hiz}×</span>`:""}</div>`;
+  }
+  const pos=$("#tsar-pos");if(pos)pos.textContent=`Video ${fmtSn(st.video_sn)}${st.video_sure_sn?` / ${fmtSn(st.video_sure_sn)}`:""}`;
+}
+async function sarTest(job_id,sn,goreli){
+  if(!goreli&&!(sn>0)){toast("Hedef anı dk:sn biçiminde girin (ör. 7:20)","warn",3000);return;}
+  try{
+    const r=await api(`/run/${job_id}/sar`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sn,goreli})});
+    if(r&&r.ok)toast(`Video ${fmtSn(r.hedef_sn)} anına sarıldı`,"ok",2500);
+    else toast((r&&r.detail)||"Sarma yapılamadı","warn",4000);
+  }catch(e){toast("Sarma yapılamadı","warn",4000);}
+}
 function ensureLivePanel(){
   if($("#tlive")||!$("#tres"))return;
   // Yan yana: görüntü solda (sınırlı boy), sayaçlar sağda — geçişler görüntüyle birlikte okunur
@@ -1775,6 +1819,7 @@ function ensureLivePanel(){
       <div style="font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:12px;">${svg('play',17)} Canlı analiz görüntüsü</div>
       <div id="liveph" class="skel" style="height:220px;border-radius:var(--r-lg);"></div>
       <img id="liveframe" alt="" style="width:100%;max-height:420px;object-fit:contain;display:none;border-radius:var(--r-lg);border:1px solid var(--line);background:#000;box-shadow:var(--shadow);">
+      <div id="tsar" style="display:none;margin-top:10px;"></div>
     </div>
     <div id="tmetrics" style="flex:1 1 300px;min-width:280px;"></div>
   </div>`;
@@ -1824,7 +1869,7 @@ function renderLiveCount(live){
 }
 function fireRows(olaylar){
   return (olaylar||[]).slice().reverse().map(o=>`<div class="row"><span class="av" style="background:${o.durum==="alarm"?"var(--danger-soft)":"var(--warn-soft)"};color:${o.durum==="alarm"?"var(--danger)":"var(--warn)"};">${o.durum==="alarm"?"!":"?"}</span>
-    <div style="flex:1;"><div style="font-weight:700;">${o.durum==="alarm"?"ALARM":"Ön uyarı"} · ${esc(o.sinif)}</div><div class="mut-s">güven %${Math.round((o.conf||0)*100)} · kare ${o.frame} · ${o.ts} sn</div></div>
+    <div style="flex:1;"><div style="font-weight:700;">${o.durum==="alarm"?"ALARM":"Ön uyarı"} · ${esc(o.sinif)}</div><div class="mut-s">güven %${Math.round((o.conf||0)*100)} · kare ${o.frame} · ${o.ts} sn${o.video_sn!=null?` · video ${fmtSn(o.video_sn)}`:''}</div></div>
     ${o.snapshot?`<img class="kanit" src="/media/${esc(o.snapshot)}${tokq().replace('&','?')}" alt="kanıt" onclick="kanitAc('${esc(o.snapshot)}')" style="width:96px;border-radius:6px;cursor:zoom-in;"/>`:""}</div>`).join("");
 }
 function renderLiveFire(live){
