@@ -16,6 +16,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from .analytics import AnalyticsMixin
+
 _ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -70,7 +72,7 @@ def merged_cameras(cfg, store: "BaseStore") -> list[dict[str, Any]]:
     return list(by_id.values())
 
 
-class BaseStore:
+class BaseStore(AnalyticsMixin):
     """Ortak sorgular. Alt sınıf: _x (execute), _all (fetch dict listesi), _ph (placeholder)."""
 
     _ph = "?"
@@ -333,12 +335,6 @@ class BaseStore:
         cur = self._x("DELETE FROM kullanicilar WHERE ad=?", (ad,))
         self.commit()
         return bool(getattr(cur, "rowcount", 0))
-
-    def count_totals(self) -> list[dict[str, Any]]:
-        return self._all("SELECT camera_id, "
-                         "SUM(CASE WHEN direction='in' THEN 1 ELSE 0 END) AS in_count, "
-                         "SUM(CASE WHEN direction='out' THEN 1 ELSE 0 END) AS out_count "
-                         "FROM count_events GROUP BY camera_id")
 
     def clear_analysis(self) -> None:
         """Önceki analiz çıktılarını siler. KORUNUR: cameras, zones, izleme listeleri."""

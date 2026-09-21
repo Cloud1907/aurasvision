@@ -1,0 +1,36 @@
+{
+  "data": "İzole API fixture; gerçek kamera ölçümü değildir",
+  "layouts": [
+    {
+      "width": 320,
+      "scroll": 320,
+      "contentTop": 80,
+      "systemVisible": "flex"
+    },
+    {
+      "width": 390,
+      "scroll": 390,
+      "contentTop": 80,
+      "systemVisible": "flex"
+    },
+    {
+      "width": 768,
+      "scroll": 768,
+      "contentTop": 80,
+      "systemVisible": "flex"
+    },
+    {
+      "width": 1024,
+      "scroll": 1024,
+      "contentTop": 90,
+      "systemVisible": "flex"
+    },
+    {
+      "width": 1440,
+      "scroll": 1440,
+      "contentTop": 90,
+      "systemVisible": "flex"
+    }
+  ],
+  "errors": []
+}

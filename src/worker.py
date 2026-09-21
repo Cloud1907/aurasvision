@@ -166,7 +166,8 @@ def _saved_lines(store, camera_id: str) -> list[dict]:
         if z["kind"] == "line" and len(z["points"] or []) >= 2:
             out.append({"name": z.get("name") or "Çizgi",
                         "pts": [z["points"][0], z["points"][1]],
-                        "direction": z.get("direction") or "AtoB"})
+                        "direction": z.get("direction") or "AtoB",
+                        "classes": z.get("classes") or []})
     return out
 
 
@@ -293,13 +294,17 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             ihlaller = _saved_intrusions(rstore, cid)
             fire_zones = _saved_fire_zones(rstore, cid)
             cizgiler = _saved_lines(rstore, cid)
-            # İhlal alanı varken çizgi yoksa [] geçilir: None config varsayılanına düşerdi
-            lines = cizgiler or ([] if ihlaller else None)
+            # Worker yalnız UI'da kaydedilmiş geometriyi işler. None, CLI'daki
+            # config varsayılanına düşer ve kullanıcının çizmediği hattı sayardı.
+            lines = cizgiler or []
         finally:
             rstore.close()
 
         did_work = False
         aktif = [g for g in ("count", "plate", "face", "fire") if tasks.get(g)]
+        # Çizgi de ihlal alanı da yoksa sayımın işleyeceği geometri yoktur (ana dal #7).
+        if "count" in aktif and not (cizgiler or ihlaller):
+            aktif.remove("count")
         canli = _canli_kaynak(source)
         watch = None
         if "face" in aktif:
