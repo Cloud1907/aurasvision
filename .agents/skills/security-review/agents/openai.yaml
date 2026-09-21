@@ -1,0 +1,5 @@
+interface:
+  display_name: "Security Review"
+  short_description: "Use Security Review only through an explicit invocation or approved CDX plan"
+policy:
+  allow_implicit_invocation: false

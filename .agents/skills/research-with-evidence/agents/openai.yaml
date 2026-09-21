@@ -1,0 +1,5 @@
+interface:
+  display_name: "Research With Evidence"
+  short_description: "Use Research With Evidence only through an explicit invocation or approved CDX plan"
+policy:
+  allow_implicit_invocation: false

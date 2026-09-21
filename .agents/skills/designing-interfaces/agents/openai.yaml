@@ -1,0 +1,5 @@
+interface:
+  display_name: "Designing Interfaces"
+  short_description: "Use Designing Interfaces only through an explicit invocation or approved CDX plan"
+policy:
+  allow_implicit_invocation: false
