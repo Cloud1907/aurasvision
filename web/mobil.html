@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="tr" data-theme="dark">
+<html lang="tr" data-theme="light">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<meta name="theme-color" content="#070b12"/>
+<meta name="theme-color" content="#f5f5f7"/>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("vai-theme")||"light";}catch(e){}</script>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <link rel="manifest" href="/m/manifest.json"/>
@@ -150,6 +151,22 @@
   .arama input{flex:1;background:none;border:0;outline:none;font-size:13px;}
   .arama input::placeholder{color:var(--ink3);}
 </style>
+<link rel="stylesheet" href="/static/dist/auras-ui.css"/>
+<style>
+  :root{--yuzey:var(--panel);--yuzey2:var(--panel-2);--cizgi:var(--line);
+    --ink2:var(--ink-2);--ink3:var(--ink-3);--vurgu:var(--accent);--vurgu-soft:var(--accent-soft);
+    --kritik:var(--danger);--kritik-soft:var(--danger-soft);--uyari:var(--warn);--uyari-soft:var(--warn-soft);--r:12px;--r2:16px;}
+  .ust,nav{background:color-mix(in srgb,var(--panel) 92%,transparent);}
+  .ust{padding-bottom:14px;}.ust .ad{letter-spacing:-.025em;}.ust .alt{letter-spacing:0;text-transform:none;}
+  .ikonbtn{width:44px;height:44px;border-radius:12px;}.cip{min-height:44px;border-radius:9px;}
+  .alarm .eylem button{min-height:44px;}nav button{min-height:58px;}
+  .kam{color:#eef1f5!important;}.kam .yok{color:#a7aeb8;}.kam .etiket .zaman{color:#c1c8d2;}
+  .bolum{letter-spacing:0;text-transform:none;font-size:13px;margin-top:24px;}
+  .sayac .k{letter-spacing:0;text-transform:none;}.alarm{padding:16px;}.alarm .eylem{gap:8px;}
+  .kam{border-radius:12px;padding:0;text-align:left;font:inherit;color:inherit;width:100%;cursor:pointer;}.alarm,.sayac,.depo{border-radius:12px;}
+  .analysis-state{position:absolute;left:7px;top:7px;background:#162b40ed;color:#e6f2ff;font-size:8px;padding:4px 6px;border-radius:5px;}
+  .kam .zaman{font-size:9px;}.kam .yok{pointer-events:none;}
+</style>
 </head>
 <body>
 <header class="ust">
@@ -170,6 +187,7 @@
 
 <nav id="altnav"></nav>
 
+<script src="/static/ui-runtime.js"></script>
 <script>
 /* AurasVision mobil — telefona kurulabilen PWA.
    Masaüstü paneliyle AYNI API'leri kullanır; ayrı backend yoktur.
@@ -187,12 +205,15 @@ const tokq = () => TOKEN ? "&token=" + encodeURIComponent(TOKEN) : "";
 
 async function api(yol, o = {}) {
   o.headers = Object.assign({}, o.headers || {}, TOKEN ? { Authorization: "Bearer " + TOKEN } : {});
+  o.signal?.throwIfAborted();
   const r = await fetch("/api" + yol, o);
+  o.signal?.throwIfAborted();
   if (r.status === 401) {
     const t = prompt("Erişim anahtarı");
     if (t && t.trim()) { TOKEN = t.trim(); localStorage.setItem("av-token", TOKEN); return api(yol, o); }
     throw new Error("yetkisiz");
   }
+  if(!r.ok){const b=await r.json().catch(()=>({}));throw new Error(b.detail||`Sunucu yanıtı: ${r.status}`);}
   return r.json();
 }
 
@@ -225,72 +246,62 @@ let KAM = [], SAGLIK = {}, EKRAN = "canli", DUZEN = +(localStorage.getItem("av-d
 const EKRANLAR = {};
 
 /* ── Canlı izleme ────────────────────────────────────────────── */
-EKRANLAR.canli = async () => {
+EKRANLAR.canli = async ctx => {
   $("#basAd").textContent = "Canlı İzleme";
   $("#basAlt").textContent = `${KAM.length} kamera`;
   const cevrimici = KAM.filter(c => durum(c) === "ok").length;
   $("#durumlar").innerHTML =
-    `<span><i class="nokta" style="background:var(--ok)"></i>Çevrimiçi <b>${cevrimici}</b></span>
-     <span><i class="nokta" style="background:var(--ink3)"></i>Çevrimdışı <b>${KAM.length - cevrimici}</b></span>
+    `<span><i class="nokta" style="background:var(--ok)"></i>Analiz aktif <b>${cevrimici}</b></span>
+     <span><i class="nokta" style="background:var(--ink3)"></i>Bekleyen / sorunlu <b>${KAM.length - cevrimici}</b></span>
      <span style="margin-left:auto;display:flex;gap:5px;">
        ${[1,2,3].map(k => `<button class="cip ${DUZEN===k?'on':''}" style="padding:3px 9px;font-size:11px;"
           onclick="setDuzen(${k})">${k}×</button>`).join("")}</span>`;
   $("#icerik").innerHTML = KAM.length
     ? `<div class="izgara k${DUZEN}">${KAM.map(kart).join("")}</div>`
     : `<div class="bos">Tanımlı kamera yok.</div>`;
-  yenileGoruntuler();
+  const root=$("#icerik");
+  const update=e=>{const card=e.target.closest('.kam');if(!card)return;
+    card.querySelector('.zaman').textContent=e.type==='snapshotready'?'Son kare '+saat(e.target.dataset.updated):'Görüntü alınamadı';};
+  root.addEventListener('snapshotready',update);root.addEventListener('snapshoterror',update);
+  ctx.cleanup(()=>{root.removeEventListener('snapshotready',update);root.removeEventListener('snapshoterror',update);});
+  ctx.cleanup(AurasRuntime.snapshots(root,id=>`/api/snapshot?camera=${encodeURIComponent(id)}${tokq()}&t=${Date.now()}`,15000));
+  ctx.cleanup(AurasRuntime.poll(async()=>{
+    let stale=false;
+    try{const rows=await ctx.get('/health');SAGLIK=Object.fromEntries(rows.map(h=>[h.camera_id,h]));}
+    catch(e){if(!ctx.current())return;stale=true;}
+    root.querySelectorAll('[data-analysis]').forEach(el=>{el.textContent=stale?'Sağlık bilgisi güncellenemedi':AurasRuntime.health(SAGLIK[el.dataset.analysis]).label;});
+    const n=KAM.filter(c=>durum(c)==='ok').length;
+    const counts=$("#durumlar").querySelectorAll('b');if(counts[0])counts[0].textContent=stale?'—':n;if(counts[1])counts[1].textContent=stale?'—':KAM.length-n;
+  },10000));
 };
-const durum = c => {
-  const h = SAGLIK[c.id];
-  if (!h) return "yok";
-  const taze = (Date.now() - new Date(String(h.time).replace(" ", "T") +
-    (String(h.time).includes("+") ? "" : "Z"))) < 15000;
-  if (!taze) return "bosta";
-  return (+h.fps || 0) > 0.1 ? "ok" : "karesiz";
-};
+const durum = c => ({ok:'ok',error:'karesiz',idle:'bosta'}[AurasRuntime.health(SAGLIK[c.id]).state]);
 const kart = c => {
-  const d = durum(c), rec = d === "ok";
-  const rozet = { karesiz: ["KARE YOK", "var(--kritik-soft)", "var(--kritik)"],
-                  bosta: ["BOŞTA", "var(--yuzey2)", "var(--ink3)"] }[d];
-  return `<div class="kam" onclick="kameraAc('${esc(c.id)}')">
-    <img data-kam="${esc(c.id)}" alt=""/>
-    ${rec ? '<span class="rec"><i></i>REC</span>' : ""}
-    ${rozet ? `<span class="rozet" style="background:${rozet[1]};color:${rozet[2]}">${rozet[0]}</span>` : ""}
+  return `<button type="button" class="kam" aria-label="${esc(c.name)} olaylarını aç" data-camera="${esc(c.id)}" onclick="kameraAc(this.dataset.camera)">
+    <img data-snapshot="${esc(c.id)}" alt="${esc(c.name)} önizlemesi"/>
+    <span class="analysis-state" data-analysis="${esc(c.id)}">${AurasRuntime.health(SAGLIK[c.id]).label}</span>
+
     <div class="etiket"><span class="ad">${esc(c.name)}</span>
-      <span class="zaman">${new Date().toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}</span></div>
-  </div>`;
+      <span class="zaman">Kare bekleniyor</span></div>
+  </button>`;
 };
 function setDuzen(k) { DUZEN = k; localStorage.setItem("av-duzen", k); EKRANLAR.canli(); }
-let _goruntuMesgul = false;
-/* Kareler SIRAYLA istenir. Hepsini aynı anda istemek sunucunun iş parçacığı
-   havuzunu dolduruyor (her snapshot video açıyor) ve tüm API kilitleniyordu.
-   Önceki tur bitmeden yenisi başlamaz. */
-async function yenileGoruntuler() {
-  if (_goruntuMesgul) return;
-  _goruntuMesgul = true;
-  try {
-    for (const im of document.querySelectorAll("img[data-kam]")) {
-      if (EKRAN !== "canli") break;
-      await new Promise(bitti => {
-        im.onload = () => { im.classList.add("yuklendi"); bitti(); };
-        im.onerror = () => bitti();
-        im.src = `/api/snapshot?camera=${encodeURIComponent(im.dataset.kam)}${tokq()}&t=${Date.now()}`;
-        setTimeout(bitti, 8000);   // yanıt gelmezse sıradakine geç
-      });
-    }
-  } finally { _goruntuMesgul = false; }
-}
 function kameraAc(id) { window._kamera = id; git("kayit"); }
 
 /* ── Alarm merkezi ───────────────────────────────────────────── */
-EKRANLAR.alarm = async () => {
+EKRANLAR.alarm = async ctx => {
+  let pendingFocus=document.activeElement?.dataset.focus;
   $("#basAd").textContent = "Alarm Merkezi";
   $("#basAlt").textContent = "yanıt bekleyen olaylar";
   $("#durumlar").innerHTML = "";
   $("#icerik").innerHTML = `<div class="yukleniyor"></div>`;
+  let previous='';
+  const refresh=async()=>{try{
   const [bekleyen, tumu] = await Promise.all([
-    api("/alerts?limit=50&pending=true"), api("/alerts?limit=50")]);
-  const kritik = bekleyen.filter(a => a.list_type === "blacklist" || a.kind === "intrusion");
+    ctx.get("/alerts?limit=50&pending=true"), ctx.get("/alerts?limit=50")]);
+  ctx.check();
+  const key=JSON.stringify([bekleyen,tumu,window._af]);if(key===previous)return;previous=key;
+  const focusKey=document.activeElement?.dataset.focus||pendingFocus;pendingFocus=null;
+  const kritik = bekleyen.filter(a => a.list_type === "blacklist" || a.kind === "intrusion" || a.kind === "fire_warning");
   const uyari = bekleyen.filter(a => !kritik.includes(a));
   const cozulen = tumu.filter(a => a.acked_at).length;
   const f = window._af || "tumu"; window._af = f;
@@ -301,20 +312,25 @@ EKRANLAR.alarm = async () => {
         <div class="v">${kritik.length}</div><div class="s">inceleme gerekli</div></div>
       <div class="sayac ${uyari.length ? "uyari" : ""}"><div class="k">Uyarı</div>
         <div class="v">${uyari.length}</div><div class="s">beklemede</div></div>
-      <div class="sayac ok"><div class="k">Çözülen</div>
+      <div class="sayac ok"><div class="k">Kabul edilen</div>
         <div class="v">${cozulen}</div><div class="s">kabul edildi</div></div></div>
     <div class="bolum">Aktif alarmlar</div>
     <div class="cipler">
       ${[["tumu","Tümü",bekleyen.length],["kritik","Kritik",kritik.length],["uyari","Uyarı",uyari.length]]
-        .map(([k,l,n]) => `<button class="cip ${f===k?'on':''}" onclick="window._af='${k}';EKRANLAR.alarm()">
+        .map(([k,l,n]) => `<button data-focus="filter-${k}" class="cip ${f===k?'on':''}" onclick="window._af='${k}';EKRANLAR.alarm()">
           ${l}<span class="sy">${n}</span></button>`).join("")}</div>
     <div style="margin-top:10px;">${liste.length ? liste.map(alarmKart).join("")
       : `<div class="bos">Bekleyen alarm yok.</div>`}</div>`;
+  if(focusKey)$("#icerik").querySelector(`[data-focus="${CSS.escape(focusKey)}"]`)?.focus();
+  }catch(e){if(!ctx.current())return;previous='';
+    $('#icerik').innerHTML=`<div class="bos" role="alert">Alarmlar güncellenemedi: ${esc(e.message)} <button class="cip" onclick="EKRANLAR.alarm()">Yeniden dene</button></div>`;
+  }};
+  await refresh();if(ctx.current())ctx.cleanup(AurasRuntime.poll(refresh,15000,()=>true,false));
 };
 const alarmKart = a => {
-  const kritik = a.list_type === "blacklist" || a.kind === "intrusion";
+  const kritik = a.list_type === "blacklist" || a.kind === "intrusion" || a.kind === "fire_warning";
   const ad = (KAM.find(c => c.id === a.camera_id) || {}).name || a.camera_id || "";
-  const tur = a.kind === "intrusion" ? "Alan ihlali" : a.kind === "plate" ? "Plaka eşleşmesi" : "Yüz eşleşmesi";
+  const tur = a.kind === "fire_warning" ? "Yangın erken uyarısı" : a.kind === "intrusion" ? "Alan ihlali" : a.kind === "plate" ? "Plaka eşleşmesi" : "Yüz eşleşmesi";
   return `<div class="alarm ${kritik ? "kritik" : ""}">
     <div class="bas">
       <span class="rozet" style="background:${kritik ? "var(--kritik-soft)" : "var(--uyari-soft)"};
@@ -325,17 +341,21 @@ const alarmKart = a => {
       <div class="baslik">${esc(a.ref)}</div>
       <div class="meta">${esc(ad)}${a.label ? " · " + esc(a.label) : ""}</div></div>
     <div class="eylem">
-      <button class="onay" onclick="kabul(${a.id})">Onayla</button>
-      <button class="kayit" onclick="alarmKayit('${esc(a.camera_id || "")}')">Kayda git</button></div></div>`;
+      <button class="onay" data-focus="ack-${a.id}" onclick="kabul(${a.id})">Gördüm, kabul et</button>
+      <button class="kayit" data-focus="record-${a.id}" data-camera="${esc(a.camera_id || "")}" data-at="${esc(a.time || "")}" onclick="alarmKayit(this.dataset.camera,this.dataset.at)">Kayda git</button></div></div>`;
 };
 async function kabul(id) {
-  try { await api(`/alerts/${id}/ack`, { method: "POST" }); EKRANLAR.alarm(); rozetleri(); }
+  try { await api(`/alerts/${id}/ack`, { method: "POST" }); if(EKRAN==="alarm")EKRANLAR.alarm(); rozetleri(); }
   catch (e) { alert("Kabul edilemedi"); }
 }
-function alarmKayit(cam) { if (cam) window._kamera = cam; git("kayit"); }
+function alarmKayit(cam,at) {
+  const target=new URL('/',location.origin);target.searchParams.set('view','rec');
+  if(cam)target.searchParams.set('camera',cam);if(at)target.searchParams.set('at',at);
+  if(TOKEN)target.searchParams.set('token',TOKEN);location.assign(target);
+}
 
 /* ── Kayıtlar ve olaylar ─────────────────────────────────────── */
-EKRANLAR.kayit = async () => {
+EKRANLAR.kayit = async ctx => {
   $("#basAd").textContent = "Kayıtlar ve Olaylar";
   const kam = window._kamera || "";
   $("#basAlt").textContent = kam ? ((KAM.find(c => c.id === kam) || {}).name || kam) : "tüm kameralar";
@@ -343,10 +363,10 @@ EKRANLAR.kayit = async () => {
   $("#icerik").innerHTML = `<div class="yukleniyor"></div>`;
   const f = window._ef || ""; window._ef = f;
   const [olaylar, arsiv] = await Promise.all([
-    api(`/events?limit=60${f ? "&tur=" + f : ""}${kam ? "&kamera=" + encodeURIComponent(kam) : ""}`),
-    api("/recordings/stats")]);
+    ctx.get(`/events?limit=60${f ? "&tur=" + f : ""}${kam ? "&kamera=" + encodeURIComponent(kam) : ""}`),
+    ctx.get("/recordings/stats")]);
   const gb = (arsiv.total_bytes || 0) / (1024 ** 3);
-  const turlar = [["", "Tümü"], ["count", "Hareket"], ["plate", "Plaka"], ["face", "Yüz"]];
+  const turlar = [["", "Tümü"], ["count", "Hareket"], ["plate", "Plaka"], ["face", "Yüz"], ["fire", "Yangın"]];
   $("#icerik").innerHTML = `
     <div class="arama">${svg("ara", 15)}
       <input id="ara" placeholder="Kamera veya olay ara" oninput="filtreOlay(this.value)"/></div>
@@ -368,7 +388,7 @@ EKRANLAR.kayit = async () => {
     </div>`;
 };
 const OLAY_TUR = { count: ["Hareket algılandı", "var(--vurgu)"], plate: ["Plaka okundu", "var(--uyari)"],
-                   face: ["Yüz tespiti", "var(--ok)"] };
+                   face: ["Yüz tespiti", "var(--ok)"], fire: ["Yangın erken uyarısı", "var(--kritik)"] };
 const olayKart = e => {
   const t = OLAY_TUR[e.type] || ["Olay", "var(--ink3)"];
   const ad = (KAM.find(c => c.id === e.camera_id) || {}).name || e.camera_id || "";
@@ -397,6 +417,15 @@ function cizNav() {
 }
 function git(k) { EKRAN = k; cizNav(); EKRANLAR[k](); window.scrollTo(0, 0); }
 
+Object.entries(EKRANLAR).forEach(([name,screen])=>{
+  EKRANLAR[name]=async()=>{
+    if(EKRAN!==name)return;
+    const ctx=AurasRuntime.begin(name,api,()=>EKRAN===name);
+    try{await screen(ctx);}catch(e){if(!ctx.current()||e.name==='AbortError')return;
+      $('#icerik').innerHTML=`<div class="bos" role="alert">Bilgi alınamadı: ${esc(e.message)} <button class="cip" onclick="EKRANLAR[EKRAN]()">Yeniden dene</button></div>`;}
+  };
+});
+
 async function rozetleri() {
   try { BEKLEYEN = (await api("/alerts?limit=99&pending=true")).length; cizNav(); } catch (e) {}
 }
@@ -412,9 +441,7 @@ async function baslat() {
     return;
   }
   git("canli");
-  rozetleri();
-  setInterval(rozetleri, 20000);
-  setInterval(() => { if (EKRAN === "canli") yenileGoruntuler(); }, 15000);
+  AurasRuntime.poll(rozetleri,20000);
 }
 $("#yenileBtn").onclick = async () => {
   try { (await api("/health")).forEach(h => SAGLIK[h.camera_id] = h); } catch (e) {}
