@@ -22,6 +22,11 @@ export const responses: Record<string, () => unknown> = {
   '/events': () => cameras.map((c, i) => ({ camera_id: c.id, type: i === 1 ? 'plate' : 'count',
     detail: 'Temsili test olayı', time: eventTime, ts_seconds: 12, frame_idx: 60 })),
   '/events/summary': () => ({ cameras: cameras.map((c, i) => ({ camera_id: c.id, count: 34 + i * 12, count_events: 24, plate: 4, last: eventTime })) }),
+  '/events/trend': () => ({ hours: 24, bucket_minutes: 15, series: [
+    { bucket: '2026-09-18T08:00:00+00:00', in_count: 4, out_count: 2 },
+    { bucket: '2026-09-18T10:00:00+00:00', in_count: 7, out_count: 5 },
+    { bucket: '2026-09-18T12:00:00+00:00', in_count: 3, out_count: 6 },
+  ] }),
   '/recordings/stats': () => ({ total_bytes: 38 * 1024 ** 3, keep_days: 30,
     cameras: cameras.map(c => ({ camera_id: c.id, segments: 30, oldest: eventTime })) }),
 };

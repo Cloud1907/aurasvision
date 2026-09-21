@@ -137,3 +137,27 @@ test('V4: mobil başlık kamerayı erkene alır ve büyük envanter seçilebilir
   await expect(stage.getByRole('heading', { name: 'Kamera 10', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 });
+
+test('V4: 24 saatlik giriş çıkış eğilimi erişilebilir ve dar ekrana uyumludur', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  const trend = page.getByRole('region', { name: '24 saatlik geçiş eğilimi' });
+  await expect(trend).toBeVisible();
+  await expect(trend.getByRole('img', { name: /Giriş ve çıkış/ })).toBeVisible();
+  await expect(trend.locator('[data-series="in"]')).toHaveCount(1);
+  await expect(trend.locator('[data-series="out"]')).toHaveCount(1);
+  expect((await trend.boundingBox())!.width).toBeLessThanOrEqual(358);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
+test('V4: trend boş ve hata durumlarını açıkça gösterir', async ({ page }) => {
+  await page.route('**/api/events/trend?*', route => route.fulfill({ json: { hours: 24, bucket_minutes: 15, series: [] } }));
+  await page.goto('/');
+  await expect(page.getByText('Henüz çizgi geçişi yok', { exact: true })).toBeVisible();
+
+  await page.unroute('**/api/events/trend?*');
+  await page.route('**/api/events/trend?*', route => route.fulfill({ status: 503, json: { detail: 'kapalı' } }));
+  await page.getByRole('button', { name: /Verileri yenile/ }).click();
+  await expect(page.getByText('Trend verisi alınamadı', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Yeniden dene' }).last()).toBeVisible();
+});
