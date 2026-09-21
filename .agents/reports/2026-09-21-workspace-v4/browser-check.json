@@ -1,0 +1,45 @@
+{
+  "errors": [],
+  "result": [
+    {
+      "name": "desktop",
+      "width": 1440,
+      "stage": {
+        "x": 152,
+        "y": 255.1875,
+        "width": 904,
+        "height": 660.921875
+      }
+    },
+    {
+      "name": "dark",
+      "width": 1440,
+      "stage": {
+        "x": 152,
+        "y": 255.1875,
+        "width": 904,
+        "height": 660.921875
+      }
+    },
+    {
+      "name": "mobile",
+      "width": 390,
+      "stage": {
+        "x": 16,
+        "y": 314.578125,
+        "width": 358,
+        "height": 479.34375
+      }
+    },
+    {
+      "name": "tablet",
+      "width": 768,
+      "stage": {
+        "x": 20,
+        "y": 252,
+        "width": 728,
+        "height": 619.1875
+      }
+    }
+  ]
+}
