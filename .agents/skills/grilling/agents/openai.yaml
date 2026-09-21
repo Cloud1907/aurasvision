@@ -1,0 +1,5 @@
+interface:
+  display_name: "Grilling"
+  short_description: "Use Grilling only through an explicit invocation or approved CDX plan"
+policy:
+  allow_implicit_invocation: false

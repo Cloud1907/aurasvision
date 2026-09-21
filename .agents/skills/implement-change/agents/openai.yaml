@@ -1,0 +1,5 @@
+interface:
+  display_name: "Implement Change"
+  short_description: "Use Implement Change only through an explicit invocation or approved CDX plan"
+policy:
+  allow_implicit_invocation: false

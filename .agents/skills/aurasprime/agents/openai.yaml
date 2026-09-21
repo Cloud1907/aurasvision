@@ -1,0 +1,5 @@
+interface:
+  display_name: "Aurasprime"
+  short_description: "Use Aurasprime only through an explicit invocation or approved CDX plan"
+policy:
+  allow_implicit_invocation: false
