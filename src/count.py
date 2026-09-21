@@ -18,6 +18,10 @@ from .device import select_device
 from .evidence import kaydet as kanit_kaydet
 
 
+# Bölge editöründeki line rengi #f59e0b (OpenCV BGR sırasıyla).
+LINE_COLOR_BGR = (11, 158, 245)
+
+
 @dataclass
 class CountResult:
     in_count: int = 0
@@ -295,7 +299,7 @@ def _draw_zone(cv2, img, z, k: float = 1.0) -> None:
 def _draw_line(cv2, img, lc, k: float = 1.0) -> None:
     """Çizgiyi A/B yan etiketleri + isim ile çizer (editörle aynı görünüm).
     k: çözünürlük ölçeği — yüksek çözünürlükte kalınlık/yazı okunur kalır."""
-    col = (0, 0, 255)  # KIRMIZI (BGR) — yoğun/parlak sahnede en görünür
+    col = LINE_COLOR_BGR
     ax, ay, bx, by = [int(v) for v in lc["px"]]
     cv2.line(img, (ax, ay), (bx, by), col, max(4, round(4 * k)))
     for x, y in ((ax, ay), (bx, by)):           # uç tutamaçları
@@ -306,13 +310,53 @@ def _draw_line(cv2, img, lc, k: float = 1.0) -> None:
     n = math.hypot(dx, dy) or 1.0
     ux, uy = dx / n, dy / n
     nx, ny = -uy, ux
-    off = 26 * k
+    off = 34 * k
     A = (int(mx - nx * off), int(my - ny * off))   # A yanı (negatif taraf)
     B = (int(mx + nx * off), int(my + ny * off))   # B yanı (pozitif taraf = giriş)
+    height, width = img.shape[:2]
+    radius = max(11, round(11 * k))
+    A, B = _shift_pair_inside(A, B, width, height, radius)
+    start, end = (B, A) if lc.get("flip") else (A, B)
+    cv2.arrowedLine(img, start, end, col, max(2, round(2 * k)), tipLength=0.24)
     for pt, lbl in ((A, "A"), (B, "B")):
-        cv2.circle(img, pt, round(11 * k), col, -1)
-        cv2.putText(img, lbl, (int(pt[0] - 5 * k), int(pt[1] + 5 * k)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5 * k, (255, 255, 255), max(2, round(2 * k)))
+        cv2.circle(img, pt, radius, col, -1)
+        _put_text_clamped(cv2, img, lbl, (int(pt[0] - 5 * k), int(pt[1] + 5 * k)),
+                          0.5 * k, (255, 255, 255), max(2, round(2 * k)))
     # çizgi adı — çizginin üstünde
-    cv2.putText(img, _ascii(lc["name"]), (int(ax + 8 * k), int(ay - 8 * k)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55 * k, col, max(2, round(2 * k)))
+    _put_text_clamped(cv2, img, _ascii(lc["name"]),
+                      (int(ax + 8 * k), int(ay - 8 * k)), 0.55 * k, col,
+                      max(2, round(2 * k)))
+
+
+def _clamp_point(point, width: int, height: int, margin: int = 0) -> tuple[int, int]:
+    """Bir işaret merkezini görüntünün görünür alanında tutar."""
+    x, y = point
+    return (max(margin, min(int(x), max(margin, width - margin - 1))),
+            max(margin, min(int(y), max(margin, height - margin - 1))))
+
+
+def _shift_pair_inside(a, b, width: int, height: int,
+                       margin: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    """A/B çiftini aralarındaki mesafeyi bozmadan görünür alana kaydırır."""
+    ax, ay = a
+    bx, by = b
+    dx = max(0, margin - min(ax, bx)) + min(0, width - margin - 1 - max(ax, bx))
+    dy = max(0, margin - min(ay, by)) + min(0, height - margin - 1 - max(ay, by))
+    return (_clamp_point((ax + dx, ay + dy), width, height, margin),
+            _clamp_point((bx + dx, by + dy), width, height, margin))
+
+
+def _put_text_clamped(cv2, img, text: str, desired: tuple[int, int], scale: float,
+                      color, thick: int, margin: int = 4) -> None:
+    """Metni gerekirse kısaltır ve tamamını görüntü sınırları içinde çizer."""
+    height, width = img.shape[:2]
+    shown = str(text)
+    (tw, th), _base = cv2.getTextSize(shown, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+    available = max(8, width - margin * 2)
+    if tw > available and shown:
+        keep = max(1, int(len(shown) * available / tw) - 3)
+        shown = shown[:keep] + "..."
+        (tw, th), _base = cv2.getTextSize(shown, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+    x = max(margin, min(int(desired[0]), max(margin, width - tw - margin)))
+    y = max(th + margin, min(int(desired[1]), height - margin))
+    cv2.putText(img, shown, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, thick)

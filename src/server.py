@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import akis, kimlik
+from .analytics import build_count_trend, build_event_summary
 from .config import apply_cv2_http_headers, http_options, load_config
 from .store import DEFAULT_TASKS, merged_cameras, open_store
 
@@ -1638,38 +1639,13 @@ def api_events_summary(hours: int = Query(24, ge=1, le=720)):
     Olay akışını kamera kamera taramak yerine operatör önce özete bakar;
     dikkat isteyen kamerayı oradan seçer.
     """
-    from datetime import timedelta
+    return build_event_summary(_store, hours)
 
-    sinir = datetime.now(timezone.utc) - timedelta(hours=hours)
-    # SQLite tarihleri boşluklu UTC metni olarak saklar; PostgreSQL aynı
-    # değeri timestamptz'e güvenle dönüştürür.
-    sinir_db = sinir.strftime("%Y-%m-%d %H:%M:%S")
-    s = _store()
-    try:
-        olaylar = s.event_summary(sinir_db)
-        bekleyen = s.pending_alert_summary()
-    finally:
-        s.close()
-    ozet: dict[str, dict] = {}
-    for e in olaylar:
-        camera_id = e["camera_id"]
-        ozet[camera_id] = {
-            "camera_id": camera_id,
-            "count": int(e.get("count") or 0),
-            "count_events": int(e.get("count_events") or 0),
-            "plate": int(e.get("plate") or 0),
-            "face": int(e.get("face") or 0),
-            "alerts": 0,
-            "last": str(e["last"]) if e.get("last") is not None else None,
-        }
-    for a in bekleyen:
-        k = ozet.setdefault(a["camera_id"] or "?", {"camera_id": a["camera_id"] or "?",
-                                                    "count": 0, "count_events": 0,
-                                                    "plate": 0, "face": 0,
-                                                    "alerts": 0, "last": None})
-        k["alerts"] += int(a.get("alerts") or 0)
-    return {"hours": hours,
-            "cameras": sorted(ozet.values(), key=lambda x: (-x["alerts"], -x["count"]))}
+
+@app.get("/api/events/trend")
+def api_events_trend(hours: int = Query(24, ge=1, le=720)):
+    """Çizgi geçişlerinin 15 dakikalık giriş/çıkış zaman serisi."""
+    return build_count_trend(_store, hours)
 
 
 @app.get("/api/alerts")
