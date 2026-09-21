@@ -1259,7 +1259,7 @@ def _saved_intrusions(camera_id: str) -> list[dict]:
 
 
 def _saved_lines(camera_id: str) -> list[dict]:
-    """Kameranın kayıtlı TÜM 'line' bölgelerini [{name,pts,direction}] döndürür."""
+    """Kameranın kayıtlı TÜM çizgilerini, sınıf seçimiyle birlikte döndürür."""
     out: list[dict] = []
     s = _store()
     try:
@@ -1268,7 +1268,8 @@ def _saved_lines(camera_id: str) -> list[dict]:
                 pts = z["points"] or []
                 if len(pts) >= 2:
                     out.append({"name": z.get("name") or "Çizgi", "pts": [pts[0], pts[1]],
-                                "direction": z.get("direction") or "AtoB"})
+                                "direction": z.get("direction") or "AtoB",
+                                "classes": z.get("classes") or []})
     finally:
         s.close()
     return out
@@ -1640,35 +1641,33 @@ def api_events_summary(hours: int = Query(24, ge=1, le=720)):
     from datetime import timedelta
 
     sinir = datetime.now(timezone.utc) - timedelta(hours=hours)
+    # SQLite tarihleri boşluklu UTC metni olarak saklar; PostgreSQL aynı
+    # değeri timestamptz'e güvenle dönüştürür.
+    sinir_db = sinir.strftime("%Y-%m-%d %H:%M:%S")
     s = _store()
     try:
-        olaylar = s.recent_events(20000)
-        bekleyen = s.recent_alerts(500, pending_only=True)
+        olaylar = s.event_summary(sinir_db)
+        bekleyen = s.pending_alert_summary()
     finally:
         s.close()
     ozet: dict[str, dict] = {}
     for e in olaylar:
-        try:
-            t = datetime.fromisoformat(str(e["time"]).replace(" ", "T"))
-            if t.tzinfo is None:
-                t = t.replace(tzinfo=timezone.utc)
-            if t < sinir:
-                continue
-        except ValueError:
-            pass
-        k = ozet.setdefault(e["camera_id"], {"camera_id": e["camera_id"], "count": 0,
-                                             "plate": 0, "face": 0, "alerts": 0,
-                                             "last": None})
-        k["count"] += 1
-        if e["type"] in k:
-            k[e["type"]] += 1
-        if k["last"] is None:
-            k["last"] = str(e["time"])   # liste zaten zaman DESC
+        camera_id = e["camera_id"]
+        ozet[camera_id] = {
+            "camera_id": camera_id,
+            "count": int(e.get("count") or 0),
+            "count_events": int(e.get("count_events") or 0),
+            "plate": int(e.get("plate") or 0),
+            "face": int(e.get("face") or 0),
+            "alerts": 0,
+            "last": str(e["last"]) if e.get("last") is not None else None,
+        }
     for a in bekleyen:
         k = ozet.setdefault(a["camera_id"] or "?", {"camera_id": a["camera_id"] or "?",
-                                                    "count": 0, "plate": 0, "face": 0,
+                                                    "count": 0, "count_events": 0,
+                                                    "plate": 0, "face": 0,
                                                     "alerts": 0, "last": None})
-        k["alerts"] += 1
+        k["alerts"] += int(a.get("alerts") or 0)
     return {"hours": hours,
             "cameras": sorted(ozet.values(), key=lambda x: (-x["alerts"], -x["count"]))}
 

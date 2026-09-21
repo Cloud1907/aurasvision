@@ -39,6 +39,84 @@ def _ascii(s: str) -> str:
     return (s or "").translate(str.maketrans("çğıİöşüÇĞÖŞÜ", "cgiIosuCGOSU"))
 
 
+def _line_class_ids(line: dict, fallback: set[int]) -> set[int]:
+    """Editördeki sınıf adlarını YOLO/COCO kimliklerine çevirir.
+
+    Eski çizgilerde ``classes`` yoktur veya boştur; bunlar mevcut global
+    ``count.classes`` ayarını kullanmaya devam eder.
+    """
+    from .zones import wanted_classes
+
+    raw = line.get("classes") or []
+    converted = {int(value) for value in raw if isinstance(value, int)}
+    converted |= wanted_classes([value for value in raw if isinstance(value, str)])
+    return converted or set(fallback)
+
+
+def _prune_track_state(track_hits: dict[int, int], last_seen: dict[int, float],
+                       lines: list[dict], now: float, ttl: float) -> None:
+    """TTL'yi aşan tracker kimliklerini tüm çizgi durumlarından temizler."""
+    stale = [tid for tid, seen_at in last_seen.items() if now - seen_at > ttl]
+    for tid in stale:
+        track_hits.pop(tid, None)
+        last_seen.pop(tid, None)
+        for line in lines:
+            line["last"].pop(tid, None)
+            line["last_count"].pop(tid, None)
+
+
+def _make_line_states(lines: list[dict], w: int, h: int,
+                      fallback_classes: set[int]) -> list[dict]:
+    states = []
+    for line in lines:
+        a, b = line["pts"][0], line["pts"][1]
+        states.append({
+            "name": line.get("name") or "Çizgi",
+            "px": (a[0] * w, a[1] * h, b[0] * w, b[1] * h),
+            "flip": (line.get("direction") or "AtoB") == "BtoA",
+            "classes": _line_class_ids(line, fallback_classes),
+            "last": {}, "last_count": {}, "in": 0, "out": 0,
+        })
+    return states
+
+
+def _update_line_states(tid: int, box: list[float], cid: int, lines: list[dict],
+                        track_hits: dict[int, int], last_seen: dict[int, float],
+                        anchor: str, min_track_frames: int, cooldown: float,
+                        ts: float, real_frame: int, result: CountResult,
+                        on_event, store, camera_id: str) -> None:
+    """Bir track gözlemini ilgili çizgilerin durumuna uygular."""
+    track_hits[tid] = track_hits.get(tid, 0) + 1
+    last_seen[tid] = ts
+    x1, y1, x2, y2 = box
+    cx = (x1 + x2) / 2.0
+    cy = y2 if anchor == "foot" else (y1 + y2) / 2.0
+    for line in lines:
+        if cid not in line["classes"]:
+            continue
+        side = _side(cx, cy, line["px"])
+        prev = line["last"].get(tid)
+        crossed = prev is not None and (prev <= 0 < side or prev >= 0 > side)
+        cooled = ts - line["last_count"].get(tid, -1e9) >= cooldown
+        if crossed and track_hits[tid] >= min_track_frames and cooled:
+            direction = "in" if side > prev else "out"
+            if line["flip"]:
+                direction = "out" if direction == "in" else "in"
+            line["last_count"][tid] = ts
+            line[direction] += 1
+            result.in_count += int(direction == "in")
+            result.out_count += int(direction == "out")
+            event = {"track_id": tid, "direction": direction, "line": line["name"],
+                     "frame_idx": real_frame, "ts_seconds": round(ts, 2),
+                     "in": result.in_count, "out": result.out_count}
+            result.events.append(event)
+            if on_event is not None:
+                on_event(event)
+            if store is not None:
+                store.add_count_event(camera_id, tid, direction, line["name"], ts, real_frame)
+        line["last"][tid] = side
+
+
 def run_count(source: str, cfg: Config, save_video: bool = False,
               store=None, camera_id: str = "",
               lines: list[dict] | None = None, on_event=None,
@@ -65,6 +143,7 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
     anchor = cfg.get("count.anchor", "foot")   # foot=ayak (alt-orta, eğilmede kararlı) | center=merkez
     # Aynı track'in aynı çizgide iki sayımı arası asgari süre (titreşim/çizgi-üstü salınım filtresi)
     cooldown = float(cfg.get("count.cooldown_seconds", 2.0))
+    state_ttl = float(cfg.get("count.track_state_ttl_seconds", max(30.0, cooldown * 2)))
     camera_id = camera_id or Path(source).stem
 
     # lines=None → config varsayılanı (CLI); lines=[] → ÇİZGİ YOK (yalnız ihlal alanı
@@ -84,14 +163,7 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
     cap.release()
 
     # Her çizgi için piksel koordinat + durum
-    L = []
-    for li in lines:
-        a, b = li["pts"][0], li["pts"][1]
-        L.append({"name": li.get("name") or "Çizgi",
-                  "px": (a[0] * w, a[1] * h, b[0] * w, b[1] * h),
-                  # 'BtoA' seçilirse yön etiketi ters çevrilir (B→A geçişi = giriş)
-                  "flip": (li.get("direction") or "AtoB") == "BtoA",
-                  "last": {}, "last_count": {}, "in": 0, "out": 0})
+    L = _make_line_states(lines, w, h, set(classes))
 
     writer = None
     if save_video:
@@ -107,10 +179,12 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
     watcher = IntrusionWatcher(intrusions or [], w, h,
                                cfg.get("intrusion.dwell_seconds", 1.0),
                                cfg.get("intrusion.cooldown_seconds", 30.0))
-    classes_sayim = set(classes)   # ÇİZGİ sayımına giren sınıflar (ihlal genişletmesinden önce)
+    classes_sayim = set().union(*(lc["classes"] for lc in L)) if L else set()
+    classes = set(classes_sayim)
     if watcher:
         # İhlal alanı insan DIŞI sınıf da isteyebilir (araç); tespit sınıflarını genişlet
-        classes = sorted(classes_sayim | {c for z in watcher.zones for c in z["classes"]})
+        classes |= {c for z in watcher.zones for c in z["classes"]}
+    classes = sorted(classes) or None
 
     yolo = load_yolo(model, device, instance_key=camera_id)
     # Akışı ultralytics kendi açar; kameraya özgü HTTP başlıkları koşu boyunca
@@ -120,6 +194,7 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
     result = CountResult(fps=fps)
     frame_idx = 0
     track_hits: dict[int, int] = {}   # her track_id kaç karede görüldü (parça filtresi)
+    last_seen: dict[int, float] = {}
 
     for r in yolo.track(source=source, stream=True, persist=True, tracker=tracker,
                         classes=classes, conf=conf, iou=iou, imgsz=imgsz,
@@ -131,6 +206,9 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
         result.frames = frame_idx
         real_frame = frame_idx * vid_stride   # kaynaktaki gerçek kare numarası (yaklaşık)
         ts = real_frame / fps
+        # Önce eski kimliği temizle: tracker uzun aradan sonra aynı ID'yi yeniden
+        # kullanırsa yeni nesne önceki nesnenin çizgi tarafını miras almamalı.
+        _prune_track_state(track_hits, last_seen, L, ts, state_ttl)
 
         boxes = r.boxes
         if boxes is not None and boxes.id is not None:
@@ -156,39 +234,11 @@ def run_count(source: str, cfg: Config, save_video: bool = False,
                     store.add_alert("intrusion", ihlal["zone"], "intrusion",
                                     f"track {ihlal['track_id']} · {ihlal['dwell']} sn",
                                     camera_id, snapshot=ihlal["snapshot"])
-            for tid, (x1, y1, x2, y2), cid in zip(ids, xyxy, cls_ids):
-                if cid not in classes_sayim:
-                    continue   # ihlal için eklenen sınıflar ÇİZGİ sayımına girmez
-                track_hits[tid] = track_hits.get(tid, 0) + 1
-                # Ayak noktası (alt-orta): eğilme/oturmada kutu merkezi kayar ama ayak sabit kalır
-                cx = (x1 + x2) / 2.0
-                cy = y2 if anchor == "foot" else (y1 + y2) / 2.0
-                for lc in L:
-                    s = _side(cx, cy, lc["px"])
-                    prev = lc["last"].get(tid)
-                    # Geçiş + track yeterince uzun + cooldown geçti mi
-                    # (ömür-boyu-tek-sayım YOK: girip çıkan kişi iki olay üretir → in−out = içerideki)
-                    if (prev is not None and (prev <= 0 < s or prev >= 0 > s)
-                            and track_hits[tid] >= min_track_frames
-                            and ts - lc["last_count"].get(tid, -1e9) >= cooldown):
-                        direction = "in" if s > prev else "out"
-                        if lc["flip"]:
-                            direction = "out" if direction == "in" else "in"
-                        lc["last_count"][tid] = ts
-                        lc[direction] += 1
-                        if direction == "in":
-                            result.in_count += 1
-                        else:
-                            result.out_count += 1
-                        event = {"track_id": tid, "direction": direction, "line": lc["name"],
-                                 "frame_idx": real_frame, "ts_seconds": round(ts, 2),
-                                 "in": result.in_count, "out": result.out_count}
-                        result.events.append(event)
-                        if on_event is not None:
-                            on_event(event)
-                        if store is not None:
-                            store.add_count_event(camera_id, tid, direction, lc["name"], ts, real_frame)
-                    lc["last"][tid] = s
+            for tid, box, cid in zip(ids, xyxy, cls_ids):
+                if cid in classes_sayim:
+                    _update_line_states(tid, box, cid, L, track_hits, last_seen,
+                                        anchor, min_track_frames, cooldown, ts, real_frame,
+                                        result, on_event, store, camera_id)
 
         if writer is not None or on_frame is not None:
             annotated = r.plot()
