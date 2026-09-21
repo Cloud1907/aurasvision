@@ -20,6 +20,10 @@ jobs:
         env:
           QA_BASE_URL: ${{ vars.QA_BASE_URL }}
         run: |
+          if [ -z "${QA_BASE_URL:-}" ] && [ -f playwright.ui.config.ts ]; then
+            npm run test:ui
+            exit 0
+          fi
           if [ -z "${QA_BASE_URL:-}" ]; then
             python3 -m http.server 8000 --directory web >/tmp/auras-e2e-http.log 2>&1 &
             export QA_BASE_URL="http://127.0.0.1:8000"

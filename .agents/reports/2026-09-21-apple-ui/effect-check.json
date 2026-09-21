@@ -1,0 +1,5 @@
+{
+  "starOnHover": true,
+  "glassOnFocus": "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 12, 1)",
+  "reducedMotionRunningAnimations": 0
+}
