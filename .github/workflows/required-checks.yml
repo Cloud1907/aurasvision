@@ -59,10 +59,17 @@ jobs:
           pip install pip-audit && pip-audit
 
       - name: secret_scan           # gitleaks binary (action DEĞİL — GitHub API izni gerektirmez)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
             | tar -xz -C /tmp gitleaks
-          /tmp/gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --exit-code 1
+          # Yalnız bu değişikliğin commit aralığını tara. Tüm fetch edilmiş
+          # ref'leri taramak, başka bir açık PR'daki bulguyu ilgisiz PR'larda
+          # da tekrar üretip doğru sahipliği ve düzeltme izini bozuyordu.
+          /tmp/gitleaks detect --source . --log-opts="$BASE_SHA..$HEAD_SHA" \
+            --config .gitleaks.toml --redact --no-banner --exit-code 1
 
       - name: clean_code_metrics    # eşik + ratchet; ofis araçları repoda varsa koşar
         run: |
