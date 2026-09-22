@@ -4,7 +4,7 @@ Worker olayları DB'ye DEĞİL buraya yazar; ingestor tüketip DB'ye basar.
 Worker çökse de stream'de bekleyen olay kaybolmaz (consumer group + ack).
 
 Mesaj formatı (stream 'events'):
-  {type: count|plate|face|health, camera_id, payload: JSON}
+  {type: count|plate|face|fire|health, camera_id, payload: JSON}
 """
 from __future__ import annotations
 
@@ -98,6 +98,11 @@ class BusStore:
                 {"age": age, "gender": gender, "conf": conf,
                  "ts_seconds": round(ts_seconds, 2), "frame_idx": frame_idx,
                  "track_id": track_id, "match_name": match_name, "match_score": match_score})
+
+    def add_fire_event(self, camera_id, olay) -> None:
+        # Ön uyarı ve alarm aynı sözleşmeyle taşınır. Alarmın DB/webhook kararı
+        # analiz worker'ında değil, iki bus kipinin ortak tüketicisi olay.py'dedir.
+        publish(self.r, "fire", camera_id, dict(olay))
 
     def add_alert(self, kind, ref, list_type, label, camera_id) -> None:
         # İhlal alanı alarmı worker'da doğar; DB yazımı ingestor'ın işi (ADR-0002)

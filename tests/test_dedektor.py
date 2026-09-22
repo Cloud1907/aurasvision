@@ -12,9 +12,10 @@ config.yaml'da görünür ve denetlenebilir olur, import zincirinde saklı kalma
 Bu süit model ve ağırlık İSTEMEZ — sahte arka uçla koşar.
 """
 import unittest
+from unittest.mock import patch
 
 from src.dedektor import (LISANSLAR, VARSAYILAN_MOTOR, LisansHatasi,
-                          lisans_kapisi, normalize)
+                          calisma_kapisi, lisans_kapisi, normalize)
 
 
 class Varsayilan(unittest.TestCase):
@@ -56,6 +57,13 @@ class LisansKapisi(unittest.TestCase):
         """RF-DETR XL/2XL PML 1.0'dır — Apache değildir, karıştırılmamalı."""
         self.assertNotIn("rfdetr-xl", LISANSLAR)
         self.assertNotIn("rfdetr-2xl", LISANSLAR)
+
+    def test_calisma_paketi_yokken_yetenek_hazir_sayilmaz(self):
+        """Model dosyası tek başına yetmez; motor paketi de kurulu olmalı."""
+        with patch("src.dedektor.importlib.util.find_spec", return_value=None):
+            with self.assertRaises(ImportError) as ctx:
+                calisma_kapisi("rfdetr")
+        self.assertIn("rfdetr paketi kurulu değil", str(ctx.exception))
 
 
 class SahteTespitler:

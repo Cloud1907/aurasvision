@@ -49,6 +49,12 @@ worker:
   loop_interval: 30   # ultralytics motoru, dosya kaynakları: tur arası bekleme sn (0 = tek geçiş)
   batch_max: 32       # nvdec: tek TensorRT inference'ına girecek azami kare
   second_stage_interval: 0.7   # nvdec: plaka/yüz tetikleri arası asgari sn (kamera başına)
+  # ultralytics: her etkin analiz ayrı akış açar; bu tavan kamera/decoder
+  # kapasitesinin ölçülmeden aşılmasını engeller.
+  max_parallel_tasks_per_camera: 4
+  task_max_restarts: 5
+  task_retry_initial_seconds: 1
+  task_retry_max_seconds: 30
 
 motion:               # nvdec: hareket ön-filtresi (Y-düzlemi fark, GPU)
   enabled: true
@@ -219,6 +225,7 @@ fire:
   # YANGIN/DUMAN ERKEN UYARI — sertifikalı yangın alarm sistemi DEĞİLDİR.
   # Video tabanlı tespit EN 54 kapsamında değil; mevcut yangın sistemini
   # TAMAMLAR, yerine geçmez. Gerekçe: src/fire.py başlığı.
+  enabled: false         # pilot onayı verilene kadar küresel kapalı
 
   # ── Dedektör motoru — LİSANS KARARI, performans tercihi değil ──
   # rfdetr      Apache-2.0 (RF-DETR N/S/M/L). Ticari kullanımda serbest,
@@ -245,6 +252,7 @@ fire:
   # baseline'ları geçme sebebi uzam-ZAMANSAL bilgi. Tek kare asla alarm olamaz.
   window_seconds: 6.0   # doğrulama penceresi
   confirm_frames: 4     # pencere içinde aynı odağı doğrulaması gereken kare sayısı
+  max_gap_seconds: 2.0  # bu süreden uzun model kaçırması yeni doğrulama başlatır
   iou_link: 0.2         # kareler arası "aynı odak" sayılma eşiği
   alarm_seconds: 3.0    # ön uyarı bu kadar SÜRERSE alarma yükselir
   cooldown_seconds: 120 # süren yangın bu aralıkla hatırlatılır (spam değil, sessizlik de değil)

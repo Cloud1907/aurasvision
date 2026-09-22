@@ -33,6 +33,7 @@ Model: genel amaçlı YOLO ağırlığı BU İŞİ YAPMAZ (COCO'da duman sınıf
 from __future__ import annotations
 
 import re
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -112,6 +113,7 @@ class DumanTakip:
     def __init__(self, w: int, h: int, *, pencere_sn: float = 6.0,
                  dogrulama_kare: int = 4, iou_baglama: float = 0.2,
                  alarm_sn: float = 3.0, cooldown_sn: float = 120.0,
+                 azami_bosluk_sn: float = 2.0,
                  bolgeler: list[dict] | None = None,
                  maskeler: list[dict] | None = None) -> None:
         self.pencere = float(pencere_sn)
@@ -119,6 +121,7 @@ class DumanTakip:
         self.iou_baglama = float(iou_baglama)
         self.alarm_sn = float(alarm_sn)
         self.cooldown = float(cooldown_sn)
+        self.azami_bosluk = max(0.0, min(float(azami_bosluk_sn), self.pencere))
         # İzleme bölgesi: TANIMLIYSA yalnız içi değerlendirilir (boşsa tüm kadraj).
         self.bolgeler = _piksel_poligonlar(bolgeler, w, h)
         # Maske: içine düşen tespit hiç değerlendirilmez (ISO/TS 7240-30).
@@ -137,10 +140,15 @@ class DumanTakip:
         return True
 
     def _esle(self, kutu, sinif: str, kullanilan: set[int]):
-        """Aynı sınıftan, en yüksek IoU'lu ve bu karede henüz kullanılmamış odak."""
+        """En yüksek IoU'lu, bu karede henüz kullanılmamış yangın odağı.
+
+        Alev ve duman aynı fiziksel olayın iki görünümüdür. Model kareler
+        arasında sınıf değiştirdiğinde yeni odak açmak doğrulamayı parçalar ve
+        sahadaki alarmı dalgalandırır; bu yüzden bağlama sınıf-bağımsızdır.
+        """
         en_iyi, en_iou = None, self.iou_baglama
         for o in self.odaklar:
-            if o["id"] in kullanilan or o["sinif"] != sinif:
+            if o["id"] in kullanilan:
                 continue
             s = _iou(kutu, o["kutu"])
             if s >= en_iou:
@@ -164,12 +172,23 @@ class DumanTakip:
             if o is None:
                 o = {"id": self._sonraki_id, "sinif": sinif, "kutu": kutu,
                      "conf": conf, "vurus": deque(), "durum": "izle",
-                     "onay_ts": 0.0, "son_alarm": -1e9}
+                     "onay_ts": 0.0, "son_alarm": -1e9,
+                     "son_gorulme_ts": ts}
                 self._sonraki_id += 1
                 self.odaklar.append(o)
+            elif ts - o["son_gorulme_ts"] > self.azami_bosluk:
+                # Aynı yerde yeniden görünen nesne, kesinti sınırı aşıldıysa
+                # eski ön-uyarı/alarm saatini miras alamaz. Aksi hâlde tek yeni
+                # kare dakikalar önceki birikimle doğrudan alarma dönüşebilir.
+                o["vurus"].clear()
+                o["durum"] = "izle"
+                o["onay_ts"] = 0.0
+                o["son_alarm"] = -1e9
             kullanilan.add(o["id"])
+            o["sinif"] = sinif
             o["kutu"] = kutu
             o["conf"] = conf
+            o["son_gorulme_ts"] = ts
             o["vurus"].append(ts)
 
         olaylar: list[dict] = []
@@ -180,7 +199,11 @@ class DumanTakip:
             if not o["vurus"]:
                 self.odaklar.remove(o)      # odak söndü — durumu da gitsin
                 continue
-            olaylar += self._degerlendir(o, ts)
+            # Zamanın tek başına geçmesi alarm değildir. Yalnız BU KAREDE
+            # yeniden görülen odak durum değiştirebilir; aksi hâlde son kutu
+            # boş kareye taşınıp sahte kanıt üretiyordu.
+            if o["id"] in kullanilan:
+                olaylar += self._degerlendir(o, ts)
         return olaylar
 
     def _degerlendir(self, o: dict, ts: float) -> list[dict]:
@@ -189,7 +212,9 @@ class DumanTakip:
             return []
         if o["durum"] == "izle":
             o["durum"] = "on_uyari"
-            o["onay_ts"] = o["vurus"][0]     # doğrulamanın BAŞLADIĞI an
+            # Alarm süresi ham ilk tespitten değil, N-kare doğrulamasının
+            # tamamlandığı ön-uyarı anından başlar.
+            o["onay_ts"] = ts
             return [self._olay(o, "on_uyari", ts, n)]
         if o["durum"] == "on_uyari" and ts - o["onay_ts"] >= self.alarm_sn:
             o["durum"] = "alarm"
@@ -249,6 +274,7 @@ def _takip_kur(cfg, w: int, h: int, bolgeler, maskeler) -> DumanTakip:
         iou_baglama=cfg.get("fire.iou_link", 0.2),
         alarm_sn=cfg.get("fire.alarm_seconds", 3.0),
         cooldown_sn=cfg.get("fire.cooldown_seconds", 120.0),
+        azami_bosluk_sn=cfg.get("fire.max_gap_seconds", 2.0),
         bolgeler=bolgeler, maskeler=maskeler,
     )
 
@@ -295,6 +321,7 @@ def _ciz(kare, tespitler) -> Any:
 def run_fire(source: str, cfg, store=None, camera_id: str = "",
              bolgeler: list[dict] | None = None, maskeler: list[dict] | None = None,
              on_event=None, on_alert=None, on_frame=None,
+             on_detection=None,
              should_stop: Callable[[], bool] | None = None) -> FireResult:
     """Kaynakta yangın/duman erken uyarısı koşar.
 
@@ -314,6 +341,8 @@ def run_fire(source: str, cfg, store=None, camera_id: str = "",
                                            * efektif_fps)))
     sonuc = FireResult(fps=fps)
     ham_idx = 0
+    canli = str(source).startswith(("rtsp://", "rtmp://", "http://", "https://"))
+    baslangic = time.monotonic()
     try:
         while should_stop is None or not should_stop():
             okundu, kare = cap.read()
@@ -325,7 +354,15 @@ def run_fire(source: str, cfg, store=None, camera_id: str = "",
             sonuc.frames += 1
             halka.append(kare.copy())
             tespitler = ded.tespit(kare)
-            for olay in takip.guncelle(tespitler, ham_idx / fps):
+            # Canlı akışta kamera FPS metadatası sıkça nominal/yanlıştır; alarm
+            # süresi duvar saatidir. Dosyada ise hızlı analizden etkilenmemek
+            # için video zamanını kullanırız.
+            ts = time.monotonic() - baslangic if canli else ham_idx / fps
+            if on_detection is not None:
+                # Saha kabul ölçümü ham model sürekliliğini gözleyebilsin;
+                # mutable listeyi callback'in değiştirmemesi için kopyalanır.
+                on_detection(ts, ham_idx, list(tespitler))
+            for olay in takip.guncelle(tespitler, ts):
                 olay["camera_id"] = camera_id
                 olay["frame_idx"] = ham_idx
                 _yay(cfg, olay, sonuc, kare, halka, camera_id, efektif_fps,
@@ -348,6 +385,8 @@ def _yay(cfg, olay: dict, sonuc: FireResult, kare, halka, camera_id: str,
     """
     if olay["durum"] == "on_uyari":
         sonuc.on_uyarilar.append(olay)
+        if store is not None:
+            store.add_fire_event(camera_id, olay)
         if on_event is not None:
             on_event(olay)
         return
@@ -356,6 +395,4 @@ def _yay(cfg, olay: dict, sonuc: FireResult, kare, halka, camera_id: str,
     if on_alert is not None:
         on_alert(olay)
     if store is not None:
-        store.add_alert("fire_warning", olay["sinif"], "fire",
-                        f"{olay['dogrulama']} kare / {olay['sure']} sn · {FERAGAT}",
-                        camera_id, snapshot=olay["snapshot"])
+        store.add_fire_event(camera_id, olay)
