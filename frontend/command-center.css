@@ -256,7 +256,7 @@ html[data-theme=dark]{--bg:#14171b;--rail:#21262d;--rail-active:#2a415d;--rail-2
   #syspanel:not([hidden]){position:fixed;left:124px;bottom:24px;width:260px;z-index:35;box-shadow:var(--shadow-lg);}
 }
 .topbar{background:transparent;border:0;backdrop-filter:none;height:72px;padding:20px 40px;}.topbar h1{font-size:12px;color:var(--ink-2);font-weight:550;}.topbar .sub{display:none;}
-.content{padding:8px 40px 32px;max-width:1720px;}
+.content{padding:8px 40px 32px;max-width:2400px;}
 .command-header{margin-bottom:20px;min-height:64px;}.command-header h2{font-size:30px;font-weight:660;letter-spacing:-.04em;}.command-header p{font-size:12.5px;color:var(--ink-2);}
 .command-actions{gap:20px;}.command-system{font-size:10px;}.command-center .star-border-container{border-radius:24px;}.command-center .inner-content{border-radius:23px;padding-inline:20px;}
 .command-atmosphere{top:-70px;right:-40px;width:min(800px,80%);height:280px;}.rb-aurora{opacity:.25;filter:saturate(.5);}
@@ -345,7 +345,7 @@ html[data-theme=dark]{--bg:#14171b;--rail:#21262d;--rail-active:#2a415d;--rail-2
 html[data-theme=dark] .command-center{--glass-core:#171d27;--glass-surface:color-mix(in srgb,#202731 72%,transparent);--glass-soft:color-mix(in srgb,#28313d 48%,transparent);--glass-line:color-mix(in srgb,#fff 12%,transparent);--glass-shadow:0 22px 70px #0000003b, inset 0 1px 0 #ffffff0c;--chart-line:#75a0ff;--chart-one:#75a0ff;--chart-two:#e8b65f;--chart-three:#6dcca0;--chart-four:#ef7887;}
 /* Dekoratif ortam isigi. Kendi kutusunun kenarinda kesilince ekranda dikis gibi
    bir cizgi birakiyordu; maskeyle kenarlari eritildi. */
-.command-center::before{content:"";position:absolute;inset:-160px -140px -90px;z-index:-2;pointer-events:none;background:radial-gradient(circle at 18% 12%,#5f90ff1c,transparent 32%),radial-gradient(circle at 86% 28%,#6dd8c516,transparent 30%),radial-gradient(circle at 55% 76%,#aa75ff10,transparent 34%);-webkit-mask-image:radial-gradient(115% 88% at 48% 30%,#000 38%,transparent 90%);mask-image:radial-gradient(115% 88% at 48% 30%,#000 38%,transparent 90%);}
+.command-center::before{content:"";position:absolute;inset:0;z-index:-2;pointer-events:none;background:radial-gradient(circle at 22% 14%,#5f90ff1c,transparent 30%),radial-gradient(circle at 82% 26%,#6dd8c516,transparent 28%),radial-gradient(circle at 55% 74%,#aa75ff10,transparent 32%);-webkit-mask-image:radial-gradient(78% 62% at 50% 34%,#000 0%,#000 30%,transparent 72%);mask-image:radial-gradient(78% 62% at 50% 34%,#000 0%,#000 30%,transparent 72%);}
 .command-center .ops-metric.card-spotlight,.command-center .live-monitoring,.command-center .analytics-panel,.command-center .dashboard-layout .command-sidebar .ops-card.card-spotlight,.command-center .command-lower>.ops-card,.command-center .command-lower>.ops-shortcuts,.command-center .command-lower>.ops-archive{position:relative;border:1px solid var(--glass-line);background:linear-gradient(135deg,var(--glass-surface),var(--glass-soft));box-shadow:var(--glass-shadow);backdrop-filter:blur(22px) saturate(145%);-webkit-backdrop-filter:blur(22px) saturate(145%);}
 .command-center .ops-metric.card-spotlight::after,.command-center .live-monitoring::after,.command-center .analytics-panel::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(115deg,#ffffff12,transparent 34%,transparent 68%,#7ca6ff0a);}
 .command-center .ops-metric.card-spotlight{transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease;}

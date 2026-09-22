@@ -452,7 +452,22 @@ function benRozet(){
     $("#ubtn").innerHTML=svg('out',15);}
   else u.hidden=true;
 }
-async function cikis(){try{await fetch("/api/cikis",{method:"POST"});}catch(e){}location.reload();}
+async function cikis(){
+  // Eskiden her hata yutuluyor, yine de sayfa yenileniyordu: oturum acik kalinca
+  // kullaniciya "dugme calismiyor" gibi gorunuyordu. Artik sonuc soyleniyor.
+  const b=$("#ubtn");
+  if(b){b.disabled=true;b.title="Oturum kapatiliyor";}
+  try{
+    const r=await fetch("/api/cikis",{method:"POST"});
+    if(!r.ok)throw new Error("sunucu "+r.status);
+  }catch(e){
+    if(b){b.disabled=false;b.title="Oturumu kapat";}
+    toast("Oturum kapatılamadı ("+(e.message||e)+"). Tekrar deneyin.","err");
+    return;
+  }
+  TOKEN="";try{localStorage.removeItem("vai-token");}catch(e){}
+  location.reload();
+}
 async function api(p,o={}){
   o.headers=Object.assign({},o.headers||{},TOKEN?{Authorization:'Bearer '+TOKEN}:{});
   o.signal?.throwIfAborted();
