@@ -77,15 +77,17 @@ class TelefonTest(unittest.TestCase):
 
     def test_el_kulakta_4sn_on_uyari_sonra_alarm(self):
         t = _takip(telefon_dogrulama="tercih")
-        ol = self._kos(t, 9.0)
+        ol = self._kos(t, 18.0)
         durumlar = [(o["sinif"], o["durum"]) for o in ol]
         self.assertIn(("telefon", "on_uyari"), durumlar)
         self.assertIn(("telefon", "alarm"), durumlar)
-        # ön uyarı ≈ 4 sn'de, alarm (kutu yok) ≈ +4 sn sonra
+        # ön uyarı ≈ 4 sn'de, alarm (kutu yok) ≈ +12 sn sonra (3× telefon_sn)
         on = next(o for o in ol if o["durum"] == "on_uyari")
         al = next(o for o in ol if o["durum"] == "alarm")
         self.assertGreaterEqual(on["ts_seconds"], 3.0)
-        self.assertGreaterEqual(al["ts_seconds"] - on["ts_seconds"], 3.5)
+        self.assertGreaterEqual(al["ts_seconds"] - on["ts_seconds"], 11.5)
+        # 9 sn'de henüz alarm yok: sigara içerken yüze yaslanan el bu sürede sahte alarm üretiyordu
+        self.assertFalse(any(o["durum"] == "alarm" and o["ts_seconds"] < 9.0 for o in ol))
         self.assertEqual(al["dogrulama"], "poz")
 
     def test_telefon_kutusu_alarmi_hizlandirir(self):
@@ -109,14 +111,14 @@ class TelefonTest(unittest.TestCase):
 
     def test_el_inince_sifirlanir_cooldown(self):
         t = _takip()
-        ol = self._kos(t, 9.0)
+        ol = self._kos(t, 18.0)
         self.assertTrue(any(o["durum"] == "alarm" for o in ol))
         # el iner, tekrar kalkar: cooldown içinde yeni olay yok
         for i in range(8):
-            t.guncelle([kisi(bilek=(300, 400))], 9.0 + i / 4)
+            t.guncelle([kisi(bilek=(300, 400))], 18.0 + i / 4)
         ol2 = []
-        for i in range(40):
-            ol2 += t.guncelle([kisi(bilek=TELEFON)], 11.0 + i / 4)
+        for i in range(80):
+            ol2 += t.guncelle([kisi(bilek=TELEFON)], 20.0 + i / 4)
         self.assertEqual(ol2, [])
 
     def test_uzak_kisi_degerlendirilmez(self):
@@ -167,6 +169,36 @@ class SigaraTest(unittest.TestCase):
         self.assertEqual([o for o in ol if o["sinif"] == "sigara"], [])
 
 
+class SinifSecimiTest(unittest.TestCase):
+    def test_yalniz_sigara_acikken_telefon_uretilmez(self):
+        t = _takip(siniflar=("sigara",))
+        ol = []
+        for i in range(40):
+            ol += t.guncelle([kisi(bilek=TELEFON)], i / 4)
+        self.assertEqual(ol, [])
+
+    def test_yalniz_telefon_acikken_sigara_uretilmez(self):
+        t = _takip(siniflar=("telefon",))
+        ol, ts = [], 0.0
+        for k in range(3):
+            for i in range(4):
+                ol += t.guncelle([kisi(bilek=AGIZ)], ts); ts += 0.25
+            for i in range(28):
+                ol += t.guncelle([kisi(bilek=(300, 400))], ts); ts += 0.25
+        self.assertEqual([o for o in ol if o["sinif"] == "sigara"], [])
+
+    def test_ucuncu_nefes_alarm(self):
+        # doğrulayıcı yokken 3. dokunuş alarm (tercih kipi)
+        t = _takip(sigara_dogrulama="tercih")
+        ol, ts = [], 0.0
+        for k in range(3):
+            for i in range(4):
+                ol += t.guncelle([kisi(bilek=AGIZ)], ts); ts += 0.25
+            for i in range(28):
+                ol += t.guncelle([kisi(bilek=(300, 400))], ts); ts += 0.25
+        self.assertTrue(any(o["sinif"] == "sigara" and o["durum"] == "alarm" for o in ol))
+
+
 class HatTest(unittest.TestCase):
     def test_hat_sahte_pozla_etiket_uretir(self):
         class Cfg(dict):
@@ -180,12 +212,12 @@ class HatTest(unittest.TestCase):
                             poz=lambda bgr: [kisi(bilek=TELEFON)],
                             on_event=olaylar.append, on_alert=olaylar.append)
         son = []
-        for i in range(24):
+        for i in range(40):
             son = hat.kare(kare, i / 4, i)
         self.assertEqual(len(son), 1)
         self.assertIn(son[0][0], ("telefon", "telefon?"))
         self.assertTrue(any(o["durum"] == "alarm" for o in olaylar))
-        self.assertEqual(hat.sonuc.frames, 24)
+        self.assertEqual(hat.sonuc.frames, 40)
         self.assertEqual(hat.sonuc.kisiler_max, 1)
         self.assertEqual(olaylar[-1].get("snapshot"), "")   # kanıt kapalı
 

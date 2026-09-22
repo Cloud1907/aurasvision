@@ -74,9 +74,10 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
         if p.get("durum") == "alarm":
             from .davranis import alarm_etiketi
             etiket = alarm_etiketi(p)
-            store.add_alert("davranis", p.get("sinif", ""), "davranis", etiket,
+            sinif = p.get("sinif", "davranis")
+            store.add_alert(sinif, sinif, sinif, etiket,
                             camera_id, snapshot=p.get("snapshot", ""))
-            _web(cfg, {"tur": "davranis", "ref": p.get("sinif", ""), "etiket": etiket,
+            _web(cfg, {"tur": sinif, "ref": sinif, "etiket": etiket,
                        "kamera": camera_id, "kanit": p.get("snapshot", ""),
                        "klip": p.get("clip", "")})
     elif type_ == "vektor":

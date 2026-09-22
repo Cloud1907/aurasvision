@@ -137,7 +137,8 @@ evidence:
   plate: true       # plaka kırpması + bağlam karesi (ALPR'ın asli işlevi)
   intrusion: true   # alarm anının karesi (güvenlik amacının kendisi)
   face: false       # biyometrik veri — varsayılan KAPALI, yalnız embedding saklanır
-  davranis: true    # telefon/sigara alarm karesi (kişi görünür; KVKK: amaçla sınırlı, süreli)
+  telefon: true     # telefonla konuşma alarm karesi (kişi görünür; KVKK: amaçla sınırlı, süreli)
+  sigara: true      # sigara içme alarm karesi (aynı)
   keep_days: 30     # bu süreden eski kanıt klasörleri silinir (0 = silme)
 
 intrusion:
@@ -310,6 +311,9 @@ fire:
 
 davranis:
   # DAVRANIŞ TESPİTİ — telefonla konuşma ve sigara içme (src/davranis.py başlığı).
+  # Görev anahtarları AYRIDIR: kamerada "telefon" ve "sigara" ayrı ayrı açılır, alarm
+  # türleri de ayrıdır (alerts.kind = telefon | sigara). Ortak poz hattı bir kez koşar;
+  # aşağıdaki ayarlar ikisine de ortaktır.
   # KVKK: kişi davranışı izlenir; kimlik eşlemesi YAPILMAZ, yüz vektörü üretilmez.
   # Kanıt karesi kişiyi içerir → evidence.davranis ile kapatılır.
   #
@@ -318,20 +322,24 @@ davranis:
   # batch'inden bedava), sigara: isteğe bağlı ayrı ağırlık (aşağıda).
   pose_model: weights/yolo11n-pose.pt   # Ultralytics resmi ağırlık; yoksa bu yola indirilir.
                                         # AGPL-3.0 — sayım/plaka/yüz ile aynı motor, aynı karar.
-  imgsz: 640
+  imgsz: 960            # 640'ta uzak kişi (baş ~20 px) kaçıyor; 960'ta sokak klibi yakalandı,
+                        # süre değişmedi (21 ms, RTX 3050). 1280 yakın planı bozdu.
   conf: 0.4             # kişi tespit eşiği (poz modeli)
   fps: 4                # akis motoru: kamera başına tempo (yangınla aynı desen)
   vid_stride: 3         # dosya/Test yolu: her N karede bir
   use_main_stream: false   # substream (896 px) yakın plandaki kişi için yeter; uzak kişi
                            # zaten min_bas_px altında kalır — ana akış çözümü boşa gider.
-  min_bas_px: 24        # baş (kulaklar arası) bu pikselin altındaysa kişi DEĞERLENDİRİLMEZ:
-                        # bilek-kulak mesafesi gürültüye gömülür. Kişi yakın olmalı.
+  min_bas_px: 16        # baş (kulaklar arası) bu pikselin altındaysa kişi DEĞERLENDİRİLMEZ:
+                        # bilek-kulak mesafesi gürültüye gömülür. Ölçüm: 720×1280 sokak
+                        # klibinde baş 22 px, imgsz 960 ile yakalandı; 24 sınırı kaçırıyordu.
 
   # ── Telefonla konuşma ──
   telefon_sn: 4.0       # el kulakta kesintisiz bu kadar sn → ön uyarı (kaşıma 1-2 sn sürer)
   telefon_oran: 0.7     # penceredeki karelerin bu oranında el kulakta olmalı (kısa kopmalar tolere)
   telefon_dogrulama: tercih   # tercih : COCO telefon kutusu başın yanındaysa HEMEN alarm,
-                              #          yoksa el telefon_sn kadar daha kalırsa alarm (toplam ~8 sn)
+                              #          yoksa poz tek başına telefon_sn × telefon_poz_kat sürerse
+  telefon_poz_kat: 3.0        # (12 sn). 2× iken sigara içerken yüze yaslanan el 8 sn'de sahte
+                              # telefon alarmı üretti (balkon klibi); 3× ile temizlendi.
                               # zorunlu: kutu görülmeden alarm YOK (ön uyarı kalır)
                               # kapali : yalnız poz (telefon kutusu aranmaz)
 

@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import akis
 from .bus import BusStore, YerelBus, open_bus, publish
 from .config import apply_cv2_http_headers, load_config
+from .davranis import aktif_siniflar   # görev anahtarları: telefon, sigara (tek poz hattı)
 from .store import merged_cameras, open_store
 
 # kamera_id → o an çalışan aşama (heartbeat bunu yayınlar)
@@ -233,6 +234,20 @@ def _canli_kaynak(source: str) -> bool:
     return str(source).lower().startswith(("rtsp://", "rtmp://", "http://", "https://"))
 
 
+class _CfgSinif:
+    """cfg'yi sarar, davranış hattına hangi sınıfların (telefon/sigara) açık olduğunu taşır."""
+
+    def __init__(self, cfg, siniflar) -> None:
+        self._cfg = cfg
+        self.davranis_siniflar = tuple(siniflar)
+
+    def get(self, *a, **k):
+        return self._cfg.get(*a, **k)
+
+    def __getattr__(self, ad):
+        return getattr(self._cfg, ad)
+
+
 def _gorev_calistir(gorev: str, source: str, cfg, bstore, cid: str,
                     lines, ihlaller, watch=None, fire_zones=None) -> None:
     """Tek analiz görevini (count/plate/face/fire/davranis) çalıştırır — dispatch tek yerde,
@@ -252,8 +267,9 @@ def _gorev_calistir(gorev: str, source: str, cfg, bstore, cid: str,
                  should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
     elif gorev == "davranis":
         # Telefonla konuşma / sigara — poz sezgiseli + doğrulama (src/davranis.py)
-        from .davranis import run_davranis
-        run_davranis(source, cfg, store=bstore, camera_id=cid)
+        from .davranis import SINIFLAR, run_davranis
+        run_davranis(source, cfg, store=bstore, camera_id=cid,
+                     siniflar=getattr(cfg, "davranis_siniflar", SINIFLAR))
     elif gorev == "fire":
         # Yangın/duman erken uyarı (sertifikalı alarm DEĞİL — src/fire.py başlığı)
         from .fire import run_fire
@@ -305,7 +321,12 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             rstore.close()
 
         did_work = False
-        aktif = [g for g in ("count", "plate", "face", "fire", "davranis") if tasks.get(g)]
+        aktif = [g for g in ("count", "plate", "face", "fire") if tasks.get(g)]
+        # Telefon ve sigara ayrı görev ama tek poz hattı: ikisi açıksa bir kez koşar
+        davranis_siniflar = aktif_siniflar(tasks)
+        if davranis_siniflar:
+            aktif.append("davranis")
+        cfg_gorev = _CfgSinif(cfg, davranis_siniflar) if davranis_siniflar else cfg
         # Çizgi de ihlal alanı da yoksa sayımın işleyeceği geometri yoktur (ana dal #7).
         if "count" in aktif and not (cizgiler or ihlaller):
             aktif.remove("count")
@@ -329,7 +350,7 @@ def _run_camera(cam: dict, cfg, bus) -> None:
                 _STAGE[cid] = "+".join(aktif)
                 gorev_threads = [threading.Thread(
                     target=_gorev_thread_calistir,
-                    args=(g, source, cfg, bstore, cid, lines, ihlaller, watch, fire_zones),
+                    args=(g, source, cfg_gorev, bstore, cid, lines, ihlaller, watch, fire_zones),
                     daemon=True) for g in aktif]
                 for t in gorev_threads:
                     t.start()
@@ -339,7 +360,7 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             else:
                 for gorev in aktif:
                     _STAGE[cid] = gorev
-                    _gorev_calistir(gorev, source, cfg, bstore, cid, lines, ihlaller, watch,
+                    _gorev_calistir(gorev, source, cfg_gorev, bstore, cid, lines, ihlaller, watch,
                                     fire_zones)
                     did_work = True
             _STAGE[cid] = "idle"

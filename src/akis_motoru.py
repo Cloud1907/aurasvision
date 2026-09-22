@@ -243,6 +243,12 @@ def _yangin_bolgeleri(store, cid: str) -> tuple[list[dict], list[dict]]:
 # hâlâ bastırılır, sonra kutu bayat sayılır (kişi gitmiş olabilir).
 _KISI_TAZE = 5.0
 _TELEFON_CLASS = 67    # COCO "cell phone" — davranış kademesinin telefon doğrulaması
+
+
+def _davranis_acik(tasks) -> bool:
+    """Telefon veya sigara görevi açık mı (ikisi tek poz hattında koşar)."""
+    t = tasks or {}
+    return bool(t.get("telefon") or t.get("sigara"))
 # Yangın dedektörü yükleme denemesi: sayı ve aralık (sn).
 _YUKLEME_DENEME = 5
 _YUKLEME_ARALIK = 30.0
@@ -421,14 +427,15 @@ class _DavranisKademe:
 
     def _run(self, cid: str, st: dict, bgr, ts: float, wh) -> None:
         try:
-            from .davranis import DavranisHatti
+            from .davranis import DavranisHatti, aktif_siniflar
             w, h = wh
-            key = repr((w, h))
+            siniflar = aktif_siniflar(st["cam"].get("tasks"))
+            key = repr((w, h, siniflar))
             if self.hat_key.get(cid) != key:
                 self.hat[cid] = DavranisHatti(
                     self.cfg, w, h, cid, self.fps, poz=self.poz, sigara=self.sigara,
                     store=None, on_event=lambda o, c=cid: self._olay(c, o),
-                    on_alert=lambda o, c=cid: self._olay(c, o))
+                    on_alert=lambda o, c=cid: self._olay(c, o), siniflar=siniflar)
                 self.hat_key[cid] = key
             tel = None
             tk = st.get("telefon_kutular")
@@ -627,7 +634,7 @@ def run_akis_worker(cams: list[dict], cfg, bus,
         # Ana iş parçacığında, döngü ve ikinci kademe başlamadan ÖNCE yükle:
         # iş parçacıkları arası import yarışı (SigLIP ↔ rfdetr) burada olmaz.
         yangin._dedektor()
-    if any((st["cam"].get("tasks") or {}).get("davranis") for st in state.values()):
+    if any(_davranis_acik(st["cam"].get("tasks")) for st in state.values()):
         davranis._modeller()
     print(f"{_ON} {len(state)} kamera · model={model_ad} · hedef {fps} fps · "
           f"hwaccel adayları: {','.join(hw_adaylar) or 'yok (yazılım)'} · "
@@ -657,12 +664,12 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                 # Hareket filtresinden ÖNCE: duman yavaş, alev küçük — filtre
                 # ilk kareleri yutmasın. Kendi temposu/iş parçacığı var.
                 yangin.maybe_submit(cid, st, bgr, ts, wh)
-            if tasks.get("davranis"):
+            if _davranis_acik(tasks):
                 davranis.maybe_submit(cid, st, bgr, ts, wh)
-            # Davranış açık kamera batch'e de girer: telefon doğrulaması COCO
-            # "cell phone" kutusunu buradan alır (ek model yok).
+            # Telefon açık kamera batch'e de girer: doğrulama COCO "cell phone"
+            # kutusunu buradan alır (ek model yok). Yalnız sigara açıksa gerekmez.
             if not (tasks.get("count") or tasks.get("plate") or tasks.get("face")
-                    or tasks.get("davranis")):
+                    or tasks.get("telefon")):
                 continue
             if motion_on:
                 g = _gri_kucuk(bgr)
@@ -689,7 +696,7 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                         st["kisi_kutular"] = (wall, [tuple(map(float, xyxy[i]))
                                                      for i in range(len(cls))
                                                      if int(cls[i]) == _PERSON_CLASS])
-                    if tasks.get("davranis"):
+                    if tasks.get("telefon"):
                         st["telefon_kutular"] = (wall, [tuple(map(float, xyxy[i]))
                                                         for i in range(len(cls))
                                                         if int(cls[i]) == _TELEFON_CLASS])

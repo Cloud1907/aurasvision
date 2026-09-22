@@ -25,7 +25,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 # bilinçli kapatılır; sessizce kapalı başlayan kamera sahada "o gün kayıt yok"
 # olarak patlar ve geri getirilemez.
 DEFAULT_TASKS = {"count": True, "plate": False, "face": False, "fire": False,
-                 "davranis": False, "record": True}
+                 "telefon": False, "sigara": False, "record": True}
 
 
 def open_store(cfg) -> "BaseStore":

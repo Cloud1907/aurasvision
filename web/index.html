@@ -134,7 +134,7 @@
      .ov-wrap JS'le TAM video içeriğinin kapladığı dikdörtgene konumlanır — aksi hâlde
      çizgi/kutu bantların üstüne taşıp gerçek görüntüyle hizasız görünürdü. */
   .ov-wrap{position:absolute;inset:0;pointer-events:none;z-index:2;}
-  .det-canvas{position:absolute;inset:0;width:100%;height:100%;}
+  .det-canvas{position:absolute;inset:0;width:100%;height:100%;background:transparent;border:0;border-radius:0;box-shadow:none;}
   .tileact button.on{background:var(--accent);color:#fff;}
   .tile .nm{position:absolute;left:16px;bottom:14px;color:#fff;font-weight:700;font-size:15px;text-shadow:0 1px 4px rgba(0,0,0,.5);}
   .countbox{position:absolute;left:12px;top:10px;display:flex;gap:8px;background:rgba(8,9,11,.88);color:#fff;font-size:11px;font-weight:600;padding:4px 8px;border-radius:3px;z-index:2;border:1px solid rgba(255,255,255,.08);}
@@ -367,7 +367,7 @@ const NAV=[
   ["test","Test","test"],["sys","Sistem","bolt"]];
 const TITLES={panel:["Operasyon merkezi","Sahanızın bugünkü görünümü"],
   sys:["Sistem","Bileşen durumu ve arşiv"],
-  live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım, ihlal ve yangın alanları"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],arama:["Arama","Arşivde serbest metinle nesne bul"],rapor:["Raporlar","Kamera bazlı günlük faaliyet"],events:["Olaylar","Sayım, plaka, yüz, yangın ve davranış"],lists:["Tanıma listeleri","Plaka ve yüz tanıma · kara liste, VIP, izinli"]};
+  live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım, ihlal ve yangın alanları"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],arama:["Arama","Arşivde serbest metinle nesne bul"],rapor:["Raporlar","Kamera bazlı günlük faaliyet"],events:["Olaylar","Sayım, plaka, yüz, yangın, telefon ve sigara"],lists:["Tanıma listeleri","Plaka ve yüz tanıma · kara liste, VIP, izinli"]};
 /* BASİT GÖRÜNÜM (varsayılan): operatörün günlük işi 6 ekrandır — Panel, Canlı,
    Olaylar, Kayıtlar, Kameralar, Sistem. Arama/Rapor/Listeler/Bölgeler/Test
    "Gelişmiş" altında açılır; tercih tarayıcıda kalır. Ekranlar hep erişilebilir
@@ -378,7 +378,8 @@ let GELISMIS=false;try{GELISMIS=localStorage.getItem("vai-gelismis")==="1";}catc
 function gelismisAc(v){GELISMIS=v;try{localStorage.setItem("vai-gelismis",v?"1":"0");}catch(e){}render();}
 let CAMS=[],active="panel";
 let fireCap={enabled:false,available:false,reason:"Yangın yeteneği sorgulanmadı"};
-let davCap={enabled:false,available:false,reason:"Davranış yeteneği sorgulanmadı"};
+let telCap={enabled:false,available:false,reason:"Telefon yeteneği sorgulanmadı"};
+let sigCap={enabled:false,available:false,reason:"Sigara yeteneği sorgulanmadı"};
 let LIVE_COUNTS={},LIVE_ACTIVE=false;
 const $=s=>document.querySelector(s);
 /* XSS koruması: kullanıcı/OCR kaynaklı her değer innerHTML'e esc() ile girer */
@@ -636,7 +637,7 @@ function startLiveCounts(){window._stopCounts?.();window._stopCounts=AurasRuntim
 /* Duvardaki görev anahtarları. Karo tıklaması tek kamera görünümünü açtığı için
    stopPropagation şart: görev açıp kapatmak görüntüyü tam ekrana ZIPLATMAMALI. */
 function taskPills(c){const t=c.tasks||{};
-  return `<span class="taskset">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["fire","Yangın"],["davranis","Davranış"]].map(([k,l])=>{
+  return `<span class="taskset">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["fire","Yangın"],["telefon","Telefon"],["sigara","Sigara"]].map(([k,l])=>{
     const eksik=k==="count"&&bolgeEksik(c);
     const ipucu=eksik?`${l} açık ama sayım çizgisi yok — Bölgeler ekranından çiz`:`${l} görevini aç/kapat`;
     return `<button type="button" class="taskpill ${t[k]?'on':''} ${eksik?'eksik':''}" title="${esc(ipucu)}"
@@ -735,6 +736,20 @@ function loadPlayer(){
         super.oninit();
         const v=this.video;
         v.controls=false;v.muted=true;v.disablePictureInPicture=true;
+        v.addEventListener("error",()=>{
+          // Ana akış çözülemiyorsa büyütülmüş görünümü çalışan alt akışla aç.
+          // VideoRTC soketi kapatıp yeniden bağlanır; yeni bağlantı bu URL'yi kullanır.
+          const fallback=this.dataset.fallbackSrc;
+          if(!fallback||this.dataset.src===fallback||![3,4].includes(v.error?.code))return;
+          delete this.dataset.fallbackSrc;
+          this.dataset.src=fallback;
+          this._ct=0;this._seen=false;this._stall=0;
+          const tile=this.closest(".tile");
+          if(tile){tile.dataset.state="wait";const badge=tile.querySelector(".live b");if(badge)badge.textContent="BAĞLANIYOR";}
+          const quality=this.closest(".camview")?.querySelector(".stream-quality");
+          if(quality)quality.textContent="uyumlu akış";
+          this.src=`/api/stream?src=${encodeURIComponent(fallback)}${tokq()}`;
+        });
         // go2rtc oynatıcısı gecikmeyi kapatmak için playbackRate'i DOĞRUDAN tampon
         // farkına eşitler (video-rtc.js: `playbackRate = gap`): 5 sn tampon → 5x hızlı,
         // tampon boşalınca 0.1x ağır çekim. Gözle görülen "önce fırlıyor sonra sürünüyor"
@@ -797,13 +812,13 @@ function openCam(id,ad){
   const gorevChip=(k,l)=>`<span class="chip" style="background:${t[k]?'var(--ok-soft)':'var(--hover)'};color:${t[k]?'var(--ok)':'var(--ink-3)'};">${l} ${t[k]?'açık':'kapalı'}</span>`;
   m.innerHTML=`<div class="camview full">
     <div class="camview-head"><b>${esc(ad)}</b>
-      <span style="display:flex;gap:10px;align-items:center;"><span class="mut-s">tam çözünürlük</span>
+      <span style="display:flex;gap:10px;align-items:center;"><span class="mut-s stream-quality">tam çözünürlük</span>
       <button class="btn sm" id="cv-analiz" data-toggle-label="1" title="Plaka/yüz için: ~3 fps'lik anlık kare önizlemesi"
               onclick="toggleAnaliz('${esc(id)}',this)">Analiz</button>
       <button class="btn sm ico" id="cv-x" title="kapat">${svg('x',15)}</button></span></div>
     <div class="camview-body">
       <div class="tile" data-state="wait">
-        <div class="skel"></div><auras-stream data-src="${esc(id)}"></auras-stream>
+        <div class="skel"></div><auras-stream data-src="${esc(id)}" data-fallback-src="${cam.url_sub?esc(id+'-sub'):''}"></auras-stream>
         <img class="analiz-frame" data-cam="${esc(id)}" style="display:none;" alt="analiz görünümü"/>
         <div class="ov-wrap"><canvas class="det-canvas"></canvas></div>
         <span class="nosig">${svg('cams',17)} Sinyal yok</span>
@@ -849,6 +864,8 @@ function openCam(id,ad){
     ovWrap.style.left=x+"px";ovWrap.style.top=y+"px";ovWrap.style.width=w+"px";ovWrap.style.height=h+"px";
   };
   konumla();
+  // Alt akışa geçişte en-boy oranı değişebilir; overlay yeni görüntüyü izlesin.
+  tile.addEventListener("resize",konumla,true);
   window.addEventListener("resize",konumla);
   // Sayım açıksa canlı kutu overlay'i (video AYNEN akar, kutu ayrı hafif kanaldan
   // gelir — bkz. src/count.py:on_detections). Analiz JPEG modu ayrı, elle açılır.
@@ -948,7 +965,7 @@ function watchTiles(){
     if(!tile||!v)return;
     const r=tile.getBoundingClientRect();
     if(r.bottom<0||r.top>innerHeight)return;         // ekran dışı — değerlendirme yok
-    const ct=v.currentTime,moved=ct>(el._ct||0)+0.05;
+    const ct=v.currentTime,moved=!v.error&&ct>(el._ct||0)+0.05;
     el._ct=ct;
     // Takılma sayacı: canlı oynarken (görüldü) 2 sn boyunca ilerlemeyen kare bir
     // takılmadır. Sayı karoda görünür; operatör "takılıyor" derken artık sayı var.
@@ -962,7 +979,7 @@ function watchTiles(){
     // daha da uzun beklenir.
     const kopuk=el.wsState===WebSocket.CLOSED;
     const off=kopuk?2:(el._seen?8:10);
-    const s=moved?"live":(el._stall>=off?"off":el._stall>=3?"wait":tile.dataset.state);
+    const s=v.error?"off":moved?"live":(el._stall>=off?"off":el._stall>=3?"wait":tile.dataset.state);
     if(s===tile.dataset.state)return;
     tile.dataset.state=s;
     const b=tile.querySelector(".live b");
@@ -1145,7 +1162,7 @@ const SCREENS={
   async cams(ctx){
     // worker heartbeat'inden gerçek durum (15 sn'den taze = çalışıyor)
     let hs={};try{(await ctx.get("/health")).forEach(h=>hs[h.camera_id]=h);}catch(e){if(!ctx.current())return;}
-    try{const cap=await ctx.get("/capabilities");fireCap=cap.fire||fireCap;davCap=cap.davranis||davCap;}catch(e){if(!ctx.current())return;}
+    try{const cap=await ctx.get("/capabilities");fireCap=cap.fire||fireCap;telCap=cap.telefon||telCap;sigCap=cap.sigara||sigCap;}catch(e){if(!ctx.current())return;}
     const durum=c=>{const h=hs[c.id];
       if(!h)return {k:"",t:"worker yok"};
       const taze=(Date.now()-AurasRuntime.parseTime(h.time))<15000;
@@ -1169,10 +1186,10 @@ const SCREENS={
         <div class="camtur">${esc(kb.tur)}</div></td>
       <td class="camadr" title="${esc(maskUrl(c.source))}">${esc(kb.adres)}</td>
       <td><span class="rowstat ${d.k}"><i></i>${esc(d.t)}</span></td>
-      <td><span class="gorevler">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["fire","Yangın"],["davranis","Davranış"],["record","Kayıt"]].map(([k,l])=>{
-        const kapali=(k==='fire'&&!fireCap.available)||(k==='davranis'&&!davCap.available);
+      <td><span class="gorevler">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["fire","Yangın"],["telefon","Telefon"],["sigara","Sigara"],["record","Kayıt"]].map(([k,l])=>{
+        const kapali=(k==='fire'&&!fireCap.available)||(k==='telefon'&&!telCap.available)||(k==='sigara'&&!sigCap.available);
         const eksik=k==="count"&&bolgeEksik(c);
-        const baslik=kapali?(k==='fire'?fireCap.reason:davCap.reason):(k==='davranis'?'Telefonla konuşma / sigara içme tespiti (poz + doğrulama)':k==='record'?'Sürekli kaydı aç/kapat (NVR arşivi)':eksik?`${l} açık ama sayım çizgisi yok — Bölgeler ekranından çiz`:l+' görevini aç/kapat');
+        const baslik=kapali?(k==='fire'?fireCap.reason:k==='telefon'?telCap.reason:sigCap.reason):(k==='telefon'?'Telefonla konuşma tespiti (poz + telefon kutusu doğrulaması)':k==='sigara'?'Sigara içme tespiti (poz + isteğe bağlı sigara dedektörü)':k==='record'?'Sürekli kaydı aç/kapat (NVR arşivi)':eksik?`${l} açık ama sayım çizgisi yok — Bölgeler ekranından çiz`:l+' görevini aç/kapat');
         return `<button class="chipbtn ${(k==="record"?t[k]!==false:t[k])?'on':''} ${eksik?'eksik':''}" title="${esc(baslik)}" ${kapali?'disabled':''} onclick="toggleTask('${esc(c.id)}','${k}')">${l}${eksik?' ⚠':''}</button>`;}).join("")}
         ${bolgeEksik(c)?`<a class="eksikrozet" title="Sayım çizgisi çiz" onclick="window._zc='${esc(c.id)}';go('zones')">⚠ çizgi gerekiyor</a>`:""}</span></td>
       <td><span class="eylem">
@@ -1185,7 +1202,7 @@ const SCREENS={
         <div class="stat"><div class="k">Çevrimdışı</div><div class="v" style="${CAMS.length-cevrimici?'color:var(--ink-3);':''}">${CAMS.length-cevrimici}</div><div class="s">boşta / worker yok</div></div>
         <div class="stat"><div class="k">Aktif görev</div><div class="v">${gorev}</div><div class="s">sayım · plaka · yüz · yangın</div></div></div>
       ${!fireCap.available?`<div class="notice warn"><b>Yangın erken uyarısı kullanılamıyor:</b> ${esc(fireCap.reason)}</div>`:""}
-      ${!davCap.available?`<div class="notice warn"><b>Davranış tespiti kullanılamıyor:</b> ${esc(davCap.reason)}</div>`:""}
+      ${!telCap.available?`<div class="notice warn"><b>Telefon/sigara tespiti kullanılamıyor:</b> ${esc(telCap.reason)}</div>`:""}
       ${CAMS.some(c=>Object.values(c.tasks||{}).some(Boolean))?workerUyarisi():""}
       <div class="section-head"><b>Kamera envanteri</b>
         <span class="searchbar"><input id="cam-ara" placeholder="Ara" oninput="filtreCam(this.value)"/></span></div>
@@ -1301,25 +1318,25 @@ const SCREENS={
       <div class="card" id="asonuc">${govde()}</div>`;
   },
   test(ctx){
-    const preferred=CAMS.find(c=>c.tasks&&(c.tasks.face||c.tasks.count||c.tasks.plate||c.tasks.fire||c.tasks.davranis))||CAMS[0]||{};
+    const preferred=CAMS.find(c=>c.tasks&&(c.tasks.face||c.tasks.count||c.tasks.plate||c.tasks.fire||c.tasks.telefon||c.tasks.sigara))||CAMS[0]||{};
     const camId=window._tc||preferred.id;window._tc=camId;
     // Kaynak: canlı akış mı, arşivdeki bir an mı. Canlıda geçmiş bir olayı
     // yeniden yakalamak imkânsızdı — araç geçtiğinde ekranda olman gerekiyordu.
     const tsrc=window._tsrc||"canli";window._tsrc=tsrc;
     if(tsrc==="arsiv")setTimeout(()=>arsivAraligi(camId),0);
     const cam=CAMS.find(c=>c.id===camId)||preferred;
-    const enabled=["face","count","plate","fire","davranis"].filter(k=>(cam.tasks||{})[k]);
+    const enabled=["face","count","plate","fire","telefon","sigara"].filter(k=>(cam.tasks||{})[k]);
     // 'analyze' (Hepsi) her zaman seçilebilir — görev listesinde olmadığı için fallback'e düşmesin
     const kind=(window._tk&&(window._tk==="analyze"||!enabled.length||enabled.includes(window._tk)))?window._tk:(enabled[0]||"face");window._tk=kind;
-    const kinds=[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["fire","Yangın"],["davranis","Davranış"],["analyze","Hepsi"]];
+    const kinds=[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["fire","Yangın"],["telefon","Telefon"],["sigara","Sigara"],["analyze","Hepsi"]];
     // Bu kamerada ne tanımlı — kullanıcı çalıştırmadan önce ne olacağını bilmeli
-    const acik=["count","plate","face","fire","davranis"].filter(k=>(cam.tasks||{})[k]);
-    const etiket={count:"Sayım",plate:"Plaka",face:"Yüz",fire:"Yangın",davranis:"Davranış"};
+    const acik=["count","plate","face","fire","telefon","sigara"].filter(k=>(cam.tasks||{})[k]);
+    const etiket={count:"Sayım",plate:"Plaka",face:"Yüz",fire:"Yangın",telefon:"Telefon",sigara:"Sigara"};
     // Dosya kaynağı (canlı modda): başlangıç noktası + hız seçilebilir. Sarma
     // yalnız kaynağı kendi okuyan hatlarda işler (yangın/plaka/yüz) — sayım
     // akışı ultralytics'e devreder, orada sadece hız etkili (src/akis.py).
     const dosya=tsrc==="canli"&&!/^(rtsp|rtmp|https?):\/\//i.test(cam.source||"");
-    const sarilabilir=dosya&&["fire","plate","face","davranis"].includes(kind);
+    const sarilabilir=dosya&&["fire","plate","face","telefon","sigara"].includes(kind);
     $("#tact").innerHTML=`<button class="btn pri" onclick="runTest()">${svg('play',15)} Analizi çalıştır</button>`;
     $("#content").innerHTML=`<div class="card pad" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;">
         <span class="av" style="background:var(--warn-soft);color:var(--warn);">i</span>
@@ -1406,17 +1423,20 @@ const SCREENS={
                 plate:["cams","var(--warn-soft)","var(--warn)","Plaka okuma"],
                 face:["events","var(--ok-soft)","var(--ok)","Yüz tespiti"],
                 fire:["events","var(--danger-soft)","var(--danger)","Yangın erken uyarısı"],
-                davranis:["events","var(--warn-soft)","var(--warn)","Davranış"]};
+                telefon:["events","var(--warn-soft)","var(--warn)","Telefonla konuşma"],
+                sigara:["events","var(--danger-soft)","var(--danger)","Sigara içme"]};
     const adOf=id=>(CAMS.find(c=>c.id===id)||{}).name||id;
     // Bekleyen alarmlar en üstte, kabul butonuyla — operatörün ilk baktığı yer
     const alarmBasligi=a=>a.kind==='fire_warning'
       ? `Yangın erken uyarısı · <span style="font-weight:700;">${esc(a.ref)}</span>`
-      : a.kind==='davranis'
-      ? `${a.ref==='telefon'?'📞 Telefonla konuşma':'🚬 Sigara içme'} · <span class="mut-s">${esc(a.label||'')}</span>`
+      : a.kind==='telefon'
+      ? `📞 Telefonla konuşma · <span class="mut-s">${esc(a.label||'')}</span>`
+      : a.kind==='sigara'
+      ? `🚬 Sigara içme · <span class="mut-s">${esc(a.label||'')}</span>`
       : a.kind==='intrusion'
       ? `Alan ihlali · <span style="font-weight:700;">${esc(a.ref)}</span>`
       : `${a.kind==='plate'?'Plaka':'Yüz'} eşleşmesi · <span class="mono">${esc(a.ref)}</span>`;
-        const listeEtiketi={blacklist:"kara liste",vip:"VIP",visitor:"ziyaretçi",allowed:"izinli",intrusion:"alan ihlali",fire:"yangın",davranis:"davranış"};
+        const listeEtiketi={blacklist:"kara liste",vip:"VIP",visitor:"ziyaretçi",allowed:"izinli",intrusion:"alan ihlali",fire:"yangın",telefon:"telefon",sigara:"sigara"};
     // Kamera özeti ayrı yüklenir: olay akışını bloklamasın
     ctx.get("/events/summary?hours=24").then(r=>{
       const el=$("#camsum");if(!el)return;
@@ -1768,7 +1788,7 @@ async function runTest(){
       // Metrikler görüntünün YANINDA akar; "analyze"da aktif aşamanın paneli gösterilir
       const stage=st.stage||"";
       if(stage.startsWith("Yangın")&&st.fire_live)renderLiveFire(st.fire_live);
-      else if(stage.startsWith("Davranış")&&st.davranis_live)renderLiveDavranis(st.davranis_live);
+      else if((stage.startsWith("Telefon")||stage.startsWith("Sigara"))&&st.davranis_live)renderLiveDavranis(st.davranis_live);
       else if(stage.startsWith("Yüz")&&st.face_live)renderLiveFace(st.face_live);
       else if(stage.startsWith("Plaka")&&st.live)renderLive(st.live);
       else if(st.count_live)renderLiveCount(st.count_live);
@@ -1900,7 +1920,7 @@ function davranisRows(olaylar){
 }
 function renderLiveDavranis(live){
   const tgt=_tm();if(!tgt)return;
-  tgt.innerHTML=`<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin-bottom:14px;"><div class="metric"><div class="k">Canlı davranış · işlenen kare</div><div class="v">${live.frames||0}</div><div class="mut-s">poz sezgiseli + nesne doğrulama</div></div><div class="metric" ${live.on_uyari?'style="border:1px solid var(--warn);"':''}><div class="k">Ön uyarı</div><div class="v">${live.on_uyari||0}</div><div class="mut-s">el kulakta / ağızda, süre doldu</div></div><div class="metric" ${live.alarm?'style="border:1px solid var(--danger);"':''}><div class="k">Alarm</div><div class="v">${live.alarm||0}</div><div class="mut-s">doğrulandı · kanıt yazıldı</div></div></div>
+  tgt.innerHTML=`<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin-bottom:14px;"><div class="metric"><div class="k">Canlı telefon/sigara · işlenen kare</div><div class="v">${live.frames||0}</div><div class="mut-s">poz sezgiseli + nesne doğrulama</div></div><div class="metric" ${live.on_uyari?'style="border:1px solid var(--warn);"':''}><div class="k">Ön uyarı</div><div class="v">${live.on_uyari||0}</div><div class="mut-s">el kulakta / ağızda, süre doldu</div></div><div class="metric" ${live.alarm?'style="border:1px solid var(--danger);"':''}><div class="k">Alarm</div><div class="v">${live.alarm||0}</div><div class="mut-s">doğrulandı · kanıt yazıldı</div></div></div>
     <div class="card"><div style="padding:12px 16px;border-bottom:1px solid var(--line);font-weight:700;">Telefon / sigara olayları</div><div style="max-height:340px;overflow:auto;">${davranisRows(live.olaylar)||'<div class="empty">Henüz olay yok. Kişi kameraya yakın olmalı (baş ≥ 24 px).</div>'}</div></div>`;
 }
 function renderLiveFace(live){
@@ -1935,7 +1955,7 @@ function renderResult(s,videos){
     m.push(`<div class="metric" ${al.length?'style="border:1px solid var(--danger);"':''}><div class="k">Plaka · ${s.plate.total} okuma → ${vt.length} araç (oylama)</div><div class="mono" style="margin-top:4px;font-size:13px;line-height:1.9;">${list||'—'}</div>${al.length?`<div class="chip" style="background:var(--danger-soft);color:var(--danger);margin-top:8px;">⚠ ${al.length} kara liste: ${esc(al.map(a=>a.plate).join(", "))}</div>`:''}</div>`);}
   if(s.fire){m.push(`<div class="metric" ${s.fire.alarm?'style="border:1px solid var(--danger);"':(s.fire.on_uyari?'style="border:1px solid var(--warn);"':'')}><div class="k">Yangın/duman erken uyarı</div><div class="v">${s.fire.alarm} <span class="mut" style="font-size:15px;">alarm</span> · ${s.fire.on_uyari} <span class="mut" style="font-size:15px;">ön uyarı</span></div><div class="mut-s">${s.fire.frames} kare işlendi · ${esc(s.fire.feragat||'')}</div>${fireRows(s.fire.olaylar)?`<div style="margin-top:10px;">${fireRows(s.fire.olaylar)}</div>`:''}</div>`);}
   if(s.face){const al=s.face.alerts||[];m.push(`<div class="metric" ${al.length?'style="border:1px solid var(--danger);"':''}><div class="k">Yüz (anonim) · kişi</div><div class="v">${s.face.detections}</div><div class="mut-s">E:${s.face.male} · K:${s.face.female} · ort. yaş ${s.face.avg_age}</div>${al.length?`<div class="chip" style="background:var(--danger-soft);color:var(--danger);margin-top:8px;">⚠ ${al.length} liste eşleşmesi: ${esc(al.map(a=>a.name).join(", "))}</div>`:''}</div>`);}
-  if(s.davranis){m.push(`<div class="metric" ${s.davranis.alarm?'style="border:1px solid var(--danger);"':(s.davranis.on_uyari?'style="border:1px solid var(--warn);"':'')}><div class="k">Davranış · telefon / sigara</div><div class="v">${s.davranis.alarm}</div><div class="mut-s">alarm · ${s.davranis.on_uyari} ön uyarı · en çok ${s.davranis.kisiler_max} kişi · ${s.davranis.frames} kare</div>${(s.davranis.olaylar||[]).length?`<div style="margin-top:8px;">${davranisRows(s.davranis.olaylar)}</div>`:''}</div>`);}
+  if(s.davranis){m.push(`<div class="metric" ${s.davranis.alarm?'style="border:1px solid var(--danger);"':(s.davranis.on_uyari?'style="border:1px solid var(--warn);"':'')}><div class="k">${(s.davranis.siniflar||[]).map(x=>x==="telefon"?"Telefon":"Sigara").join(" / ")||"Telefon / sigara"}</div><div class="v">${s.davranis.alarm}</div><div class="mut-s">alarm · ${s.davranis.on_uyari} ön uyarı · en çok ${s.davranis.kisiler_max} kişi · ${s.davranis.frames} kare</div>${(s.davranis.olaylar||[]).length?`<div style="margin-top:8px;">${davranisRows(s.davranis.olaylar)}</div>`:''}</div>`);}
   if(s.fire){m.push(`<div class="metric" ${s.fire.alarm?'style="border:1px solid var(--danger);"':''}><div class="k">Yangın erken uyarısı</div><div class="v">${s.fire.alarm}</div><div class="mut-s">alarm · ${s.fire.on_uyari} ön uyarı · ${s.fire.frames} kare</div><div class="mut-s" style="margin-top:6px;">Sertifikalı yangın alarmının yerine geçmez.</div></div>`);}
   const cb="?t="+Date.now()+tokq();  // cache-buster + erişim anahtarı
   const vids=(videos||[]).map((v,i)=>`<div class="card pad" style="margin-top:14px;"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;"><div style="font-weight:700;display:flex;align-items:center;gap:8px;">${svg('play',17)} Sonuç videosu ${videos.length>1?i+1:''}</div><a class="btn sm" href="${v}${cb}" target="_blank" rel="noopener">Yeni sekmede aç</a></div><video src="${v}${cb}" controls preload="metadata" style="width:100%;display:block;border-radius:var(--r-lg);border:1px solid var(--line);background:#000;box-shadow:var(--shadow);"></video></div>`).join("");
@@ -2430,7 +2450,7 @@ function workerUyarisi(){
 }
 async function toggleTask(cid,key){
   const c=CAMS.find(x=>x.id===cid);if(!c)return;
-  const t=Object.assign({count:false,plate:false,face:false,fire:false,davranis:false,record:true},c.tasks||{});t[key]=!t[key];
+  const t=Object.assign({count:false,plate:false,face:false,fire:false,telefon:false,sigara:false,record:true},c.tasks||{});t[key]=!t[key];
   try{
     const r=await api(`/cameras/${encodeURIComponent(cid)}/tasks`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:t})});
     if(!r||!r.ok)throw new Error(r?.detail||"Sunucu görevi kabul etmedi");
@@ -2438,7 +2458,7 @@ async function toggleTask(cid,key){
     // AKTİF ekran yeniden çizilir. Sabit SCREENS.cams() çağrısı, duvardan görev
     // değiştirildiğinde operatörü izlediği görüntüden koparıp listeye atıyordu.
     if(SCREENS[active])SCREENS[active]();
-    const ad={count:"Sayım",plate:"Plaka",face:"Yüz",fire:"Yangın",davranis:"Davranış",record:"Kayıt"}[key]||key;
+    const ad={count:"Sayım",plate:"Plaka",face:"Yüz",fire:"Yangın",telefon:"Telefon",sigara:"Sigara",record:"Kayıt"}[key]||key;
     toast(`${c.name} · ${ad} ${t[key]?"açıldı":"kapatıldı"}`,"ok",2500);
     // Görevi AÇARKEN worker yoksa kullanıcı bunu anında bilsin
     if(t[key]&&!workerCalisiyor())
@@ -2447,7 +2467,7 @@ async function toggleTask(cid,key){
     if(key==="count"&&t.count&&bolgeEksik(c))
       toast(`${ad} açıldı ama bu kamerada sayım çizgisi yok — Bölgeler ekranından çizmeden sayı üretilmez.`,"warn",9000);
   }catch(e){
-    const hataBasligi=key==='fire'?'Yangın görevi değiştirilemedi':key==='davranis'?'Davranış görevi değiştirilemedi':'Görev değiştirilemedi';
+    const hataBasligi=key==='fire'?'Yangın görevi değiştirilemedi':key==='telefon'?'Telefon görevi değiştirilemedi':key==='sigara'?'Sigara görevi değiştirilemedi':'Görev değiştirilemedi';
     toast(`${hataBasligi}: ${e.message||e}`,"err",8000);
     if(SCREENS[active])SCREENS[active]();
   }

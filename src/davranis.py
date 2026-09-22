@@ -19,7 +19,7 @@ katmanlıdır (SPIE 2025 anahtar-nokta + YOLOv8; GD-YOLO 2024; TACR-YOLO/PABD
 Kademeler yangınla aynı: `izle → on_uyari → alarm`. Ön uyarı yalnız panel;
 alarm kanıt karesi + klip + uyarı satırı + webhook. Doğrulama kipi
 (`davranis.*_dogrulama`): "tercih" = doğrulayan kutu varsa hemen alarm, yoksa
-sezgisel iki kat süre sürerse alarm; "zorunlu" = kutu olmadan alarm YOK;
+sezgisel tek başına daha uzun sürerse (telefon 3×, sigara bir nefes daha) alarm; "zorunlu" = kutu olmadan alarm YOK;
 "kapali" = yalnız sezgisel.
 
 KVKK: bu modül KİŞİ davranışı izler. Kanıt karesi kişiyi içerir; tür bazında
@@ -49,8 +49,13 @@ _ROOT = Path(__file__).resolve().parent.parent
 BURUN, GOZ_SOL, GOZ_SAG, KULAK_SOL, KULAK_SAG = 0, 1, 2, 3, 4
 OMUZ_SOL, OMUZ_SAG, DIRSEK_SOL, DIRSEK_SAG, BILEK_SOL, BILEK_SAG = 5, 6, 7, 8, 9, 10
 
-SINIFLAR = ("telefon", "sigara")
+SINIFLAR = ("telefon", "sigara")   # her biri AYRI görev anahtarı ve AYRI alarm türüdür
 ETIKETLER = {"telefon": "telefonla konuşma", "sigara": "sigara içme"}
+
+
+def aktif_siniflar(tasks: dict | None) -> tuple[str, ...]:
+    """Kamera görevlerinden bu hattın izleyeceği sınıflar ('telefon', 'sigara')."""
+    return tuple(s for s in SINIFLAR if (tasks or {}).get(s))
 COCO_TELEFON = 67   # stok COCO ağırlığında "cell phone"
 
 
@@ -200,8 +205,11 @@ class DavranisTakip:
                  cooldown_sn: float = 120.0, kamera_cooldown_sn: float = 30.0,
                  kayip_sn: float = 2.0, iou_esle: float = 0.3,
                  min_bas_px: float = 24.0, kp_esik: float = 0.3,
-                 kulak_oran: float = 0.8, agiz_oran: float = 1.4) -> None:
+                 kulak_oran: float = 0.8, agiz_oran: float = 1.4,
+                 siniflar=SINIFLAR, telefon_poz_kat: float = 3.0) -> None:
+        self.siniflar = tuple(s for s in SINIFLAR if s in siniflar)
         self.telefon_sn = float(telefon_sn)
+        self.telefon_poz_kat = float(telefon_poz_kat)
         self.telefon_oran = float(telefon_oran)
         self.sigara_tekrar = int(sigara_tekrar)
         self.sigara_pencere_sn = float(sigara_pencere_sn)
@@ -305,7 +313,7 @@ class DavranisTakip:
 
     def _degerlendir(self, iz: _Iz, ts: float) -> list[dict]:
         olaylar = []
-        for sinif in SINIFLAR:
+        for sinif in self.siniflar:
             aday, skor = (self._telefon_adayi if sinif == "telefon" else self._sigara_adayi)(iz, ts)
             d = iz.dogrulama[sinif]
             dogrulandi = d is not None and ts - d[0] <= self.dogrulama_taze_sn
@@ -330,8 +338,14 @@ class DavranisTakip:
                 elif kip == "kapali":
                     alarm = sure >= self.telefon_sn if sinif == "telefon" else True
                 else:   # tercih
-                    alarm = dogrulandi or (sure >= (self.telefon_sn if sinif == "telefon"
-                                                     else self.sigara_pencere_sn * 0.5))
+                    if sinif == "telefon":
+                        # Kutu yoksa poz tek başına 3× süre ister: sigara içerken yüze
+                        # yaslanan el 8 sn'de sahte telefon alarmı üretti (balkon klibi)
+                        alarm = dogrulandi or sure >= self.telefon_sn * self.telefon_poz_kat
+                    else:
+                        # doğrulayıcı yoksa bir nefes daha (tekrar+1) ya da yarım pencere
+                        n_dok = len(iz.dokunus) + (1 if iz.agiz_giris is not None else 0)
+                        alarm = dogrulandi or n_dok >= self.sigara_tekrar + 1                             or sure >= self.sigara_pencere_sn * 0.5
                 if alarm and ts - self.kamera_son_alarm[sinif] >= self.kamera_cooldown_sn:
                     iz.durum[sinif] = "alarm"
                     iz.son_alarm[sinif] = ts
@@ -435,9 +449,11 @@ def _telefon_kur(cfg):
     return telefonlar
 
 
-def _takip_kur(cfg) -> DavranisTakip:
+def _takip_kur(cfg, siniflar=SINIFLAR) -> DavranisTakip:
     g = lambda k, d: cfg.get(f"davranis.{k}", d)
     return DavranisTakip(
+        siniflar=siniflar,
+        telefon_poz_kat=g("telefon_poz_kat", 3.0),
         telefon_sn=g("telefon_sn", 4.0), telefon_oran=g("telefon_oran", 0.7),
         sigara_tekrar=g("sigara_tekrar", 2), sigara_pencere_sn=g("sigara_pencere_sn", 40.0),
         dokunus_min_sn=g("dokunus_min_sn", 0.3), dokunus_max_sn=g("dokunus_max_sn", 6.0),
@@ -471,13 +487,15 @@ class DavranisHatti:
     """
 
     def __init__(self, cfg, w: int, h: int, camera_id: str, efektif_fps: float,
-                 *, poz=None, sigara=None, store=None, on_event=None, on_alert=None) -> None:
+                 *, poz=None, sigara=None, store=None, on_event=None, on_alert=None,
+                 siniflar=SINIFLAR) -> None:
         self.cfg = cfg
         self.w, self.h = w, h
         self.camera_id = camera_id
         self.poz = poz or _poz_kur(cfg)
-        self.sigara = sigara
-        self.takip = _takip_kur(cfg)
+        self.sigara = sigara if "sigara" in siniflar else None
+        self.siniflar = tuple(siniflar)
+        self.takip = _takip_kur(cfg, siniflar)
         self.efektif_fps = max(1.0, float(efektif_fps))
         self.halka: deque = deque(maxlen=max(2, int(cfg.get("davranis.clip_seconds", 5.0)
                                                     * self.efektif_fps)))
@@ -528,15 +546,17 @@ class DavranisHatti:
             return
         from .evidence import kaydet as kanit_kaydet
         from .evidence import klip_kaydet
-        o["snapshot"] = kanit_kaydet(self.cfg, kare, self.camera_id, "davranis",
+        # Kanıt türü ve uyarı türü = sınıf: "telefon" ve "sigara" panelde, kanıt
+        # klasöründe ve webhook'ta AYRI görünür (evidence.telefon / evidence.sigara).
+        o["snapshot"] = kanit_kaydet(self.cfg, kare, self.camera_id, o["sinif"],
                                      box=o["kutu"], etiket=_ascii(alarm_etiketi(o)))
-        o["clip"] = klip_kaydet(self.cfg, list(self.halka), self.camera_id, "davranis",
+        o["clip"] = klip_kaydet(self.cfg, list(self.halka), self.camera_id, o["sinif"],
                                 fps=self.efektif_fps)
         self.sonuc.alarmlar.append(o)
         if self.on_alert is not None:
             self.on_alert(o)
         if self.store is not None:
-            self.store.add_alert("davranis", o["sinif"], "davranis", alarm_etiketi(o),
+            self.store.add_alert(o["sinif"], o["sinif"], o["sinif"], alarm_etiketi(o),
                                  self.camera_id, snapshot=o["snapshot"])
 
 
@@ -557,8 +577,13 @@ def _ciz(kare, tespitler) -> Any:
 
 def run_davranis(source: str, cfg, store=None, camera_id: str = "",
                  on_event=None, on_alert=None, on_frame=None,
-                 should_stop: Callable[[], bool] | None = None) -> DavranisResult:
-    """Dosya/RTSP kaynağında davranış tespiti koşar (CLI + Test ekranı)."""
+                 should_stop: Callable[[], bool] | None = None,
+                 siniflar=SINIFLAR) -> DavranisResult:
+    """Dosya/RTSP kaynağında davranış tespiti koşar (CLI + Test ekranı).
+
+    `siniflar`: ('telefon',), ('sigara',) veya ikisi — görev anahtarlarıyla aynı.
+    """
+    siniflar = tuple(s for s in SINIFLAR if s in siniflar) or SINIFLAR
     import cv2
     from . import akis
 
@@ -571,9 +596,10 @@ def run_davranis(source: str, cfg, store=None, camera_id: str = "",
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     hat = DavranisHatti(cfg, w, h, camera_id, fps / vid_stride,
-                        sigara=_sigara_kur(cfg), store=store,
-                        on_event=on_event, on_alert=on_alert)
-    telefonlar = _telefon_kur(cfg)
+                        sigara=_sigara_kur(cfg) if "sigara" in siniflar else None,
+                        store=store, on_event=on_event, on_alert=on_alert,
+                        siniflar=siniflar)
+    telefonlar = _telefon_kur(cfg) if "telefon" in siniflar else None
     tel_aralik = float(cfg.get("davranis.telefon_aralik_sn", 1.0))
     son_tel, tel_kutular = -1e9, []
     ham_idx = 0

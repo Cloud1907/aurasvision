@@ -1,6 +1,6 @@
 # Davranış tespiti — telefonla konuşma ve sigara içme
 
-Modül: `src/davranis.py` · görev anahtarı: `davranis` · yapılandırma: `config.yaml` → `davranis:`
+Modül: `src/davranis.py` · görev anahtarları: `telefon` ve `sigara` (AYRI görev, AYRI alarm türü; tek poz hattını paylaşırlar) · yapılandırma: `config.yaml` → `davranis:`
 
 ## Ne yapar, ne yapmaz
 
@@ -9,9 +9,9 @@ doğrulayıp uyarı üretir. Kimlik eşlemesi yapmaz, yüz vektörü üretmez; �
 "bir kişi, şu kamerada, şu kadar süre" bilgisidir. Kanıt karesi kişiyi içerir
 ve `evidence.davranis` ile kapatılabilir; saklama `evidence.keep_days`.
 
-Sınır: kişi kameraya **yakın** olmalı. Baş genişliği (kulaklar arası) 24 pikselin
-altındaysa kişi değerlendirilmez (`min_bas_px`); geniş açılı koridor kamerasında
-uzak kişi için karar verilmez. Kapı, kasa, sigara yasağı olan koridor ağzı gibi
+Sınır: baş genişliği (kulaklar arası) 16 pikselin altındaysa kişi değerlendirilmez
+(`min_bas_px`). 720×1280 karede tüm vücut görünen sokak klibi (baş 22 px) `imgsz: 960`
+ile yakalandı; daha uzak kişi için karar verilmez. Kapı, kasa, sigara yasağı olan koridor ağzı gibi
 yakın plan sahneler hedeftir.
 
 ## Neden iki katman
@@ -62,7 +62,7 @@ Doğrulama kipi (`telefon_dogrulama` / `sigara_dogrulama`):
 
 | kip | davranış |
 |---|---|
-| `tercih` (varsayılan) | doğrulayan kutu varsa hemen alarm; yoksa sezgisel iki kat sürerse alarm |
+| `tercih` (varsayılan) | doğrulayan kutu varsa hemen alarm; yoksa poz tek başına: telefon `telefon_sn × telefon_poz_kat` (12 sn) sürerse, sigara bir nefes daha (`sigara_tekrar`+1) görülürse |
 | `zorunlu` | kutu görülmeden alarm yok, ön uyarı panelde kalır |
 | `kapali` | yalnız poz |
 
@@ -70,42 +70,48 @@ Doğrulama kipi (`telefon_dogrulama` / `sigara_dogrulama`):
 
 `izle → on_uyari → alarm` (yangın hattıyla aynı). Ön uyarı yalnız log ve Test
 ekranı; alarm kanıt karesi + klip (`clip_seconds`) + `alerts` satırı
-(`kind='davranis'`, `ref='telefon'|'sigara'`) + webhook (`tur: davranis`).
+(`kind='telefon'` veya `kind='sigara'`) + webhook (`tur: telefon|sigara`). Kanıt türü
+de ayrıdır: `evidence.telefon`, `evidence.sigara`.
 Aynı kişi + aynı davranış `cooldown_seconds`, aynı kamera + aynı davranış
 `camera_cooldown_seconds` ile sınırlanır.
 
 ## Nerede çalışır
 
 - **akis motoru** (canlı RTSP): `_DavranisKademe`, kendi iş parçacığı, `davranis.fps`
-  (4) tempo, meşgulse kare atılır. Kamera görevlerinde "Davranış" açılınca.
+  (4) tempo, meşgulse kare atılır. Kamera görevlerinde "Telefon" ve/veya "Sigara" açılınca;
+  ikisi de açıksa poz bir kez koşar, yalnız sigara açıksa sayım batch'ine girilmez.
 - **ultralytics motoru / CLI**: `run_davranis(source, cfg, ...)`.
-- **Test ekranı**: tür "Davranış" veya "Hepsi" (kamerada görev açıksa). Dosya
+- **Test ekranı**: tür "Telefon", "Sigara" veya "Hepsi" (kamerada görev açıksa). Dosya
   kaynağında ileri sarma çalışır.
 
 ## Ölçüm durumu (2026-09-22)
 
-Geometri Pexels demo klipleriyle ÖLÇÜLDÜ ve sezgisel buna göre yazıldı: telefon
+Geometri Pexels klipleriyle ÖLÇÜLDÜ ve sezgisel buna göre yazıldı: telefon
 kulaktayken bilek kulağın ~1,2 baş altında ve yüzün yanında (kulakta değil!);
 sigara nefesinde bilek ağız tahmininin ~1 baş çevresinde. Profilde kulaklar arası
 ölçek çöktüğü için baş ölçeği birkaç ölçünün en büyüğüdür (burun→omuz ortası×0,6).
 
-| Klip (`data/videos/davranis/`) | Kaynak | Sonuç |
+Güvenlik kamerası açısına yakın (orta/geniş plan) demo klipler, `data/videos/davranis/`,
+Pexels (ücretsiz, atıf gerekmez), 1280 px. Test ekranında aynı adlı kameralar
+(görevler kapalı) bunları gösterir; tür "Telefon" veya "Sigara" seçilir.
+
+| Klip | Plan | Sonuç (varsayılan ayarlar: imgsz 960, min_bas_px 16) |
 |---|---|---|
-| `telefon_kadin_5252437.mp4` (11 sn) | [Pexels 5252437](https://www.pexels.com/video/a-woman-talking-on-the-phone-5252437/) | ön uyarı + **alarm** 6,9 sn'de, doğrulama: telefon kutusu |
-| `telefon_kadin_10375449.mp4` (8 sn) | [Pexels 10375449](https://www.pexels.com/video/a-woman-on-a-call-10375449/) | ön uyarı + **alarm** 6,5 sn'de, doğrulama: telefon kutusu |
-| `sigara_adam_10273130.mp4` (23 sn) | [Pexels 10273130](https://www.pexels.com/video/man-smoking-cigarette-10273130/) | 2 ön uyarı + **alarm** 20,9 sn'de (poz; sigara ağırlığı kurulu değil) |
-| `sigara_adam_3805926.mp4` (28 sn) | [Pexels 3805926](https://www.pexels.com/video/a-man-smoking-a-cigarette-3805926/) | 1 ön uyarı, alarm yok (profil, tek nefes) |
-| 3 negatif klip (`data/videos/*.mp4`, 1.720 kare, 6 kişiye kadar) | — | 0 ön uyarı, 0 alarm |
+| `sigara_sokak_uzak_8103469` ([Pexels](https://www.pexels.com/video/a-person-smoking-cigarette-outside-8103469/)) | tüm vücut, uzak, baş 22 px | 2 ön uyarı, **sigara alarmı** 21,7 sn (3. nefes) |
+| `sigara_balkon_cift_9498608` ([Pexels](https://www.pexels.com/video/couple-smoking-cigarette-at-the-balcony-9498608/)) | orta-geniş, 2 kişi, camdan | **sigara alarmı** 8,9 sn; telefon yalnız ön uyarı (yüze yaslanan el — 2× iken sahte alarmdı) |
+| `telefon_yuruyen_adam_5391290` ([Pexels](https://www.pexels.com/video/a-man-talking-on-the-phone-while-walking-5391290/)) | orta-geniş, yürüyen, maskeli | **telefon alarmı** 8,1 sn, telefon kutusuyla |
+| `telefon_kapi_adam_5281629` ([Pexels](https://www.pexels.com/video/a-man-talking-on-the-phone-outside-5281629/)) | orta plan | **telefon alarmı** 3,3 sn, telefon kutusuyla |
+| 3 negatif klip (`data/videos/*.mp4`, 1.720 kare, 6 kişiye kadar) | mağaza, yaya, sokak | 0 ön uyarı, 0 alarm |
 
-Pexels lisansı: ücretsiz, atıf gerekmez; klipler 1280 px'e küçültüldü. Test
-ekranında `telefon-test` ve `sigara-test` kameraları (görevler kapalı) bu
-klipleri gösterir; tür "Davranış" seçilip çalıştırılır.
+Yakın plan stüdyo klipleri (`telefon_kadin_*`, `sigara_adam_*`) de klasörde durur
+ama HEDEF SAHNE DEĞİLDİR: yüz kadrajı doldurunca `imgsz 960` poz modelini bozar
+(640'ta çalışıyordu). Güvenlik kamerasında böyle kare olmaz; 960 uzak kişi için seçildi.
 
-- Birim: `tests/test_davranis.py` — 17 test, sahte anahtar noktayla karar mantığı.
-- Hız: 32 kare/sn (RTX 3050, poz + COCO telefon doğrulaması dâhil).
-- Sınır: demo klipler yakın plan stüdyo çekimi. Sahada (CCTV açısı, uzak kişi)
-  ölçülmedi; ilk hafta ön uyarı/alarm günlüğü toplanıp `telefon_sn`,
-  `sigara_tekrar`, `kulak_oran`/`agiz_oran` buna göre ayarlanmalı.
+- Birim: `tests/test_davranis.py` — 20 test.
+- Hız: 21 ms/kare poz (RTX 3050); dosya yolunda telefon doğrulaması dâhil ~30 kare/sn.
+- Açık borç: gerçek CCTV kaydında (tavan açısı, 2880 px ana akış) ölçüm yok.
+  İlk hafta ön uyarı/alarm günlüğü toplanıp `telefon_sn`, `telefon_poz_kat`,
+  `sigara_tekrar` buna göre ayarlanmalı. Sigara ağırlığı (`sigara_model`) kurulu değil.
 
 ## Lisans
 
