@@ -48,7 +48,9 @@ def test_bir_gorevin_hatasi_digerini_ac_birakmaz(monkeypatch):
         "depo", "rtsp://kamera",
         Config({"fire": {"enabled": True},
                 "worker": {"task_max_restarts": 0}}), object(),
-        {"count": True, "fire": True}, None, [], [], [])
+        {"count": True, "fire": True},
+        [{"name": "Çizgi", "pts": [[0, 0], [1, 1]], "direction": "AtoB", "classes": []}],
+        [], [], [])   # sayım yalnız kayıtlı geometri varken açılır (main #7 kuralı)
     assert calisan == ["fire"]
     assert "count:parked" in worker._kamera_sagligi("depo")[1]
 

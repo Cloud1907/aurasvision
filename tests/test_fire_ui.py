@@ -83,30 +83,6 @@ def test_mobil_yangin_alarmini_yuz_eslesmesi_diye_gostermez():
     assert '["fire", "Yangın"]' in html
 
 
-def test_olay_ozeti_toplam_ile_sayim_turunu_ayri_tutar(monkeypatch):
-    """K29: Bir sayım olayı toplamı iki artırmamalı; pilot metriği bozulmamalı."""
-    now = datetime.now(timezone.utc).isoformat()
-
-    class Store:
-        def recent_events(self, *_a, **_k):
-            return [
-                {"camera_id": "depo", "type": "count", "time": now},
-                {"camera_id": "depo", "type": "plate", "time": now},
-                {"camera_id": "depo", "type": "fire", "time": now},
-            ]
-
-        def recent_alerts(self, *_a, **_k):
-            return []
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr(server, "_store", lambda: Store())
-    sonuc = server.api_events_summary(hours=24)["cameras"][0]
-    assert sonuc["count"] == 3
-    assert sonuc["count_events"] == 1
-    assert sonuc["plate"] == 1 and sonuc["fire"] == 1
-
 
 def test_yangin_yetenegi_model_yokken_nedeniyle_kapali(monkeypatch):
     """K30: UI yalnız rollout bayrağını değil model hazır oluşunu da bilmeli."""

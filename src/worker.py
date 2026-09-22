@@ -157,7 +157,9 @@ def _gorev_listesi(cid, source, cfg, bstore, tasks, lines, ihlaller,
                    fire_izleme, fire_maske):
     """Etkin kamera görevlerini geç yüklenen çağrılabilirler olarak kurar."""
     gorevler: list[tuple[str, callable]] = []
-    if tasks.get("count"):
+    # main #7 kuralı: çizgi ya da ihlal alanı yoksa sayım motoru hiç açılmaz —
+    # kullanıcının çizmediği hat config varsayılanıyla sayılmasın.
+    if tasks.get("count") and (lines or ihlaller):
         from .count import run_count
         gorevler.append(("count", lambda: run_count(
             source, cfg, store=bstore, camera_id=cid, lines=lines,
