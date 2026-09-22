@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Icon from './components/Icon';
 import DomeGallery from './components/DomeGallery';
 
@@ -9,6 +9,8 @@ const TILE_COUNT = 20;
 export default function WelcomeGate({ onEnter }) {
   const [leaving, setLeaving] = useState(false);
   const [busy, setBusy] = useState(false);
+  const loginRef = useRef(null);
+  useEffect(() => { loginRef.current?.focus(); }, []);
   const images = useMemo(() => Array.from({ length: TILE_COUNT }, (_, i) => ({
     src: `/static/assets/kapi/kapi-${String(i + 1).padStart(2, '0')}.webp`,
     alt: '',
@@ -40,7 +42,7 @@ export default function WelcomeGate({ onEnter }) {
       <span className="welcome-auth-eyebrow">Güvenli çalışma alanı</span>
       <h2 id="welcome-title">Operasyon merkezine hoş geldiniz.</h2>
       <p>Sahanızda ne olduğunu görmek ve olayları yönetmek için devam edin.</p>
-      <button className="welcome-login-button" type="button" disabled={busy} onClick={enter}><span>{busy ? 'Panel hazırlanıyor' : 'Giriş yap'}</span><span aria-hidden="true">→</span></button>
+      <button ref={loginRef} className="welcome-login-button" type="button" disabled={busy} onClick={enter}><span>{busy ? 'Panel hazırlanıyor' : 'Giriş yap'}</span><span aria-hidden="true">→</span></button>
       <div className="welcome-trust"><i/><span>Yerel sistem · Güvenli oturum · Kesintisiz izleme</span></div>
     </div></div>
   </section>;

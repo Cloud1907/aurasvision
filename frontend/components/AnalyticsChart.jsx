@@ -15,6 +15,11 @@ const SLOT_LIMIT = 12;
 const SUMMARY_CAP = 20000;
 
 const clock = ms => new Date(ms).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+const dayLabel = ms => new Date(ms).toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' });
+// Uzun dilimlerde saat tek başına anlamsız: 3 saat+ için tarih de yazılır, gün dilimi yalnız tarih.
+const slotLabel = (ms, step) => step >= 86400000 ? dayLabel(ms) : step >= 10800000 ? `${dayLabel(ms)} ${clock(ms)}` : clock(ms);
+// Dilimler yerel saate hizalanır: 'gün' dilimi yerel gece yarısından başlar, UTC'den değil.
+const floorTo = (ms, step) => { const off = new Date(ms).getTimezoneOffset() * 60000; return Math.floor((ms - off) / step) * step + off; };
 const stepLabel = step => step >= 1440 * 60000 ? '1 gün' : step >= 3600000 ? `${step / 3600000} saat` : `${step / 60000} dk`;
 const parse = value => window.AurasRuntime.parseTime(value)?.getTime();
 const tr = value => value.toLocaleString('tr-TR');
@@ -23,11 +28,11 @@ const tr = value => value.toLocaleString('tr-TR');
 function bucketize(events) {
   const valid = (events || []).map(event => ({ type: event.type, ms: parse(event.time) }))
     .filter(event => Number.isFinite(event.ms) && TYPES.some(type => type.key === event.type));
-  if (!valid.length) return { buckets: [], step: 0, live: false };
+  if (!valid.length) return { buckets: [], step: 0, live: false, from: 0 };
   const times = valid.map(event => event.ms);
   const oldest = Math.min(...times), newest = Math.max(...times);
   const step = STEPS.find(size => (newest - oldest) / size < SLOT_LIMIT) || STEPS.at(-1);
-  const first = Math.floor(oldest / step) * step;
+  const first = floorTo(oldest, step);
   const buckets = [];
   for (let ms = first; ms <= newest; ms += step) buckets.push({ ms, total: 0, count: 0, plate: 0, face: 0, fire: 0 });
   for (const event of valid) {
@@ -35,12 +40,18 @@ function bucketize(events) {
     bucket[event.type] += 1; bucket.total += 1;
   }
   const visible = buckets.slice(-SLOT_LIMIT);
-  return { buckets: visible, step, live: Math.floor(Date.now() / step) * step === visible.at(-1).ms };
+  return { buckets: visible, step, live: floorTo(Date.now(), step) === visible.at(-1).ms, from: visible[0].ms };
 }
 
-function typeShares(events) {
+// Grafikle aynı pencere: görünen ilk dilimden itibaren. Aksi hâlde toplam ve halka 500 olayın tamamını,
+// grafik ise son 12 dilimi anlatır ve sayılar birbirini tutmaz.
+function typeShares(events, from) {
   const counts = new Map(TYPES.map(type => [type.key, 0]));
-  for (const event of events || []) if (counts.has(event.type)) counts.set(event.type, counts.get(event.type) + 1);
+  for (const event of events || []) {
+    if (!counts.has(event.type)) continue;
+    const ms = parse(event.time);
+    if (Number.isFinite(ms) && ms >= from) counts.set(event.type, counts.get(event.type) + 1);
+  }
   const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
   return { total, rows: TYPES.map(type => ({ ...type, value: counts.get(type.key) })) };
 }
@@ -87,26 +98,26 @@ function Grid({ max }) {
   });
 }
 
-function AxisLabels({ geo }) {
+function AxisLabels({ geo, step }) {
   const last = geo.labels.length - 1;
   return geo.labels.map((index, position) => <text key={index} className="ts-axis" y={BOX.h - 6}
     x={position === 0 ? BOX.l : position === last ? BOX.w - BOX.r : geo.points[index].x}
-    textAnchor={position === 0 ? 'start' : position === last ? 'end' : 'middle'}>{clock(geo.points[index].row.ms)}</text>);
+    textAnchor={position === 0 ? 'start' : position === last ? 'end' : 'middle'}>{slotLabel(geo.points[index].row.ms, step)}</text>);
 }
 
 function Tooltip({ point, ongoing }) {
   const below = point.y < BOX.t + PLOT.h * 0.42;
   return <div className={`ts-tip${below ? ' is-below' : ''}`} role="status"
     style={{ left: `${(point.x / BOX.w) * 100}%`, top: `${(point.y / BOX.h) * 100}%` }}>
-    <strong>{point.row.total}</strong><span>{clock(point.row.ms)}{ongoing ? ' · sürüyor' : ''}</span>
+    <strong>{point.row.total}</strong><span>{slotLabel(point.row.ms, point.step)}{ongoing ? ' · sürüyor' : ''}</span>
     <ul>{TYPES.filter(type => point.row[type.key]).map(type => <li key={type.key} className={`tone-${type.tone}`}><i/><span>{type.label}</span><b>{point.row[type.key]}</b></li>)}</ul>
   </div>;
 }
 
-function DataTable({ buckets }) {
+function DataTable({ buckets, step }) {
   return <table className="analytics-table"><caption>Zaman dilimlerine göre olay sayıları</caption>
     <thead><tr><th>Dilim</th><th>Toplam</th>{TYPES.map(type => <th key={type.key}>{type.label}</th>)}</tr></thead>
-    <tbody>{buckets.map(row => <tr key={row.ms}><th>{clock(row.ms)}</th><td>{row.total}</td>{TYPES.map(type => <td key={type.key}>{row[type.key]}</td>)}</tr>)}</tbody></table>;
+    <tbody>{buckets.map(row => <tr key={row.ms}><th>{slotLabel(row.ms, step)}</th><td>{row.total}</td>{TYPES.map(type => <td key={type.key}>{row[type.key]}</td>)}</tr>)}</tbody></table>;
 }
 
 function TimeSeries({ buckets, live, step }) {
@@ -131,12 +142,12 @@ function TimeSeries({ buckets, live, step }) {
       {current && <line className="ts-cursor" x1={current.x} x2={current.x} y1={BOX.t} y2={BOX.t + PLOT.h}/>}
       {geo.points.map((point, index) => <circle key={point.row.ms} className={`ts-dot${active === index ? ' is-active' : ''}`} cx={point.x} cy={point.y} r={active === index ? 5.5 : 4}/>)}
       <text className="ts-peak" x={geo.peak.x} y={geo.peak.y - 10} textAnchor="middle">{geo.peak.row.total}</text>
-      <AxisLabels geo={geo}/>
+      <AxisLabels geo={geo} step={step}/>
       {geo.points.map((point, index) => <rect key={`hit-${point.row.ms}`} className="ts-hit" x={point.x - hitWidth / 2} y={0} width={hitWidth} height={BOX.h}
-        onMouseEnter={() => setActive(index)}><title>{`${clock(point.row.ms)} · ${point.row.total} olay`}</title></rect>)}
+        onMouseEnter={() => setActive(index)}><title>{`${slotLabel(point.row.ms, step)} · ${point.row.total} olay`}</title></rect>)}
     </svg>
-    {current && <Tooltip point={current} ongoing={live && active === geo.points.length - 1}/>}
-    <DataTable buckets={buckets}/>
+    {current && <Tooltip point={{ ...current, step }} ongoing={live && active === geo.points.length - 1}/>}
+    <DataTable buckets={buckets} step={step}/>
   </div>;
 }
 
@@ -181,18 +192,19 @@ function fireStatus(capabilities) {
 export default function AnalyticsChart({ events, cameras, totals, capabilities }) {
   const titleId = useId();
   const model = useMemo(() => ({
-    series: bucketize(events.data), shares: typeShares(events.data), load: cameraLoad(totals.data, cameras.data),
+    series: bucketize(events.data), load: cameraLoad(totals.data, cameras.data),
   }), [events.data, totals.data, cameras.data]);
+  model.shares = useMemo(() => typeShares(events.data, model.series.from), [events.data, model.series.from]);
   const fireNote = fireStatus(capabilities);
   const peak = model.series.buckets.reduce((best, row) => row.total > (best?.total || 0) ? row : best, null);
-  return <section className="analytics-panel analytics-band" aria-labelledby={titleId}>
+  return <section className={`analytics-panel analytics-band${events.loading ? ' is-loading' : ''}`} aria-labelledby={titleId}>
     <header><div><span className="ops-eyebrow">CANLI ANALİTİK</span><h3 id={titleId}>Olay analizi</h3></div>
-      <div className="analytics-summary"><span><strong>{tr(model.shares.total)}</strong> toplam olay</span>
-        <span><strong>{peak ? clock(peak.ms) : '—'}</strong> yoğun dilim</span><span><strong>{model.load.rows.length}</strong> aktif kamera</span></div></header>
+      <div className="analytics-summary"><span><strong>{tr(model.shares.total)}</strong> olay · {model.series.from ? `${slotLabel(model.series.from, model.series.step)} sonrası` : 'pencere yok'}</span>
+        <span><strong>{peak ? slotLabel(peak.ms, model.series.step) : '—'}</strong> yoğun dilim</span><span><strong>{model.load.rows.length}</strong> aktif kamera</span></div></header>
     {!model.series.buckets.length ? <p className="analytics-empty">Henüz analiz olayı kaydedilmedi.</p> : <div className="analytics-grid">
       <div className="analytics-plot"><div className="analytics-subhead"><strong>Olay yoğunluğu</strong><span>{model.series.buckets.length} dilim · {stepLabel(model.series.step)} aralık</span></div>
         <TimeSeries buckets={model.series.buckets} live={model.series.live} step={model.series.step}/></div>
-      <div className="analytics-breakdown"><div className="analytics-subhead"><strong>Olay dağılımı</strong><span>Türlere göre</span></div>
+      <div className="analytics-breakdown"><div className="analytics-subhead"><strong>Olay dağılımı</strong><span>Grafik penceresi</span></div>
         <Ring shares={model.shares} fireNote={fireNote}/></div>
       <div className="analytics-cameras"><div className="analytics-subhead"><strong>Kamera bazlı</strong><span>Son 24 saat</span></div>
         <CameraBars load={model.load}/>
