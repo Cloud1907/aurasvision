@@ -18,19 +18,21 @@ export default function Panel({ bridge }) {
   const motion = useMotionAllowed();
   const cameras = useResource(bridge, '/cameras', 30000);
   const health = useResource(bridge, '/health', 10000);
-  const alarms = useResource(bridge, '/alerts?limit=50&pending=true', 10000);
+  const alarms = useResource(bridge, '/alerts?limit=500&pending=true', 10000);
   const status = useResource(bridge, '/status', 15000);
-  const events = useResource(bridge, '/events?limit=100', 15000);
+  const events = useResource(bridge, '/events?limit=500', 15000);
   const totals = useResource(bridge, '/events/summary?hours=24', 30000);
   const archive = useResource(bridge, '/recordings/stats', 60000);
+  const capabilities = useResource(bridge, '/capabilities', 60000);
   const [selected, setSelected] = useState(null);
   const rows = cameras.data || [];
-  const refresh = () => [cameras, health, alarms, status, events, totals, archive].forEach(r => r.retry());
+  const refresh = () => [cameras, health, alarms, status, events, totals, archive, capabilities].forEach(r => r.retry());
   return <div className="ops command-center" data-motion={motion ? 'on' : 'off'}>
     <div className="command-atmosphere"><Aurora motion={motion}/><Noise patternAlpha={13}/></div>
     <CommandHeader status={status} health={health} bridge={bridge}/>
-    <PanelMetrics cameras={cameras} health={health} alarms={alarms} totals={totals}/>
-    <div className="command-workspace dashboard-layout"><div className="dashboard-main"><LiveCameraGrid cameras={cameras} bridge={bridge}/><AnalyticsChart events={events}/></div>
+    <PanelMetrics cameras={cameras} status={status} alarms={alarms} events={events} archive={archive}/>
+    <AnalyticsChart events={events} cameras={cameras} totals={totals} capabilities={capabilities}/>
+    <div className="command-workspace dashboard-layout"><div className="dashboard-main"><LiveCameraGrid cameras={cameras} bridge={bridge}/></div>
       <aside className="command-sidebar" aria-label="Aktif alarm ve olay akışı"><PanelAlerts alarms={alarms} rows={rows} bridge={bridge} onSelect={setSelected}/><PanelActivity events={events} rows={rows} bridge={bridge}/></aside>
     </div>
     <div className="command-lower"><PanelCameras cameras={cameras} health={health} bridge={bridge}/><PanelShortcuts bridge={bridge}/><ArchiveSummary archive={archive} bridge={bridge}/></div>

@@ -69,7 +69,7 @@ test('K7: kayıt sorgusu hatası boş arşiv olarak sunulmaz', async ({ page }) 
 });
 
 test('K9: kullanılamayan yangın görevi nedenini korur', async ({ page }) => {
-  await page.goto('/'); await page.locator('[data-nav="cams"]').click();
+  await page.goto('/'); await page.locator('.nav-group-toggle').filter({ hasText: 'Ayarlar' }).click(); await page.locator('[data-nav="cams"]').click();
   await expect(page.getByText(/Yangın erken uyarısı kullanılamıyor:/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Yangın', exact: true }).first()).toBeDisabled();
 });
@@ -77,7 +77,7 @@ test('K9: kullanılamayan yangın görevi nedenini korur', async ({ page }) => {
 test('K4: azaltılmış harekette sayılar doğru ve sürekli animasyon yok', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
-  await expect(page.locator('.ops-metric').filter({ hasText: 'Tanımlı kamera' }).locator('.ops-metric-value')).toHaveText('6');
+  await expect(page.locator('.ops-metric').filter({ hasText: 'Kayıt kapsamı' }).locator('.ops-metric-value')).toHaveText('6/6');
   await expect(page.locator('.ops')).toHaveAttribute('data-motion', 'off');
   expect(await page.evaluate(() => document.getAnimations().filter(a => a.playState === 'running').length)).toBe(0);
 });
@@ -101,7 +101,7 @@ test('K3: polling gizliyken durur, açık isteğin üstüne yenisi binmez', asyn
 
 test('K3: snapshot kuyruğu en fazla iki istek açar ve sayfa çıkışında iptal eder', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByText('Görüntü alınamadı', { exact: true })).toBeVisible();
+  await expect(page.getByText('Görüntü alınamadı', { exact: true }).first()).toBeVisible();
   const pending = new Set<string>(), failures: string[] = [];
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
@@ -129,7 +129,7 @@ test('K3: yeni görünür kamera sonraki 30 saniyeyi beklemez', async ({ page })
     requested.add(new URL(route.request().url()).searchParams.get('camera')!);
     await route.fulfill({ status: 503, body: '' });
   });
-  await page.goto('/'); await page.locator('[data-nav="cams"]').click();
+  await page.goto('/'); await page.locator('[data-nav="live"]').click();
   await expect(page.locator('img[data-snapshot="demo-5"]')).toBeAttached();
   expect(requested.has('demo-5')).toBe(false);
   await page.locator('img[data-snapshot="demo-5"]').scrollIntoViewIfNeeded();
@@ -182,7 +182,7 @@ test('K9: sunucu kullanıcı silmeyi reddettiğinde neden görünür kalır', as
   await page.route('**/api/kullanicilar', route => route.fulfill({ json: [{ ad: 'Son yönetici', rol: 'yonetici' }] }));
   await page.route('**/api/kullanicilar/*', route => route.fulfill({ status: 400, json: { detail: 'Son yönetici silinemez' } }));
   page.on('dialog', dialog => dialog.accept());
-  await page.goto('/'); await page.locator('[data-nav="sys"]').click();
+  await page.goto('/'); await page.locator('.nav-group-toggle').filter({ hasText: 'Ayarlar' }).click(); await page.locator('[data-nav="sys"]').click();
   await page.locator('#sy-kul-b').getByRole('button', { name: 'sil', exact: true }).click();
   await expect(page.getByText('Son yönetici silinemez', { exact: true })).toBeVisible();
 });
