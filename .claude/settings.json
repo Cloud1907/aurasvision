@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/bin/route.py\"",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/bin/route.py\" --explicit-cdx",
             "timeout": 10,
             "statusMessage": "Skill yönlendirmesi"
           }

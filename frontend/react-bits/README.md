@@ -10,6 +10,8 @@ Lisans: [MIT + Commons Clause](LICENSE.md). Bu dizin ürün arayüzü entegrasyo
 | SpotlightCard | Açık/koyu temaya uyum, hareket azaltma ve görünürlük kontrolü |
 | StarBorder | Sonsuz döngü yerine yalnız hover/focus sırasında sınırlı hareket |
 | CountUp | Türkçe sayı biçimi; kritik alarmlarda animasyon yok |
+| SplitFlapText | KPI değişimlerinde tek seferlik mekanik geçiş; karakter bazlı ve reduced-motion uyumlu |
+| MaskedHeading | Operasyon başlığında yalnız ilk girişte kısa maske açılışı; sonsuz döngü yok |
 | AnimatedList | Tab yakalama kaldırıldı; görünürlük gecikmesi yok; yerel butonlar |
 | GlassIcons | Gerçek onClick, kalıcı etiket, çakışmayan CSS sınıfları |
 | FadeContent | GSAP kaldırıldı; CSS ile kısa giriş, reduced-motion desteği |

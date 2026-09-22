@@ -72,10 +72,10 @@ Eskalasyon yalnız yukarı olur. `deny` her zaman önceliklidir.
 - Görev sınıfı (`code-change` | `research` | `incident` | `design`) →
   `.agents/capability-profiles/<sınıf>.yml` profili → izinli skill/araç/ağ
   kümesi. Agent seçimini yalnız bu küme içinde yapar ve seçim loglanır.
-- Skill seçimi takdire bırakılmaz: `.agents/routing.yml` tabloya bağlar,
-  `bin/route.py` her istekte (UserPromptSubmit hook'u) görev sınıfı + zorunlu
-  skill üretir. Yönlendirilen skill yüklenmeden işe başlanmaz; yanlış
-  yönlendirme sessizce atlanmaz, gerekçelendirilip kullanıcıya söylenir.
+- Skill ve capability yönlendirmesi yalnız kullanıcı `$cdx` çağırdığında
+  devreye girer. `.agents/routing.yml` seçimi tabloya bağlar; `bin/route.py`
+  görev sınıfı + gerekli skill'i üretir. `$cdx` planı onaylanmadan değişiklik
+  yapılmaz. Normal isteklerde router çalıştırılmaz ve skill otomatik yüklenmez.
 - **MCP sunucuları skill'lerle AYNI yönetime tabidir** (2026-08-16): kayıt
   `.agents/mcp.yml`, sınır profil `mcp:` alanı, üretici `bin/yetki.py`,
   bekçi `validate.py` + `tests/test_mcp_kaydi.py`. Kural: **kayıtsız sunucu
@@ -99,7 +99,7 @@ getirdiği `.agents/skills/kernel-work/references/kapilar.md` dosyasında
 | `bin/kapi.py` (Stop) | kanıtsız tur kapanmaz: test / inceleme / tıklama | olay kaydı silinirse susar |
 | `bin/incele.py` | merge yolu: P0 → RED, P1/araç-yok → insan, `deny` → insan | `gh pr merge` doğrudan |
 | `bin/kalite.py --check` | borç büyümesini bloklar (ADR-0004) | taban bilinçle yükseltilir |
-| UserPromptSubmit router | skill yönlendirmesi enjekte eder | **kapı değil, pusula** — asla bloklamaz |
+| UserPromptSubmit `$cdx` router | Yalnız açık `$cdx` çağrısında skill yönlendirmesi enjekte eder | **kapı değil, pusula** — asla bloklamaz |
 
 - **Muafiyet gerekçelidir.** `.agents/secret-allowlist.txt`: her satır
   `yol-deseni  # gerekçe`. Gerekçesiz satır kullanım hatasıdır (exit 2),
@@ -170,14 +170,13 @@ hook olay türü). Çıkış kodu maskeleyen komut (`pytest || true`,
 
 ## Davranış sözleşmesi
 
-Router her turda kısa TALİMAT enjekte eder; GEREKÇE burada durur, çünkü
-enjeksiyonun maliyeti tur sayısıyla çarpılır ama bu dosya oturum başına bir
-kez yüklenir (ölçüm 2026-08-15: sabit iskele 1732 → 890 karakter, tam
-enjeksiyon ~%45 küçüldü). Tavan bekçisi: `tests/test_baglam_butcesi.py`.
+Router yalnız açık `$cdx` çağrısında kısa TALİMAT enjekte eder; GEREKÇE burada
+durur. Normal turlarda yönlendirme enjeksiyonu yapılmaz. Tavan bekçisi:
+`tests/test_baglam_butcesi.py`.
 
-- **Görünürlük.** Kullanıcı yazışmadan ne olduğunu anlamalı: hangi skill
-  yüklendi, iş kimin, ne yapıldı. Görünmeyen süreç denetlenemez — bu yüzden
-  başlık temenni değil her turda dayatılan biçimdir.
+- **Görünürlük.** `$cdx` çağrısında kullanıcı hangi skill'in seçildiğini, işin
+  sahibini ve doğrulamayı plan üzerinde görür. Rota başlığı yalnız bu açık
+  orkestrasyon akışında gösterilir.
 - **İtiraz yükümlülüğü.** İsteğin yanlış, eksik ya da riskli olduğunu
   düşünüyorsan uygulamadan ÖNCE tek paragraf itiraz yaz: neyi, neden,
   alternatif ne. Sessiz uyum kabul edilmez; itirazdan sonra kullanıcı ısrar

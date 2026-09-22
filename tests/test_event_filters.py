@@ -16,8 +16,9 @@ def event_store(tmp_path):
          ('2026-09-22 10:00:00', 'entrance', '34 ABC 123'),
          ('2026-09-22 11:00:00', 'parking', '34 ABC 456'),
          ('2026-09-22 12:00:00', 'entrance', '34 XYZ 789')])
-    store.conn.execute("INSERT INTO alerts (time,camera_id,kind,ref,label) VALUES "
-                       "('2026-09-22 10:30:00','entrance','fire_warning','zone','Duman')")
+    # Yangın olay akışında fire_events tablosundan gelir (ana dal şeması); alerts
+    # satırı yalnız alarm kabulü içindir, akışta çift görünmesin.
+    store.add_fire_event('entrance', 'alarm', 'duman', 0.8, 8, 3.0, 10.5, 42)
     store.commit()
     yield store
     store.close()
@@ -41,7 +42,7 @@ def test_pagination_and_literal_search(event_store):
 def test_fire_alerts_are_in_event_stream(event_store):
     rows = event_store.recent_events(tur='fire')
     assert len(rows) == 1
-    assert rows[0]['detail'] == 'zone Duman'
+    assert rows[0]['detail'] == 'duman · alarm'
 
 
 def test_api_accepts_fire_and_passes_filters(monkeypatch):

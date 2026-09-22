@@ -6,7 +6,7 @@ Basit, kullanıcı-dostu yönetim arayüzü için backend:
   GET  /api/snapshot?camera= → kameradan anlık kare (JPEG; diske YAZILMAZ — KVKK)
   GET  /api/zones?camera=    → bölge/çizgi tanımları
   POST /api/zones            → bölge/çizgi kaydet (canvas editöründen)
-  GET  /api/events?limit=    → birleşik olay akışı (count/plate/face)
+  GET  /api/events?limit=    → birleşik olay akışı (count/plate/face/fire)
   GET  /api/lists?kind=      → izleme listesi (plate | face)
   POST /api/lists            → listeye ekle
   DELETE /api/lists/{kind}/{id} → listeden sil
@@ -35,13 +35,14 @@ from pydantic import BaseModel
 from . import akis, kimlik
 from .analytics import build_count_trend, build_event_summary
 from .config import apply_cv2_http_headers, http_options, load_config
-from .store import DEFAULT_TASKS, merged_cameras, open_store
 from .panel_rules import RuleRepository, RuleSet
+from .store import DEFAULT_TASKS, merged_cameras, open_store
 
 cfg = load_config()
 apply_cv2_http_headers(cfg)   # cv2 tabanlı analiz de CDN başlıklarını göndersin
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
+_panel_rules = RuleRepository(ROOT / "output" / "panel-alert-rules.json")
 
 app = FastAPI(title="AurasVision")
 
@@ -598,6 +599,10 @@ def api_set_tasks(cid: str, p: TasksPayload):
     # False'a düşürüyordu: DEFAULT_TASKS'a "record" eklenince, görev değiştiren
     # her tıklama kaydı sessizce kapatırdı.
     eski_tasks = cam.get("tasks") or {}
+    if bool(p.tasks.get("fire")) and not bool(eski_tasks.get("fire", False)):
+        fire_cap = api_capabilities()["fire"]
+        if not fire_cap["available"]:
+            raise HTTPException(409, fire_cap["reason"])
     tasks = {k: bool(p.tasks[k]) if k in p.tasks
              else bool(eski_tasks.get(k, DEFAULT_TASKS[k]))
              for k in DEFAULT_TASKS}
@@ -1169,14 +1174,8 @@ def api_capabilities():
     Kontrol ucuz olmalı (her Kameralar ekranı açılışında çağrılır): model
     yüklenmez, yalnız dosya/lisans/paket varlığına bakılır.
     """
-    from .dedektor import LisansHatasi, lisans_kapisi
-    from .fire import model_yolu
-    yangin = {"enabled": True, "available": True, "reason": ""}
-    try:
-        model_yolu(cfg.get("fire.model", "models/fire.pt"))
-        lisans_kapisi(cfg.get("fire.engine", "rfdetr"), bool(cfg.get("fire.agpl_kabul", False)))
-    except (FileNotFoundError, LisansHatasi) as e:
-        yangin.update(available=False, reason=str(e))
+    from .fire_runtime import capability
+    yangin = capability(cfg, ROOT)   # rollout kapısı (fire.enabled) + ağırlık + lisans + paket
     davranis = {"enabled": True, "available": True, "reason": ""}
     sigara_ded = False
     try:
@@ -1492,6 +1491,7 @@ def api_get_all_zones():
         s.close()
 
 
+ZONE_KINDS = {"line", "zone", "intrusion", "fire", "firemask"}
 @app.get("/api/zones")
 def api_get_zones(camera: str = Query(...)):
     s = _store()
@@ -1503,6 +1503,9 @@ def api_get_zones(camera: str = Query(...)):
 
 @app.post("/api/zones")
 def api_save_zones(payload: ZonePayload):
+    gecersiz = sorted({str(z.get("kind", "line")) for z in payload.zones} - ZONE_KINDS)
+    if gecersiz:
+        raise HTTPException(422, f"Geçersiz bölge türü: {', '.join(gecersiz)}")
     s = _store()
     try:
         s.clear_zones(payload.camera)   # editör tam durumu gönderir → değiştir
@@ -1770,6 +1773,7 @@ class _SandboxStore:
     def add_count_event(self, *a, **k): pass
     def add_plate_event(self, *a, **k): pass
     def add_face_event(self, *a, **k): pass
+    def add_fire_event(self, *a, **k): pass
     def add_alert(self, *a, **k): pass
     def commit(self): pass
     def close(self): pass
@@ -1855,6 +1859,12 @@ def _run_analysis(job_id: str, p: "RunPayload", arsiv_yolu: str = "") -> None:
                                     "intrusions": res.intrusions}
                 videos.append(f"/media/{stem}_count.mp4")
         # İptal edildiyse kalan modüller VE _webify atlanır (yarım videoya dönüşüm israf)
+        from .fire_runtime import analyze_includes_fire
+        if analyze_includes_fire(p.kind, api_capabilities()["fire"]):
+            job.update(stage="Yangın erken uyarısı çalışıyor")
+            from .fire_runtime import run_test
+            summary["fire"] = run_test(
+                source, cfg, s, kum, p.camera, job, push_frame)
         if job["cancel"].is_set():
             with JOBS_STATE_LOCK:
                 job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
@@ -2039,6 +2049,10 @@ def api_run(p: RunPayload):
     arsiv = ("", "")
     if p.at:
         arsiv = _arsiv_segment(p.camera, p.at)
+    if p.kind == "fire":
+        fire_cap = api_capabilities()["fire"]
+        if not fire_cap["available"]:
+            raise HTTPException(409, fire_cap["reason"])
     # Yeni koşu eski koşuyu bekletmez: çalışan tüm job'lar iptale çekilir
     # (nihai "cancelled" durumunu analiz thread'i yazar). Check-and-set kilit
     # altında: thread'in az önce yazdığı terminal durum ezilmez.
@@ -2208,8 +2222,6 @@ def api_alert_feed(after_id: int | None = Query(None, ge=0), limit: int = Query(
     finally:
         s.close()
 
-
-_panel_rules = RuleRepository(ROOT / 'output' / 'panel-alert-rules.json')
 
 
 @app.get("/api/alerts/rules")

@@ -1,21 +1,62 @@
 import Icon from './Icon';
-import SpotlightCard from '../react-bits/SpotlightCard';
+import { cameraName } from './panelData';
 
-function Metric({ icon, label, value, resource, hint, tone = '' }) {
-  const valid = resource.data !== null && !resource.error;
-  return <SpotlightCard className={`ops-metric ${tone} ${resource.error ? "is-stale" : ""}`} spotlightColor="rgba(53,100,217,.06)">
-    <div className="ops-metric-label"><Icon name={icon} size={17}/>{label}</div>
-    <div className="ops-metric-value">{!valid ? '—' : value.toLocaleString('tr-TR')}</div>
-    <span className="ops-caption">{resource.error ? 'Güncellenemedi · yeniden deneyin' : hint}</span>
-  </SpotlightCard>;
+const eventNames = { count: 'Geçiş', plate: 'Plaka', face: 'Yüz', fire: 'Yangın erken uyarısı' };
+
+function Metric({ icon, label, value, hint, tone = '' }) {
+  return <div className={`ops-metric ops-kpi ${tone}`}>
+    <span className="ops-metric-label"><Icon name={icon} size={17}/>{label}</span>
+    <strong className="ops-metric-value">{value}</strong>
+    <span className="ops-caption">{hint}</span>
+  </div>;
 }
-export default function PanelMetrics({ cameras, health, alarms, totals }) {
-  const healthy = (health.data || []).filter(h => window.AurasRuntime.health(h).state === 'ok').length;
-  const total = (totals.data?.cameras || []).reduce((n, r) => n + Number(r.count || 0), 0);
-  return <div className="ops-metrics">
-    <Metric icon="camera" label="Tanımlı kamera" value={cameras.data?.length || 0} resource={cameras} hint="İzleme envanteri"/>
-    <Metric icon="pulse" label="Analiz çalışıyor" value={healthy} resource={health} hint="Son sağlık bildirimine göre"/>
-    <Metric icon="alert" label="İnceleme bekleyen" value={alarms.data?.length || 0} resource={alarms} tone="warning" hint="Operatör kabulü bekleniyor"/>
-    <Metric icon="grid" label="Son 24 saat" value={total} resource={totals} hint="Kaydedilen olay"/>
+
+export default function PanelMetrics({ cameras, status, alarms, events, archive }) {
+  const parts = status.data?.bilesenler || [];
+  const worker = parts.find(part => part.ad === 'Analiz worker');
+  const issue = parts.find(part => !part.ok);
+  const workerValue = status.error || !status.data ? '—' : worker ? (worker.ok ? 'Çalışıyor' : 'İncelenmeli') : (issue ? 'İncelenmeli' : 'Doğrulanamadı');
+  const workerHint = status.error ? 'Durum alınamadı' : worker ? (worker.detay || (worker.ok ? 'Analiz hattı sağlıklı' : 'Analiz hattı incelenmeli')) : (issue ? `${issue.ad} incelenmeli` : 'Analiz worker durumu bulunamadı');
+
+  const pending = alarms.data?.length;
+  const pendingValue = alarms.error || pending === undefined ? '—' : pending >= 500 ? '500+' : pending.toLocaleString('tr-TR');
+  const pendingHint = alarms.error ? 'Güncellenemedi' : pending === undefined ? 'Alarm kuyruğu yükleniyor'
+    : pending >= 500 ? 'Liste sınırına ulaşıldı' : 'Kabul edilmemiş alarmlar';
+  const latest = events.data?.[0];
+  const latestDate = window.AurasRuntime.parseTime(latest?.time);
+  const latestValue = events.error || !events.data ? '—' : latest
+    ? latestDate?.toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) || '—' : 'Yok';
+  const latestHint = events.error ? 'Olay akışı alınamadı' : latest
+    ? `${eventNames[latest.type] || 'Olay'} · ${cameraName(cameras.data || [], latest.camera_id)}` : 'Henüz olay kaydedilmedi';
+
+  const all = cameras.data || [];
+  const recordable = all.filter(camera => camera.enabled !== false && camera.tasks?.record !== false);
+  const stats = archive.data;
+  let recordValue = '—', recordHint = 'Kayıt durumu alınıyor';
+  if (archive.error || cameras.error) recordHint = 'Kayıt kapsamı doğrulanamadı';
+  else if (stats && cameras.data) {
+    if (stats.enabled === false) { recordValue = 'Kapalı'; recordHint = 'Kayıt servisi etkin değil'; }
+    else if (stats.enabled !== true) recordHint = 'Kayıt servisinin durumu bilinmiyor';
+    else if (!recordable.length) { recordValue = 'Kapalı'; recordHint = 'Kayıt görevi açık kamera yok'; }
+    else {
+      const newest = new Map((stats.cameras || []).map(row => [row.camera_id, window.AurasRuntime.parseTime(row.newest)]));
+      const timestamps = recordable.map(camera => newest.get(camera.id));
+      if (timestamps.every(value => !value)) recordHint = 'Son kayıt zamanı doğrulanamadı';
+      else {
+        const active = timestamps.filter(value => {
+          const age = value ? Date.now() - value.getTime() : Infinity;
+          return age >= 0 && age < 300000;
+        }).length;
+        recordValue = `${active}/${recordable.length}`;
+        recordHint = 'Son 5 dakikada kayıt üreten';
+      }
+    }
+  }
+
+  return <div className="ops-metrics" aria-label="Operasyon göstergeleri">
+    <Metric icon="camera" label="Analiz hattı" value={workerValue} hint={workerHint} tone={worker?.ok === false ? 'warning' : ''}/>
+    <Metric icon="alert" label="İnceleme bekleyen" value={pendingValue} hint={pendingHint} tone={pending > 0 ? 'warning' : ''}/>
+    <Metric icon="clock" label="Son olay" value={latestValue} hint={latestHint}/>
+    <Metric icon="disk" label="Kayıt kapsamı" value={recordValue} hint={recordHint}/>
   </div>;
 }

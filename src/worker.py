@@ -406,11 +406,34 @@ def _heartbeat(cams: list[dict], bus, interval: float = 5.0) -> None:
                     {"status": status, "stage": st, "fps": round(fps, 1)})
 
 
-def main() -> None:
-    cfg = load_config()
-    from .gunluk import kur as gunluk_kur
-    gunluk_kur("worker", cfg)
-    apply_cv2_http_headers(cfg)   # HLS/CDN kaynakları için ek başlıklar
+def _nvdec_kameralarini_ayir(cams: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Yangınlı kamerayı standart hatta ayır; diğer kameralar NVDEC'de kalır."""
+    standart = [c for c in cams if (c.get("tasks") or {}).get("fire")]
+    nvdec = [c for c in cams if c not in standart]
+    return nvdec, standart
+
+
+def _standart_workerlar(cams: list[dict], cfg, bus) -> None:
+    """Standart çok-görevli kamera worker'larını başlat ve tamamlanmalarını bekle."""
+    if not cams:
+        return
+    print(f"[worker] standart hat, {len(cams)} kamera: "
+          f"{', '.join(c['id'] for c in cams)}")
+    threads = [threading.Thread(target=_run_camera, args=(c, cfg, bus), daemon=True)
+               for c in cams]
+    for t in threads:
+        t.start()
+    hb = threading.Thread(target=_heartbeat, args=(cams, bus), daemon=True)
+    hb.start()
+    while any(t.is_alive() for t in threads):
+        time.sleep(1)
+    for c in cams:
+        publish(bus, "health", c["id"],
+                {"status": "idle", "stage": _STAGE.get(c["id"], "bitti")})
+
+
+def _kameralari_yukle(cfg):
+    """Bus ve etkin/filtrelenmiş kamera listesini kurar."""
     # Redis yoksa TEK MAKİNE kipi: worker olayları doğrudan veritabanına yazar.
     # Olay yolu çok worker'lı/çok makineli kurulum için vardır; tek kutuda Docker
     # (dolayısıyla Redis) kurmaya zorlamak kurulumu gereksiz ağırlaştırıyordu.
@@ -430,6 +453,17 @@ def main() -> None:
         cams = [c for c in cams if c["id"] in keep]
     if not cams:
         raise SystemExit("İşlenecek kamera yok")
+    return bus, cams
+
+
+def main() -> None:
+    cfg = load_config()
+    from .gunluk import kur as gunluk_kur
+    gunluk_kur("worker", cfg)
+    apply_cv2_http_headers(cfg)   # HLS/CDN kaynakları için ek başlıklar
+    bus, cams = _kameralari_yukle(cfg)
+    selector = os.environ.get("AURAS_CAMERAS", "")
+    keep = {x.strip() for x in selector.split(",") if x.strip()} if selector else set()
 
     from . import donanim
     prof = donanim.profil()

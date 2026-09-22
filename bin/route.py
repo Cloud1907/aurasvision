@@ -295,6 +295,8 @@ def main(argv=None):
         prompt = raw
     if not prompt or not prompt.strip():
         return 0
+    if "--explicit-cdx" in argv and not re.search(r"(?<!\w)\$cdx\b", prompt, re.IGNORECASE):
+        return 0
     try:
         table, is_local = routing_path(pdir)
         cfg = load_rules(table)

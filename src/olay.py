@@ -60,6 +60,12 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
         # panelde kalır, webhook YALNIZ alarmda gider: her ön uyarıyı santrale
         # basmak alarmı değersizleştirir, gerçek alarmda kimse bakmaz olur.
         from .fire import FERAGAT
+        if hasattr(store, "add_fire_event"):
+            store.add_fire_event(camera_id, p.get("durum", "on_uyari"),
+                                 p.get("sinif", "duman"), p.get("conf"),
+                                 p.get("dogrulama", 0), p.get("sure", 0.0),
+                                 p.get("ts_seconds", 0.0), p.get("frame_idx", 0),
+                                 snapshot=p.get("snapshot", ""), clip=p.get("clip", ""))
         if p.get("durum") == "alarm":
             etiket = (f"{p.get('dogrulama', 0)} kare / {p.get('sure', 0)} sn"
                       f" · {FERAGAT}")
@@ -95,4 +101,4 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
             pass
     elif type_ == "health":
         store.add_camera_health(camera_id, p.get("fps"), p.get("dropped"),
-                                p.get("status", "ok"))
+                                p.get("status", "ok"), p.get("stage", ""))

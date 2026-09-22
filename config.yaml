@@ -55,6 +55,12 @@ worker:
   # dışa kapalı). server.py ve worker.py AYNI config'i okuduğu için elle
   # eşleştirme gerekmez.
   preview_port: 8801
+  # ultralytics: her etkin analiz ayrı akış açar; bu tavan kamera/decoder
+  # kapasitesinin ölçülmeden aşılmasını engeller.
+  max_parallel_tasks_per_camera: 4
+  task_max_restarts: 5
+  task_retry_initial_seconds: 1
+  task_retry_max_seconds: 30
 
 motion:               # nvdec: hareket ön-filtresi (Y-düzlemi fark, GPU)
   enabled: true
@@ -258,6 +264,9 @@ fire:
   # ultralytics AGPL-3.0. Kapalı kaynak üründe ya tüm kaynağı açmayı ya
   #             Enterprise lisansı gerektirir; AGPL sunucu arkasında sunmayı
   #             da dağıtım sayar. Yalnız geliştirme/karşılaştırma için.
+  # Rollout kapısı (ana dal): false = yetenek kapalı, rozet gri. Bu sahada kamera-210'da
+  # 2026-09-07'den beri canlı olduğu için AÇIK bırakıldı.
+  enabled: true
   engine: rfdetr
   agpl_kabul: false   # true yapmadan AGPL motor YÜKLENMEZ (src/dedektor.py kapısı)
 
@@ -296,6 +305,7 @@ fire:
   window_seconds: 6.0   # doğrulama penceresi
   confirm_frames: 8     # pencere içinde aynı odağı doğrulaması gereken kare sayısı (2,5 fps'te ~3 sn)
   iou_link: 0.2         # kareler arası "aynı odak" sayılma eşiği
+  max_gap_seconds: 2.0  # bu süreden uzun model kaçırması odağın birikimini sıfırlar (ana dal incelemesi)
   alarm_seconds: 10.0   # ön uyarı bu kadar SÜRERSE alarma yükselir
   # Kişi bastırma: sayım hattının kişi kutusuyla bu oranda örtüşen alev/duman
   # tespiti atılır (kesişim / tespit alanı). Aynı ölçümde "duman"ların tamamı

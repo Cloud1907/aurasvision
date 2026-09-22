@@ -105,7 +105,6 @@
   .tiles{display:grid;grid-template-columns:repeat(var(--cols,2),minmax(0,1fr));gap:8px;}
   .tiles.auto{grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;}
   .tile{border-radius:10px;}
-  .nav-gelismis{opacity:.7;margin-top:10px;}
   .stallct{font-size:10px;margin-left:4px;}
   /* Karo üstü kontroller: normalde gizli, üzerine gelince belirir — görüntüyü kapatmaz */
   .tileact{position:absolute;right:10px;bottom:10px;display:flex;gap:6px;opacity:0;transition:opacity var(--t);z-index:3;}
@@ -272,6 +271,18 @@
   .modal p{margin:0 0 18px;color:var(--ink-2);font-size:13px;}
   .modal input{width:100%;margin-bottom:16px;}
   .modal .acts{display:flex;gap:9px;justify-content:flex-end;}
+  /* Tek düğmeli karşılama kapısı — dome galeri + çözülen karakter dokusu. */
+  body.welcome-active{overflow:hidden;}.welcome-gate{--welcome-accent:#7ca8ff;--welcome-mint:#67dfc1;--gesture-rx:0deg;--gesture-ry:0deg;--gesture-x:0px;--gesture-y:0px;position:fixed;inset:0;z-index:200;display:grid;grid-template-columns:minmax(0,1.32fr) minmax(430px,.68fr);min-height:100dvh;overflow:hidden;background:#090b10;color:#f5f7fb;isolation:isolate;touch-action:pan-y;}
+  .welcome-gate::before{content:"";position:absolute;inset:-25%;z-index:-2;background:radial-gradient(circle at 18% 8%,#3569ca38,transparent 28%),radial-gradient(circle at 66% 88%,#5bd9bd1c,transparent 30%),radial-gradient(circle at 90% 20%,#8b5cff20,transparent 28%);filter:blur(20px);}
+  .welcome-visual{position:relative;display:flex;min-width:0;flex-direction:column;padding:clamp(28px,4vw,64px);overflow:hidden;border-right:1px solid #ffffff13;background:linear-gradient(145deg,#0b101aee,#080a0fcc);}
+  .welcome-brand{position:relative;z-index:3;pointer-events:none;display:flex;align-items:center;gap:12px;width:max-content;font-size:12px;font-weight:780;letter-spacing:.16em;}.welcome-brand-mark{display:grid;place-items:center;width:39px;height:39px;border:1px solid #ffffff1c;border-radius:13px;background:#ffffff0b;color:var(--welcome-accent);box-shadow:inset 0 1px 0 #ffffff13,0 12px 30px #0005;}.welcome-brand small{display:block;margin-top:2px;color:#8490a2;font-size:8px;font-weight:650;letter-spacing:.2em;}
+  .welcome-hero{position:relative;z-index:3;pointer-events:none;display:flex;max-width:750px;flex:1;flex-direction:column;justify-content:center;padding:56px 0 42px;}.welcome-kicker{display:inline-flex;align-items:center;gap:8px;width:max-content;margin-bottom:20px;padding:7px 11px;border:1px solid #ffffff16;border-radius:999px;background:#ffffff08;color:#aeb9c9;font-size:9px;font-weight:720;letter-spacing:.13em;text-transform:uppercase;backdrop-filter:blur(14px);}.welcome-kicker i{width:6px;height:6px;border-radius:50%;background:var(--welcome-mint);box-shadow:0 0 0 5px #67dfc116,0 0 14px #67dfc199;}
+  .welcome-hero h1{max-width:780px;margin:0;color:#f7f9fc;font-size:clamp(38px,4.9vw,70px);font-weight:680;line-height:.96;letter-spacing:-.07em;text-wrap:balance;}.welcome-hero h1 em{display:block;color:transparent;font-style:normal;background:linear-gradient(100deg,#f6f8fb 10%,#7eaaff 52%,#65d9bc 88%);background-clip:text;-webkit-background-clip:text;}.welcome-hero p{max-width:535px;margin:24px 0 0;color:#aeb9c8;font-size:clamp(12px,1.15vw,16px);line-height:1.75;text-shadow:0 1px 16px #04060bd9;}
+  .welcome-dome-pro{position:absolute;inset:0;z-index:0;overflow:hidden;background:#070a10;}.welcome-dome-pro .sphere-root .item__image{border:1px solid #ffffff12;background:linear-gradient(160deg,#141c28,#0a0f17);box-shadow:0 18px 44px #000a;}.welcome-dome-pro .sphere-root .item__image img{transform:scale(1.04);filter:saturate(.8) brightness(.76) contrast(1.04);}.welcome-scrim{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(101deg,#04060bf2 0%,#04060be2 18%,#050810b8 40%,#0508106e 64%,#0508103d 100%),linear-gradient(180deg,#04060bd4 0%,transparent 22%,transparent 60%,#03060ad6 100%);}.welcome-drag-hint{position:absolute;z-index:4;left:clamp(28px,4vw,64px);bottom:clamp(24px,3vw,44px);display:inline-flex;align-items:center;gap:8px;padding:8px 13px;border:1px solid #ffffff1a;border-radius:999px;background:#0a101ab3;color:#a9b5c6;font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.14em;pointer-events:none;backdrop-filter:blur(10px);}.welcome-drag-hint i{width:5px;height:5px;border-radius:50%;background:var(--welcome-mint);box-shadow:0 0 9px #67dfc1aa;}
+  .welcome-auth{position:relative;display:flex;align-items:center;justify-content:center;padding:clamp(28px,5vw,78px);background:linear-gradient(155deg,#11151dd9,#0b0d12f5);}.welcome-auth-card{width:min(392px,100%);}.welcome-auth-icon{display:grid;place-items:center;width:58px;height:58px;margin-bottom:32px;border:1px solid #8eb2ff44;border-radius:19px;background:linear-gradient(145deg,#759fff29,#5d79d50e);color:#8db2ff;box-shadow:0 16px 40px #4868c52b,inset 0 1px 0 #ffffff26;}.welcome-auth-eyebrow{display:block;margin-bottom:12px;color:#79869a;font-size:9px;font-weight:750;letter-spacing:.17em;text-transform:uppercase;}.welcome-auth h2{margin:0;color:#f7f9fc;font-size:clamp(27px,2.3vw,36px);font-weight:670;line-height:1.12;letter-spacing:-.04em;}.welcome-auth p{margin:14px 0 30px;color:#9aa5b5;font-size:13px;line-height:1.7;}.welcome-login-button{position:relative;display:flex;align-items:center;justify-content:space-between;width:100%;min-height:58px;padding:0 18px 0 22px;border:1px solid #a9c2ff44;border-radius:17px;background:linear-gradient(135deg,#f8faff,#dbe7ff);box-shadow:0 18px 40px #315fb538;color:#111722;font:750 13px inherit;cursor:pointer;transition:transform .2s ease,box-shadow .2s ease;}.welcome-login-button:hover{transform:translateY(-2px);box-shadow:0 22px 52px #315fb54d;}.welcome-login-button:focus-visible{outline:3px solid #82aaff88;outline-offset:4px;}.welcome-login-button:disabled{cursor:wait;opacity:.72;transform:none;}.welcome-login-button span:last-child{display:grid;place-items:center;width:30px;height:30px;border-radius:10px;background:#101620;color:#fff;}.welcome-trust{display:flex;align-items:center;gap:9px;margin-top:26px;padding-top:20px;border-top:1px solid #ffffff12;color:#7b8799;font-size:10px;letter-spacing:.01em;line-height:1.5;}.welcome-trust i{width:6px;height:6px;border-radius:50%;background:var(--welcome-mint);box-shadow:0 0 10px #67dfc188;}.welcome-gate.leaving{opacity:0;transform:scale(1.015);transition:opacity .32s ease,transform .32s ease;}
+  @media(max-width:1100px) and (min-width:521px){.welcome-gate{grid-template-columns:minmax(0,1.05fr) minmax(270px,.95fr)}.welcome-visual{padding:22px}.welcome-brand{font-size:9px}.welcome-brand-mark{width:34px;height:34px}.welcome-hero{padding:30px 0 18px}.welcome-hero h1{font-size:clamp(30px,5vw,46px)}.welcome-hero p{max-width:390px;margin-top:16px;font-size:10px}.welcome-kicker{margin-bottom:13px;font-size:7px}.welcome-auth{padding:18px}.welcome-auth h2{font-size:clamp(25px,3.4vw,31px)}.welcome-auth p{margin:13px 0 21px;font-size:10px}.welcome-login-button{min-height:51px}.welcome-trust{font-size:7px}}
+  @media(max-width:520px){.welcome-gate{grid-template-columns:1fr;overflow-y:auto}.welcome-visual{min-height:51dvh;border-right:0;border-bottom:1px solid #ffffff13;padding:22px}.welcome-brand{font-size:10px}.welcome-brand-mark{width:35px;height:35px}.welcome-hero{padding:40px 0 22px}.welcome-hero h1{font-size:34px}.welcome-hero p{font-size:11px;margin-top:17px}.welcome-kicker{margin-bottom:14px}.welcome-auth{min-height:49dvh;padding:20px}.welcome-auth-card{max-width:560px}.welcome-auth h2{font-size:32px}.welcome-auth p{margin:14px 0 24px}}
+  @media(prefers-reduced-motion:reduce){.welcome-dome-pro{animation:none;transform:none;transition:none}.welcome-login-button,.welcome-gate.leaving{transition:none}}
   .toasts{position:fixed;right:20px;bottom:20px;z-index:60;display:flex;flex-direction:column;gap:9px;}
   .toast{background:var(--panel);border:1px solid var(--line-2);border-left:3px solid var(--accent);border-radius:5px;box-shadow:var(--shadow-lg);padding:11px 14px;font-size:12.5px;max-width:340px;animation:slidein .2s ease;}
   .toast.warn{border-left-color:var(--warn);}.toast.err{border-left-color:var(--danger);}
@@ -372,22 +383,18 @@ document.getElementById('logo').innerHTML=
 /* Sekmeler görev gruplarına ayrıldı: operatör günlük işini (izleme) yönetim
    işinden (kamera/bölge/liste ayarı) ayrı görür. Giriş ekranı artık PANEL —
    önce "sistemde ne oluyor" özeti, sonra detay. */
-const NAV=[
-  ["panel","Panel","live","İZLEME"],["live","Canlı","cams"],["rec","Kayıtlar","play"],["arama","Arama","search"],
-  ["events","Olaylar","events","OLAYLAR"],["rapor","Raporlar","report"],["lists","Tanıma listeleri","lists"],
-  ["cams","Kameralar","cams","YÖNETİM"],["zones","Bölgeler","zones"],
-  ["test","Test","test"],["sys","Sistem","bolt"]];
+const NAV_GRUPLARI=[
+  ["izleme","İzleme",[["panel","Panel","live"],["live","Kamera duvarı","cams"],["events","Olaylar","events"],["rec","Kayıtlar","play"]]],
+  ["analizler","Analizler",[["rapor","Raporlar","report"],["arama","Arama","search"],["test","Test ve doğrulama","test"]]],
+  ["ayarlar","Ayarlar",[["cams","Kameralar","cams"],["zones","Bölgeler","zones"],["lists","Tanıma listeleri","lists"],["sys","Sistem ve alarmlar","bolt"]]],
+];
+const NAV=NAV_GRUPLARI.flatMap(group=>group[2]);
+let NAV_ACIK="izleme";
+const navGrubu=id=>(NAV_GRUPLARI.find(group=>group[2].some(item=>item[0]===id))||NAV_GRUPLARI[0])[0];
+function navGrupAc(id){NAV_ACIK=id;navCiz();}
 const TITLES={panel:["Operasyon merkezi","Sahanızın bugünkü görünümü"],
   sys:["Sistem","Bileşen durumu ve arşiv"],
   live:["Canlı görünüm","Kamera duvarı"],cams:["Kameralar","Kaynak ve görev yönetimi"],zones:["Bölgeler","Sayım, ihlal ve yangın alanları"],test:["Test","Tek seferlik analiz"],rec:["Kayıtlar","Arşiv ve geri oynatma"],arama:["Arama","Arşivde serbest metinle nesne bul"],rapor:["Raporlar","Kamera bazlı günlük faaliyet"],events:["Olaylar","Sayım, plaka, yüz, yangın, telefon ve sigara"],lists:["Tanıma listeleri","Plaka ve yüz tanıma · kara liste, VIP, izinli"]};
-/* BASİT GÖRÜNÜM (varsayılan): operatörün günlük işi 6 ekrandır — Panel, Canlı,
-   Olaylar, Kayıtlar, Kameralar, Sistem. Arama/Rapor/Listeler/Bölgeler/Test
-   "Gelişmiş" altında açılır; tercih tarayıcıda kalır. Ekranlar hep erişilebilir
-   (go('zones') gibi), yalnız menü sadeleşir — kullanıcı geri bildirimi:
-   "basit bir arayüz olmalı". */
-const NAV_BASIT=new Set(["panel","live","events","rec","cams","sys"]);
-let GELISMIS=false;try{GELISMIS=localStorage.getItem("vai-gelismis")==="1";}catch(e){}
-function gelismisAc(v){GELISMIS=v;try{localStorage.setItem("vai-gelismis",v?"1":"0");}catch(e){}render();}
 let CAMS=[],active="panel";
 let fireCap={enabled:false,available:false,reason:"Yangın yeteneği sorgulanmadı"};
 let telCap={enabled:false,available:false,reason:"Telefon yeteneği sorgulanmadı"};
@@ -482,7 +489,22 @@ function benRozet(){
     $("#ubtn").innerHTML=svg('out',15);}
   else u.hidden=true;
 }
-async function cikis(){try{await fetch("/api/cikis",{method:"POST"});}catch(e){}location.reload();}
+async function cikis(){
+  // Eskiden her hata yutuluyor, yine de sayfa yenileniyordu: oturum acik kalinca
+  // kullaniciya "dugme calismiyor" gibi gorunuyordu. Artik sonuc soyleniyor.
+  const b=$("#ubtn");
+  if(b){b.disabled=true;b.title="Oturum kapatiliyor";}
+  try{
+    const r=await fetch("/api/cikis",{method:"POST"});
+    if(!r.ok)throw new Error("sunucu "+r.status);
+  }catch(e){
+    if(b){b.disabled=false;b.title="Oturumu kapat";}
+    toast("Oturum kapatılamadı ("+(e.message||e)+"). Tekrar deneyin.","err");
+    return;
+  }
+  // Kurulum erişim anahtarı (vai-token) kişiye değil kuruluma aittir; çıkışta silinmez.
+  location.reload();
+}
 async function api(p,o={}){
   o.headers=Object.assign({},o.headers||{},TOKEN?{Authorization:'Bearer '+TOKEN}:{});
   o.signal?.throwIfAborted();
@@ -515,7 +537,7 @@ let SYS={go2rtc:""};
 async function boot(){themeBtn();
   let ben={};[CAMS,SYS,ben,ZC]=await Promise.all([api("/cameras"),api("/sysinfo").catch(()=>({go2rtc:""})),api("/ben").catch(()=>({})),api("/zones/summary").catch(()=>({}))]);
   if(ben.ad)BEN={ad:ben.ad,rol:ben.rol};window._kulTanimli=!!ben.kullanici_tanimli;benRozet();
-  render();startLiveCounts();startSysWatch();}
+  render();startLiveCounts();startSysWatch();alarmBildirimBaslat();}
 
 /* --- Görev / bölge tutarlılığı ---
    Kameraya özel çizgi yoksa worker (src/worker.py) config.yaml'daki ORTAK
@@ -676,15 +698,16 @@ function overviewStats(){
       : kutu("Canlı sayaç",`${giris} / ${cikis}`,`giriş / çıkış · ${canli} kamera`,"var(--accent)")}</div>`;
 }
 function render(){
-  // Grup başlıkları NAV tanımından gelir — sekme eklerken menü kodu değişmesin
-  const gorunur=NAV.filter(n=>GELISMIS||NAV_BASIT.has(n[0])||n[0]===active);
-  // Basit görünümde grup başlıkları da sadeleşir: tek liste + Gelişmiş anahtarı
-  $("#nav").innerHTML=gorunur.map(n=>(GELISMIS&&n[3]?`<div class="lbl">${n[3]}</div>`:"")+navHtml(n)).join("")+
-    `<a class="nav-gelismis" onclick="gelismisAc(${GELISMIS?'false':'true'})" title="${GELISMIS?'Menüyü sadeleştir':'Arama, raporlar, listeler, bölgeler ve test ekranlarını göster'}">${svg(GELISMIS?'x':'bolt')}<span>${GELISMIS?'Basit görünüm':'Gelişmiş…'}</span></a>`;
+  navCiz();
   clearInterval(window._liveTimer);clearInterval(window._tileTimer);
   Object.values(window._analizTimers||{}).forEach(clearInterval);window._analizTimers={};
   const t=TITLES[active];$("#ttl").textContent=t[0];$("#tsub").textContent=t[1];$("#tact").innerHTML="";
   SCREENS[active]();
+}
+function navCiz(){
+  $("#nav").innerHTML=NAV_GRUPLARI.map(([id,label,items])=>`<section class="nav-group ${NAV_ACIK===id?'open':''}">
+    <button type="button" class="nav-group-toggle" aria-expanded="${NAV_ACIK===id}" onclick="navGrupAc('${id}')"><span>${label}</span><i aria-hidden="true">⌄</i></button>
+    <div class="nav-group-items">${items.map(navHtml).join('')}</div></section>`).join('');
 }
 const navHtml=n=>`<button type="button" aria-current="${n[0]===active?'page':'false'}" class="${n[0]===active?'on':''}" data-nav="${n[0]}" onclick="go('${n[0]}')">${svg(n[2])}<span>${n[1]}</span>${n[0]==="events"&&ALERT_N?`<span class="badge">${ALERT_N>99?"99+":ALERT_N}</span>`:""}</button>`;
 /* Uyarı rozeti: alarm sayısı menüde görünür — operatör Olaylar ekranına girmeden fark eder */
@@ -704,7 +727,7 @@ async function alarmYenile(){
 async function go(id){
   // Bölge editöründe kaydedilmemiş çizim varsa sessizce kaybolmasın
   if(active==="zones"&&id!=="zones"&&!await zoneCikisOnayi())return;
-  active=id;toggleMenu(false);render();
+  active=id;NAV_ACIK=navGrubu(id);toggleMenu(false);render();
 }
 
 function toggleMenu(force){
@@ -725,8 +748,72 @@ function recordAt(camera,at){
   return go('rec');
 }
 const panelBridge={api,go,openCamera:openCam,record:recordAt,snapshot:id=>snap(id)+"&t="+Date.now(),
+  live:()=>Boolean(SYS.go2rtc),mountStreams,
   media:path=>'/media/'+String(path).split('/').map(encodeURIComponent).join('/')+tokq().replace('&','?'),
   refreshBadge:alarmYenile};
+
+/* Yeni alarm bildirimi: ilk bağlantıda mevcut geçmişi oynatmaz. Kapatmak veya
+   sesi susturmak kabul değildir; kabul yalnız mevcut API üzerinden kaydedilir. */
+const NOTIFICATION_POLICY=AurasUI.createNotificationPolicy();
+let NOTIFICATION_RULES=[],ALERT_CURSOR=null,ALERT_POLL=null,ALARM_AUDIO=null,AUDIO_READY=false,ALERT_FEED_HATA=0;
+const ALARM_QUEUE=[];
+function alarmAudioContext(){
+  if(!ALARM_AUDIO){const AudioContext=window.AudioContext||window.webkitAudioContext;if(AudioContext)ALARM_AUDIO=new AudioContext();}
+  return ALARM_AUDIO;
+}
+async function alarmSesiEtkinlestir(test=false){
+  const context=alarmAudioContext();
+  if(!context){toast('Bu tarayıcı sesli alarmı desteklemiyor','warn');return false;}
+  try{await context.resume();AUDIO_READY=context.state==='running';if(test&&AUDIO_READY)alarmSesiCal('urgent');if(test)toast(AUDIO_READY?'Alarm sesi etkin':'Tarayıcı sesi engelledi',AUDIO_READY?'ok':'warn');return AUDIO_READY;}
+  catch(e){if(test)toast('Tarayıcı sesi etkinleştiremedi','warn');return false;}
+}
+function alarmSesiCal(tone='soft'){
+  const context=alarmAudioContext();
+  if(!AUDIO_READY||!context||context.state!=='running'){toast('Sesli alarm için Sistem > Alarm davranışı bölümünde “Sesi dene”ye basın','warn',8000);return;}
+  const urgent=tone==='urgent',now=context.currentTime;
+  [0,urgent?.24:0].forEach((delay,index)=>{
+    const oscillator=context.createOscillator(),gain=context.createGain();
+    oscillator.type=urgent?'square':'sine';oscillator.frequency.value=urgent?(index?760:920):620;
+    gain.gain.setValueAtTime(.0001,now+delay);gain.gain.exponentialRampToValueAtTime(urgent?.16:.08,now+delay+.02);gain.gain.exponentialRampToValueAtTime(.0001,now+delay+.2);
+    oscillator.connect(gain).connect(context.destination);oscillator.start(now+delay);oscillator.stop(now+delay+.22);
+  });
+}
+function alarmPopupGoster(alert){
+  if(alert)ALARM_QUEUE.push(alert);if(document.querySelector('.alarm-popup'))return;
+  const item=ALARM_QUEUE.shift();if(!item)return;
+  const camera=(CAMS.find(row=>row.id===item.camera_id)||{}).name||item.camera_id||'Kamera';
+  const fire=item.kind==='fire_warning',dialog=document.createElement('dialog');dialog.className=`alarm-popup ${item.tone==='urgent'?'urgent':''}`;
+  dialog.innerHTML=`<div class="alarm-popup-head"><span class="alarm-popup-icon">${svg('events',22)}</span><div><span>${fire?'KRİTİK ALARM':'YENİ ALARM'}</span><h2>${esc(item.ref||item.label||'Yeni uyarı')}</h2></div><button class="icon-btn" data-close aria-label="Alarm penceresini kapat">${svg('x',16)}</button></div>
+    <div class="alarm-popup-body"><p>${esc(item.label||'Operatör incelemesi gerekiyor.')}</p><dl><div><dt>Kamera</dt><dd>${esc(camera)}</dd></div><div><dt>Zaman</dt><dd>${esc(AurasRuntime.parseTime(item.time)?.toLocaleString('tr-TR')||'Belirtilmedi')}</dd></div></dl>${fire?'<div class="alarm-disclaimer">Sertifikalı yangın alarm sisteminin yerine geçmez.</div>':''}</div>
+    <div class="alarm-popup-actions"><button class="btn pri" data-record>${svg('play',14)} Olay anına git</button><button class="btn" data-ack>Gördüm, kabul et</button></div><p class="alarm-popup-note">Pencereyi kapatmak alarmı kabul etmez.</p>`;
+  document.body.appendChild(dialog);dialog.showModal();
+  const close=()=>{dialog.close();dialog.remove();setTimeout(()=>alarmPopupGoster(),0);};
+  dialog.querySelector('[data-close]').onclick=close;dialog.oncancel=e=>{e.preventDefault();close();};
+  dialog.querySelector('[data-record]').onclick=()=>{recordAt(item.camera_id,item.time);close();};
+  dialog.querySelector('[data-ack]').onclick=async event=>{event.currentTarget.disabled=true;
+    try{await api(`/alerts/${item.id}/ack`,{method:'POST'});alarmYenile();close();}
+    catch(e){event.currentTarget.disabled=false;toast(`Alarm kabul edilemedi: ${e.message}`,'err');}};
+}
+async function alarmBildirimTuru(){
+  if(ALERT_CURSOR===null)return;
+  try{
+    const feed=await api(`/alerts/feed?after_id=${ALERT_CURSOR}&limit=100`);ALERT_CURSOR=feed.cursor;
+    for(const alert of feed.alerts||[]){const result=NOTIFICATION_POLICY.accept(alert,NOTIFICATION_RULES);if(!result)continue;if(result.sound)alarmSesiCal(result.tone);if(result.popup)alarmPopupGoster(result);}
+    if(feed.has_more)setTimeout(alarmBildirimTuru,0);
+    ALERT_FEED_HATA=0;
+  }catch(e){
+    // Sessiz kalan akış 'alarm var sanıp yok' demektir: üçüncü ardışık hatada bir kez uyar.
+    if(++ALERT_FEED_HATA===3)toast('Alarm akışı alınamıyor — bildirimler duraklamış olabilir. Sayfayı yenileyin.','warn',10000);
+  }
+}
+async function alarmBildirimBaslat(){
+  clearInterval(ALERT_POLL);
+  try{const [rules,feed]=await Promise.all([api('/alerts/rules'),api('/alerts/feed')]);NOTIFICATION_RULES=rules.rules||[];ALERT_CURSOR=feed.cursor;}
+  catch(e){return;}
+  ALERT_POLL=setInterval(alarmBildirimTuru,3000);
+  const unlock=()=>{alarmSesiEtkinlestir(false);document.removeEventListener('pointerdown',unlock);document.removeEventListener('keydown',unlock);};
+  document.addEventListener('pointerdown',unlock,{once:true});document.addEventListener('keydown',unlock,{once:true});
+}
 
 /* ---- canlı karo oynatıcısı ----
    go2rtc'nin kendi web bileşeni; iframe DEĞİL — iframe'deki stream.html tarayıcının
@@ -1092,6 +1179,56 @@ function eventRange(hours){
   applyEventFilters(form);
 }
 function eventPage(delta){window._ef.offset=Math.max(0,(window._ef.offset||0)+delta*50);SCREENS.events();}
+
+/* Panel alarm kuralları: analiz ayarını değiştirmez; yalnız yeni alarmın
+   operatör ekranında nasıl duyurulacağını belirler. */
+const ALARM_TURLERI=[
+  ["fire","Yangın / duman"],["intrusion","Alan ihlali"],["plate","Plaka eşleşmesi"],
+  ["face","Yüz eşleşmesi"],["telefon","Telefon kullanımı"],["sigara","Sigara"]];
+let PANEL_RULES={revision:0,rules:[]};
+function alarmAyarKart(){return `<div class="card alarm-settings" style="margin-bottom:18px;">
+  <div class="alarm-settings-head"><div><b>Alarm davranışı</b><span>Hangi alarm ekranda açılsın, hangisi ses çıkarsın?</span></div>
+    <button class="btn sm" type="button" onclick="alarmSesiEtkinlestir(true)">Sesi dene</button></div>
+  <div id="alarm-rule-list"><div class="empty">kurallar yükleniyor…</div></div>
+  <div class="alarm-settings-actions"><button class="btn" type="button" onclick="alarmKuralEkle()">${svg('plus',14)} Kural ekle</button>
+    <button class="btn pri" type="button" onclick="alarmKurallariKaydet()">Ayarları kaydet</button></div></div>`;}
+function alarmKuralSatiri(rule,index){
+  const cameras=CAMS.map(camera=>`<option value="${esc(camera.id)}" ${camera.id===rule.camera_id?'selected':''}>${esc(camera.name)}</option>`).join('');
+  const kinds=ALARM_TURLERI.map(([value,label])=>`<option value="${value}" ${value===rule.kind?'selected':''}>${label}</option>`).join('');
+  return `<div class="alarm-rule" data-rule="${index}" data-id="${esc(rule.id)}">
+    <label><span>Kamera</span><select data-field="camera_id">${cameras}</select></label>
+    <label><span>Alarm türü</span><select data-field="kind">${kinds}</select></label>
+    <label class="alarm-check"><input type="checkbox" data-field="popup" ${rule.popup?'checked':''}/><span>Ekranda aç</span></label>
+    <label class="alarm-check"><input type="checkbox" data-field="sound" ${rule.sound?'checked':''}/><span>Ses çal</span></label>
+    <label><span>Ses tonu</span><select data-field="tone"><option value="soft" ${rule.tone==='soft'?'selected':''}>Normal</option><option value="urgent" ${rule.tone==='urgent'?'selected':''}>Acil</option></select></label>
+    <label><span>Tekrar süresi</span><select data-field="cooldown"><option value="30" ${rule.cooldown===30?'selected':''}>30 sn</option><option value="60" ${rule.cooldown===60?'selected':''}>1 dk</option><option value="300" ${rule.cooldown===300?'selected':''}>5 dk</option><option value="900" ${rule.cooldown===900?'selected':''}>15 dk</option></select></label>
+    <button class="btn sm ico" type="button" title="Kuralı kaldır" onclick="alarmKuralSil(${index})">${svg('x',14)}</button></div>`;
+}
+function alarmKurallariCiz(){
+  const root=$("#alarm-rule-list");if(!root)return;
+  root.innerHTML=PANEL_RULES.rules.length?PANEL_RULES.rules.map(alarmKuralSatiri).join(''):
+    `<div class="empty">Henüz ekran alarmı kuralı yok.<br><span class="mut-s">Kural eklediğinizde yalnız yeni alarmlar otomatik açılır.</span></div>`;
+}
+async function alarmKurallariYukle(){
+  try{PANEL_RULES=await api('/alerts/rules');PANEL_RULES.rules=PANEL_RULES.rules||[];alarmKurallariCiz();}
+  catch(e){const root=$("#alarm-rule-list");if(root)root.innerHTML=`<div class="empty" role="alert">Kurallar yüklenemedi: ${esc(e.message)}</div>`;}
+}
+function alarmKuralEkle(){
+  if(!CAMS.length){toast('Önce kamera ekleyin','warn');return;}
+  PANEL_RULES.rules.push({id:`rule-${Date.now()}`,camera_id:CAMS[0].id,kind:'fire',enabled:true,popup:true,sound:false,tone:'urgent',cooldown:60});
+  alarmKurallariCiz();
+}
+function alarmKuralSil(index){PANEL_RULES.rules.splice(index,1);alarmKurallariCiz();}
+async function alarmKurallariKaydet(){
+  const rows=[...document.querySelectorAll('.alarm-rule')];
+  PANEL_RULES.rules=rows.map(row=>({id:row.dataset.id,camera_id:row.querySelector('[data-field="camera_id"]').value,
+    kind:row.querySelector('[data-field="kind"]').value,enabled:true,popup:row.querySelector('[data-field="popup"]').checked,
+    sound:row.querySelector('[data-field="sound"]').checked,tone:row.querySelector('[data-field="tone"]').value,
+    cooldown:Number(row.querySelector('[data-field="cooldown"]').value)}));
+  try{PANEL_RULES=await api('/alerts/rules',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(PANEL_RULES)});
+    NOTIFICATION_RULES=PANEL_RULES.rules||[];toast('Alarm ayarları kaydedildi','ok');alarmKurallariCiz();}
+  catch(e){toast(`Alarm ayarları kaydedilemedi: ${e.message}`,'err',8000);}
+}
 const SCREENS={
   /* Panel — giriş ekranı. Operatörün ilk sorusu "her şey yolunda mı", ikincisi
      "dikkat isteyen ne var". Kamera duvarı bunları söylemiyordu. */
@@ -1128,6 +1265,7 @@ const SCREENS={
               <button class="btn sm" onclick="yolKopyala()" title="Yolu panoya kopyala">Kopyala</button>
               <button class="btn sm" onclick="klasorAc()" title="Sunucu makinesinde dosya yöneticisinde açar">Klasörü aç</button></span></div>
           ${kam||'<div class="empty">Henüz kayıt yok.</div>'}</div>
+        ${alarmAyarKart()}
         <div class="card pad" style="margin-bottom:18px;">
           <div style="font-weight:700;margin-bottom:4px;">Mobil erişim</div>
           <div class="mut-s" style="margin-bottom:12px;">Telefonla QR'ı okutun; mobil arayüz yetkili şekilde açılır, adres ve anahtar yazmanız gerekmez.</div>
@@ -1143,6 +1281,7 @@ const SCREENS={
       ctx.get("/recordings/root").then(r=>{const el=$("#ark-yol");if(el)el.textContent=r.path;}).catch(()=>{});
       donanimKart();
       kullaniciYukle();
+      alarmKurallariYukle();
     }catch(e){if(!ctx.current())return;$("#sy-b").innerHTML=`<div class="card pad"><b style="color:var(--danger);">Sistem bilgisi alınamadı</b><div class="mut-s">${esc(String(e))}</div></div>`;}
   },
   async live(ctx){
@@ -2552,7 +2691,22 @@ if(entry.searchParams.get('view')==='rec'){
   if(d){window._rg=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     window._rseek=d.getHours()*3600+d.getMinutes()*60+d.getSeconds();}
 }
-boot().catch(e=>{$('#content').innerHTML=`<div class="card pad" role="alert">Bağlantı kurulamadı: ${esc(e.message)} <button class="btn" onclick="boot()">Yeniden dene</button></div>`;});
+const WELCOME_KEY="aurasvision-welcome-v1";
+function welcomeGate(){
+  const forced=entry.searchParams.get("welcome")==="1";
+  try{if(!forced&&sessionStorage.getItem(WELCOME_KEY)==="done")return Promise.resolve();}catch(e){}
+  const host=document.createElement("div");host.id="welcome-root";
+  document.body.classList.add("welcome-active");document.body.appendChild(host);
+  return new Promise(resolve=>{
+    const unmount=window.AurasUI.mountWelcome(host,{onEnter:()=>{
+    try{sessionStorage.setItem(WELCOME_KEY,"done");}catch(e){}
+    if(forced){entry.searchParams.delete("welcome");history.replaceState(null,"",entry.pathname+(entry.searchParams.toString()?"?"+entry.searchParams:"")+entry.hash);}
+    unmount();host.remove();document.body.classList.remove("welcome-active");resolve();
+    }});
+  });
+}
+function bootError(e){$('#content').innerHTML=`<div class="card pad" role="alert">Bağlantı kurulamadı: ${esc(e.message)} <button class="btn" onclick="boot()">Yeniden dene</button></div>`;}
+welcomeGate().then(()=>boot().catch(bootError));
 </script>
 </body>
 </html>

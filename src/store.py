@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from .analytics import AnalyticsMixin
+from .store_fire import (PG_RECENT_EVENTS, SQLITE_FIRE_SCHEMA,
+                         SQLITE_RECENT_EVENTS, ensure_pg_fire)
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -115,6 +117,28 @@ class BaseStore(AnalyticsMixin):
                 (camera_id, age, gender, conf, round(ts_seconds, 2), frame_idx,
                  track_id, match_name, match_score))
 
+    def add_fire_event(self, camera_id: str, state, sinif: str = "duman",
+                       conf: float | None = None, confirm_frames: int = 0,
+                       duration: float = 0.0, ts_seconds: float = 0.0,
+                       frame_idx: int = 0, snapshot: str = "", clip: str = "") -> None:
+        """Yangın durum geçişini saklar; ön uyarıda medya yolları boş kalır.
+
+        İki çağrı biçimi: `(camera_id, olay_dict)` (fire.py / BusStore sözleşmesi)
+        ve açık alanlar (olay.py tüketicisi). Tek satıra iner.
+        """
+        if isinstance(state, dict):
+            o = state
+            state, sinif = o.get("durum", "on_uyari"), o.get("sinif", "duman")
+            conf, confirm_frames = o.get("conf"), o.get("dogrulama", 0)
+            duration, ts_seconds = o.get("sure", 0.0), o.get("ts_seconds", 0.0)
+            frame_idx = o.get("frame_idx", 0)
+            snapshot, clip = o.get("snapshot", ""), o.get("clip", "")
+        self._x("INSERT INTO fire_events (camera_id, state, class, conf, confirm_frames,"
+                " duration, ts_seconds, frame_idx, snapshot, clip)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (camera_id, state, sinif, conf, int(confirm_frames), round(float(duration), 2),
+                 round(float(ts_seconds), 2), int(frame_idx), snapshot or None, clip or None))
+
     # --- Bölgeler ---
     def list_zones(self, camera_id: str) -> list[dict[str, Any]]:
         raise NotImplementedError
@@ -211,9 +235,11 @@ class BaseStore(AnalyticsMixin):
 
     # --- Kamera sağlığı (worker heartbeat) ---
     def add_camera_health(self, camera_id: str, fps: float | None,
-                          dropped: int | None, status: str) -> None:
-        self._x("INSERT INTO camera_health (camera_id, fps, dropped, status)"
-                " VALUES (?, ?, ?, ?)", (camera_id, fps, dropped, status))
+                          dropped: int | None, status: str,
+                          detail: str = "") -> None:
+        self._x("INSERT INTO camera_health (camera_id, fps, dropped, status, detail)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (camera_id, fps, dropped, status, detail or None))
 
     def latest_health(self) -> list[dict[str, Any]]:
         """Kamera başına en son heartbeat."""
@@ -302,6 +328,27 @@ class BaseStore(AnalyticsMixin):
                          " acked_by, acked_at, snapshot FROM alerts"
                          f"{kosul} ORDER BY time DESC LIMIT ?", (limit,))
 
+    def alert_feed(self, after_id: int | None, limit: int = 100) -> dict[str, Any]:
+        """Kimlik sıralı yeni-alarm akışı; ilk çağrı geçmişi yeniden oynatmaz."""
+        if after_id is None:
+            row = self._all("SELECT COALESCE(MAX(id),0) AS cursor FROM alerts")[0]
+            return {"cursor": int(row["cursor"]), "alerts": [], "has_more": False}
+        rows = self._all(
+            "SELECT id, camera_id, kind, ref, label, time, snapshot, acked_at"
+            " FROM alerts WHERE id > ? ORDER BY id LIMIT ?",
+            (after_id, limit + 1),
+        )
+        visible = rows[:limit]
+        for row in visible:
+            row["time"] = str(row["time"])
+            if row.get("acked_at") is not None:
+                row["acked_at"] = str(row["acked_at"])
+        return {
+            "cursor": int(visible[-1]["id"]) if visible else after_id,
+            "alerts": visible,
+            "has_more": len(rows) > limit,
+        }
+
     def ack_alert(self, alert_id: int, by: str = "operatör") -> bool:
         """Uyarıyı kabul eder (kim/ne zaman). Zaten kabul edilmişse dokunmaz."""
         cur = self._x("UPDATE alerts SET acked_by=?, acked_at=CURRENT_TIMESTAMP"
@@ -339,7 +386,7 @@ class BaseStore(AnalyticsMixin):
 
     def clear_analysis(self) -> None:
         """Önceki analiz çıktılarını siler. KORUNUR: cameras, zones, izleme listeleri."""
-        for t in ("count_events", "plate_events", "face_events", "alerts", "runs"):
+        for t in ("count_events", "plate_events", "face_events", "fire_events", "alerts", "runs"):
             self._x(f"DELETE FROM {t}")
         self.commit()
 
@@ -362,7 +409,7 @@ class BaseStore(AnalyticsMixin):
     def recent_events(self, limit: int = 50, tur: str = "",
                       kamera: str = "", *, start: str = "", end: str = "",
                       q: str = "", offset: int = 0) -> list[dict[str, Any]]:
-        """Birleşik olay akışı. tur: count|plate|face (boş = hepsi)."""
+        """Birleşik olay akışı. tur: count|plate|face|fire|intrusion|telefon|sigara (boş = hepsi)."""
         raise NotImplementedError
 
     def commit(self) -> None:
@@ -394,7 +441,7 @@ CREATE TABLE IF NOT EXISTS recordings (
 CREATE INDEX IF NOT EXISTS ix_rec_cam_time ON recordings (camera_id, start_time);
 CREATE TABLE IF NOT EXISTS camera_health (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL DEFAULT (datetime('now')),
-    camera_id TEXT NOT NULL, fps REAL, dropped INTEGER, status TEXT);
+    camera_id TEXT NOT NULL, fps REAL, dropped INTEGER, status TEXT, detail TEXT);
 CREATE TABLE IF NOT EXISTS zones (
     id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id TEXT NOT NULL, kind TEXT NOT NULL,
     name TEXT NOT NULL DEFAULT '', points TEXT NOT NULL, classes TEXT,
@@ -418,6 +465,7 @@ CREATE TABLE IF NOT EXISTS face_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL DEFAULT (datetime('now')),
     camera_id TEXT NOT NULL, track_id INTEGER, age INTEGER, gender TEXT, conf REAL,
     match_name TEXT, match_score REAL, ts_seconds REAL, frame_idx INTEGER);
+""" + SQLITE_FIRE_SCHEMA + """
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL DEFAULT (datetime('now')),
     camera_id TEXT, kind TEXT NOT NULL, ref TEXT NOT NULL, list_type TEXT, label TEXT,
@@ -449,7 +497,8 @@ class SqliteStore(BaseStore):
         for tablo, sutun, tip in (("cameras", "tasks", "TEXT"), ("cameras", "url_sub", "TEXT"),
                                   ("cameras", "http_headers", "TEXT"),
                                   ("plate_events", "snapshot", "TEXT"),
-                                  ("alerts", "snapshot", "TEXT")):
+                                  ("alerts", "snapshot", "TEXT"),
+                                  ("camera_health", "detail", "TEXT")):
             try:   # hafif migration: eski DB'lerde eksik sütunları ekle
                 self.conn.execute(f"ALTER TABLE {tablo} ADD COLUMN {sutun} {tip}")
             except sqlite3.OperationalError:
@@ -517,7 +566,7 @@ class SqliteStore(BaseStore):
     def latest_health(self) -> list[dict[str, Any]]:
         # MAX(time) saniye çözünürlüğünde eşitlik yapar → en son satırı id ile seç
         return self._all(
-            "SELECT camera_id, time, status, fps, dropped FROM camera_health"
+            "SELECT camera_id, time, status, fps, dropped, detail FROM camera_health"
             " WHERE id IN (SELECT MAX(id) FROM camera_health GROUP BY camera_id)")
 
     def recent_events(self, limit: int = 50, tur: str = "",
@@ -540,10 +589,13 @@ class SqliteStore(BaseStore):
                  NULL AS zone, NULL AS direction, NULL AS conf
             FROM face_events
           UNION ALL
-          SELECT time, CASE WHEN kind='fire_warning' THEN 'fire' ELSE kind END,
-                 camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
+          SELECT time, 'fire', camera_id, class||' · '||state, ts_seconds, frame_idx,
+                 snapshot, NULL AS zone, NULL AS direction, conf
+            FROM fire_events
+          UNION ALL
+          SELECT time, kind, camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
                  NULL, NULL, snapshot, NULL, NULL, NULL
-            FROM alerts WHERE kind IN ('fire','fire_warning','intrusion','telefon','sigara')
+            FROM alerts WHERE kind IN ('intrusion','telefon','sigara')
         ) ev
         """
         query += where + " ORDER BY time DESC, type, camera_id, detail, ts_seconds DESC LIMIT ? OFFSET ?"
@@ -579,9 +631,11 @@ class PgStore(BaseStore):
         if exists:
             # Hafif migration: kurulu DB'lerde sonradan eklenen sütunlar
             for tablo, sutun in (("plate_events", "snapshot"), ("alerts", "snapshot"),
-                                 ("cameras", "http_headers")):
+                                 ("cameras", "http_headers"),
+                                 ("camera_health", "detail")):
                 self.conn.execute(
                     f"ALTER TABLE {tablo} ADD COLUMN IF NOT EXISTS {sutun} TEXT")
+            ensure_pg_fire(self.conn)
             self.conn.execute("""CREATE TABLE IF NOT EXISTS recordings (
                 id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, camera_id TEXT NOT NULL,
                 path TEXT NOT NULL UNIQUE, start_time TIMESTAMPTZ NOT NULL,
@@ -681,7 +735,7 @@ class PgStore(BaseStore):
 
     def latest_health(self) -> list[dict[str, Any]]:
         rows = self._all(
-            "SELECT DISTINCT ON (camera_id) camera_id, time, status, fps, dropped"
+            "SELECT DISTINCT ON (camera_id) camera_id, time, status, fps, dropped, detail"
             " FROM camera_health ORDER BY camera_id, time DESC")
         for r in rows:
             r["time"] = str(r["time"])
@@ -730,10 +784,13 @@ class PgStore(BaseStore):
                  NULL, NULL AS zone, NULL AS direction, NULL::real AS conf
             FROM face_events
           UNION ALL
-          SELECT time, CASE WHEN kind='fire_warning' THEN 'fire' ELSE kind END,
-                 camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
+          SELECT time, 'fire', camera_id, class||' · '||state, ts_seconds, frame_idx,
+                 snapshot, NULL AS zone, NULL AS direction, conf
+            FROM fire_events
+          UNION ALL
+          SELECT time, kind, camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
                  NULL, NULL, snapshot, NULL, NULL, NULL
-            FROM alerts WHERE kind IN ('fire','fire_warning','intrusion','telefon','sigara')
+            FROM alerts WHERE kind IN ('intrusion','telefon','sigara')
         ) ev
         """
         query += where + " ORDER BY time DESC, type, camera_id, detail, ts_seconds DESC NULLS LAST LIMIT ? OFFSET ?"

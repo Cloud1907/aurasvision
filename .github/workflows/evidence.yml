@@ -43,7 +43,7 @@ jobs:
         # tarafından import edilen cv2/fastapi validate'dan ÖNCE kurulmalıdır.
         # Ağır ML bağımlılıkları tembel import olduğu için burada gerekmez.
         run: |
-          python3 -m pip install --quiet "opencv-python>=4.10.0" "fastapi>=0.115.0"
+          python3 -m pip install --quiet -r requirements-ci.txt
 
       - name: Kernel doğrulama
         run: python3 bin/validate.py
