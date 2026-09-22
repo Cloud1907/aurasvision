@@ -13,7 +13,8 @@ test('panel live button connects when optional system information fails', async 
     }`
   }));
   await page.goto('/');
-  await page.getByRole('button', {name: 'Canlı akışı aç'}).click();
+  // Ana dalın paneli ayrı 'Canlı akışı aç' düğmesi yerine kamera karosunu kullanır
+  await page.locator('.live-monitoring .monitor-card.tile').first().click();
   await expect(page.locator('.camview auras-stream')).toHaveAttribute('data-connected', /\/api\/stream\?src=demo-0/);
   await page.locator('#cv-x').click();
   await expect(page.locator('.camview')).toHaveCount(0);

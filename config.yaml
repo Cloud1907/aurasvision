@@ -118,7 +118,10 @@ record:
   # Kalite düşer; tek kamera görünümü ve analiz ana akışı kullanmaya devam eder.
   use_substream: false
   keep_days: 15
-  max_size_gb: 100         # Bu makinede 238 GB'lik tek disk var ve sistem de aynı diskte:
+  max_size_gb: 60          # 2026-09-22: 100 GB kota + 18,7 GB arşiv dışa aktarımı diski SIFIRA
+                         # indirdi (SQLite yazamaz, testler 'disk full'). Plaka ölçüm penceresi
+                         # bitti; 60 GB'a dönüldü. Kalıcı çözüm kaydı D:'ye (1,9 TB) taşımak.
+                         # Bu makinede 238 GB'lik tek disk var ve sistem de aynı diskte:
                          # kotasız 7/24 kayıt diski doldurur, dolan diskte SQLite yazamaz.
                          # 2026-09-02'de 60 → 100 GB: kamera sayısı 1'den 6'ya çıkınca
                          # tüketim saatte 1,9 GB'den 11,3 GB'ye fırladı (hepsi ANA akıştan,
