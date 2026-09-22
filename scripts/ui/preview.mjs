@@ -8,7 +8,8 @@ const demo = process.argv.includes('--demo');
 const fixtures = demo ? (await import('../../e2e/fixtures/ui-api.ts')).responses : null;
 const port = demo ? 8768 : 8767;
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
-  '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.json': 'application/json' };
+  '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.json': 'application/json',
+  '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' };
 createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname.startsWith('/api/')) {
