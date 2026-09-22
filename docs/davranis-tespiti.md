@@ -81,12 +81,28 @@ Aynı kişi + aynı davranış `cooldown_seconds`, aynı kamera + aynı davranı
 
 ## Ölçüm durumu (2026-09-22)
 
-- Birim: `tests/test_davranis.py` — 16 test, sahte anahtar noktayla karar mantığı.
-- Yanlış alarm tabanı: `data/videos/` altındaki 3 örnek (mağaza koridoru 6 kişi,
-  yaya, bisiklet/araç) → 1.720 kare, 0 ön uyarı, 0 alarm. 32 kare/sn (RTX 3050).
-- **Doğru pozitif ölçülmedi**: elde telefon/sigara içeren video yok. Sahada bir
-  haftalık ön uyarı/alarm günlüğü toplanıp eşikler (`telefon_sn`, `sigara_tekrar`,
-  `kulak_oran`) buna göre ayarlanmalı. Tatmin etmezse PABD veri setiyle ince ayar.
+Geometri Pexels demo klipleriyle ÖLÇÜLDÜ ve sezgisel buna göre yazıldı: telefon
+kulaktayken bilek kulağın ~1,2 baş altında ve yüzün yanında (kulakta değil!);
+sigara nefesinde bilek ağız tahmininin ~1 baş çevresinde. Profilde kulaklar arası
+ölçek çöktüğü için baş ölçeği birkaç ölçünün en büyüğüdür (burun→omuz ortası×0,6).
+
+| Klip (`data/videos/davranis/`) | Kaynak | Sonuç |
+|---|---|---|
+| `telefon_kadin_5252437.mp4` (11 sn) | [Pexels 5252437](https://www.pexels.com/video/a-woman-talking-on-the-phone-5252437/) | ön uyarı + **alarm** 6,9 sn'de, doğrulama: telefon kutusu |
+| `telefon_kadin_10375449.mp4` (8 sn) | [Pexels 10375449](https://www.pexels.com/video/a-woman-on-a-call-10375449/) | ön uyarı + **alarm** 6,5 sn'de, doğrulama: telefon kutusu |
+| `sigara_adam_10273130.mp4` (23 sn) | [Pexels 10273130](https://www.pexels.com/video/man-smoking-cigarette-10273130/) | 2 ön uyarı + **alarm** 20,9 sn'de (poz; sigara ağırlığı kurulu değil) |
+| `sigara_adam_3805926.mp4` (28 sn) | [Pexels 3805926](https://www.pexels.com/video/a-man-smoking-a-cigarette-3805926/) | 1 ön uyarı, alarm yok (profil, tek nefes) |
+| 3 negatif klip (`data/videos/*.mp4`, 1.720 kare, 6 kişiye kadar) | — | 0 ön uyarı, 0 alarm |
+
+Pexels lisansı: ücretsiz, atıf gerekmez; klipler 1280 px'e küçültüldü. Test
+ekranında `telefon-test` ve `sigara-test` kameraları (görevler kapalı) bu
+klipleri gösterir; tür "Davranış" seçilip çalıştırılır.
+
+- Birim: `tests/test_davranis.py` — 17 test, sahte anahtar noktayla karar mantığı.
+- Hız: 32 kare/sn (RTX 3050, poz + COCO telefon doğrulaması dâhil).
+- Sınır: demo klipler yakın plan stüdyo çekimi. Sahada (CCTV açısı, uzak kişi)
+  ölçülmedi; ilk hafta ön uyarı/alarm günlüğü toplanıp `telefon_sn`,
+  `sigara_tekrar`, `kulak_oran`/`agiz_oran` buna göre ayarlanmalı.
 
 ## Lisans
 

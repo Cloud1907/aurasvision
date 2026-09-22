@@ -25,30 +25,39 @@ def kisi(bilek=(999.0, 999.0), bas=40.0, cx=300.0, cy=100.0):
     return kutu, kp, kc
 
 
+TELEFON = (300 - 20 - 4, 100 + 48)   # sağ kulağın 1,2 baş altında, yüzün yanında (ölçülen poz)
+AGIZ = (300 + 4, 100 + 40)           # ağız tahmininin (300,120) ~0,5 baş altında, ortada
+
+
 class OzellikTest(unittest.TestCase):
-    def test_el_kulakta(self):
-        k, kp, kc = kisi(bilek=(300 - 20 + 5, 100 + 3))
+    def test_telefon_pozu(self):
+        k, kp, kc = kisi(bilek=TELEFON)
         oz = ozellikler(kp, kc, k)
-        self.assertTrue(oz["kulak"]); self.assertFalse(oz["agiz"])
+        self.assertTrue(oz["kulak"])
         self.assertAlmostEqual(oz["bas"], 40.0)
 
-    def test_el_agizda(self):
-        k, kp, kc = kisi(bilek=(302, 100 + 20))
+    def test_el_agizda_telefon_degil(self):
+        k, kp, kc = kisi(bilek=AGIZ)
         oz = ozellikler(kp, kc, k)
-        self.assertTrue(oz["agiz"])
+        self.assertTrue(oz["agiz"]); self.assertFalse(oz["kulak"])   # burun hizasında: çene/ağız
 
     def test_el_asagida_hicbiri(self):
         k, kp, kc = kisi(bilek=(300, 400))
         oz = ozellikler(kp, kc, k)
         self.assertFalse(oz["kulak"]); self.assertFalse(oz["agiz"])
 
-    def test_omuz_altindaki_el_kulak_sayilmaz(self):
-        # kulağa yakın ama omuz çizgisinin çok altında olamaz; sentetik olarak
-        # kulak koordinatı omuzun altına taşınırsa reddedilmeli
-        k, kp, kc = kisi(bilek=(280, 100))
-        kp[OMUZ_SOL][1] = kp[OMUZ_SAG][1] = 60.0     # omuzlar başın üstünde (saçma ama sınır testi)
+    def test_kulak_hizasindaki_el_telefon_degil(self):
+        # el tam kulakta (kaşıma): telefon pozu bileğin kulağın ALTINDA olmasını ister
+        k, kp, kc = kisi(bilek=(280, 102))
         oz = ozellikler(kp, kc, k)
         self.assertFalse(oz["kulak"])
+
+    def test_profilde_bas_olcegi_burun_omuzdan(self):
+        # profil: kulaklar/gözler görünmez, burun→omuz mesafesi ölçeği verir
+        k, kp, kc = kisi()
+        kc[KULAK_SOL] = kc[KULAK_SAG] = kc[GOZ_SOL] = kc[GOZ_SAG] = 0.0
+        oz = ozellikler(kp, kc, k)
+        self.assertGreater(oz["bas"], 30.0)
 
 
 def _takip(**kw):
@@ -59,7 +68,7 @@ def _takip(**kw):
 
 
 class TelefonTest(unittest.TestCase):
-    def _kos(self, takip, saniye, fps=4, bilek=(285, 103), telefon=None):
+    def _kos(self, takip, saniye, fps=4, bilek=TELEFON, telefon=None):
         olaylar = []
         for i in range(int(saniye * fps)):
             ts = i / fps
@@ -107,14 +116,14 @@ class TelefonTest(unittest.TestCase):
             t.guncelle([kisi(bilek=(300, 400))], 9.0 + i / 4)
         ol2 = []
         for i in range(40):
-            ol2 += t.guncelle([kisi(bilek=(285, 103))], 11.0 + i / 4)
+            ol2 += t.guncelle([kisi(bilek=TELEFON)], 11.0 + i / 4)
         self.assertEqual(ol2, [])
 
     def test_uzak_kisi_degerlendirilmez(self):
         t = _takip(min_bas_px=24.0)
         ol = []
         for i in range(40):
-            ol += t.guncelle([kisi(bilek=(300 - 5, 101), bas=10.0)], i / 4)
+            ol += t.guncelle([kisi(bilek=(300 - 6, 112), bas=10.0)], i / 4)
         self.assertEqual(ol, [])
 
 
@@ -124,7 +133,7 @@ class SigaraTest(unittest.TestCase):
         ol, ts = [], 0.0
         for k in range(n):
             for i in range(int(temas * fps)):
-                ol += takip.guncelle([kisi(bilek=(302, 120))], ts, sigara_kontrol=kontrol); ts += 1 / fps
+                ol += takip.guncelle([kisi(bilek=AGIZ)], ts, sigara_kontrol=kontrol); ts += 1 / fps
             for i in range(int((aralik - temas) * fps)):
                 ol += takip.guncelle([kisi(bilek=(300, 400))], ts, sigara_kontrol=kontrol); ts += 1 / fps
         return ol, ts
@@ -168,7 +177,7 @@ class HatTest(unittest.TestCase):
         kare = np.zeros((480, 640, 3), dtype=np.uint8)
         olaylar = []
         hat = DavranisHatti(cfg, 640, 480, "test", 4.0,
-                            poz=lambda bgr: [kisi(bilek=(285, 103))],
+                            poz=lambda bgr: [kisi(bilek=TELEFON)],
                             on_event=olaylar.append, on_alert=olaylar.append)
         son = []
         for i in range(24):

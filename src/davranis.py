@@ -61,63 +61,75 @@ def _uzak(a, b) -> float:
 
 
 def bas_olcegi(kp, kc, kutu, esik: float = 0.3) -> float:
-    """Baş ölçeği (piksel): kulaklar arası; yoksa gözler×1.6; yoksa omuz×0.28; yoksa kutu×0.1.
+    """Baş ölçeği (piksel) — birkaç ölçünün EN BÜYÜĞÜ.
 
-    Her mesafe buna bölünür — kişi yakın da uzak da olsa "el kulakta" aynı
-    eşikle karar verilir. Sıfır dönmez (bölme güvenli).
+    Her ölçü perspektifte yalnız KÜÇÜLEBİLİR (profilde kulaklar arası ve omuz
+    genişliği sıfıra iner, burun-omuz mesafesi kalır); bu yüzden en büyüğü
+    gerçeğe en yakındır. Ölçüldü (docs/davranis-tespiti.md): önden bakışta
+    kulaklar arası, profilde burun→omuz ortası×0,6 kazanıyor.
     """
+    adaylar = []
     if kc[KULAK_SOL] > esik and kc[KULAK_SAG] > esik:
-        d = _uzak(kp[KULAK_SOL], kp[KULAK_SAG])
-        if d > 2:
-            return d
+        adaylar.append(_uzak(kp[KULAK_SOL], kp[KULAK_SAG]))
     if kc[GOZ_SOL] > esik and kc[GOZ_SAG] > esik:
-        d = _uzak(kp[GOZ_SOL], kp[GOZ_SAG]) * 1.6
-        if d > 2:
-            return d
-    if kc[OMUZ_SOL] > esik and kc[OMUZ_SAG] > esik:
-        d = _uzak(kp[OMUZ_SOL], kp[OMUZ_SAG]) * 0.28
-        if d > 2:
-            return d
-    return max(4.0, (kutu[3] - kutu[1]) * 0.1)
+        adaylar.append(_uzak(kp[GOZ_SOL], kp[GOZ_SAG]) * 1.6)
+    omuzlar = [kp[i] for i in (OMUZ_SOL, OMUZ_SAG) if kc[i] > esik]
+    if len(omuzlar) == 2:
+        adaylar.append(_uzak(omuzlar[0], omuzlar[1]) * 0.28)
+    if kc[BURUN] > esik and omuzlar:
+        mid = ((omuzlar[0][0] + omuzlar[-1][0]) / 2, (omuzlar[0][1] + omuzlar[-1][1]) / 2)
+        adaylar.append(_uzak(kp[BURUN], mid) * 0.6)
+    bas = max(adaylar) if adaylar else 0.0
+    return bas if bas > 2 else max(4.0, (kutu[3] - kutu[1]) * 0.1)
 
 
 def ozellikler(kp, kc, kutu, esik: float = 0.3,
-               kulak_oran: float = 0.8, agiz_oran: float = 0.7) -> dict:
+               kulak_oran: float = 0.8, agiz_oran: float = 1.4) -> dict:
     """Bir kişinin tek karedeki poz özellikleri.
 
     Döner: {bas: px, kulak: bool, agiz: bool, bas_kutu: (x1,y1,x2,y2)}
-      kulak : bir bilek, bir kulağa `kulak_oran × baş` yakın VE omuz hizasının üstünde
-      agiz  : bir bilek, tahmini ağız noktasına `agiz_oran × baş` yakın
-    Ağız COCO'da yok: burnun `0.5 × baş` altı alınır (burun-çene oranı).
+
+    Gerçek geometri (Pexels örnekleriyle ölçüldü, docs/davranis-tespiti.md):
+      * Telefon kulaktayken BİLEK kulakta değil, kulağın ~1,2 baş ALTINDA ve yüzün
+        YAN tarafındadır (çene/boyun hizası); dirsek bileğin altındadır.
+      * Sigara nefesinde bilek ağız tahmininin ~1 baş çevresindedir.
+    Buna göre:
+      kulak : "telefon pozu" — bilek en yakın kulağın altında (0,5–2,0 baş),
+              yatayda kulağa `kulak_oran` baştan yakın, burun hizasından en az
+              0,3 baş dışarıda (çeneye dayanan el sayılmaz), dirsek bilekten aşağıda.
+      agiz  : bilek tahmini ağız noktasına (burnun 0,5 baş altı) `agiz_oran`
+              baştan yakın ve omuz hizasının çok altında değil.
+    İkisi bağımsızdır; ayrım ZAMANLA yapılır (telefon: kesintisiz, sigara: gidip gelen).
     """
     bas = bas_olcegi(kp, kc, kutu, esik)
     burun_ok = kc[BURUN] > esik
     kulaklar = [kp[i] for i in (KULAK_SOL, KULAK_SAG) if kc[i] > esik]
-    bilekler = [kp[i] for i in (BILEK_SOL, BILEK_SAG) if kc[i] > esik]
-    omuz_y = None
     oy = [kp[i][1] for i in (OMUZ_SOL, OMUZ_SAG) if kc[i] > esik]
-    if oy:
-        omuz_y = sum(oy) / len(oy)
-    # Kulak ile ağız komşudur (~0,7 baş): telefondaki el ağız yarıçapına, sigaradaki
-    # el kulak yarıçapına girer. Karar EN YAKIN noktaya göre — kulak ölçülen,
-    # ağız burundan tahmin (burnun 0,5 baş altı).
-    kulak = agiz = False
+    omuz_y = sum(oy) / len(oy) if oy else None
     agiz_pt = (kp[BURUN][0], kp[BURUN][1] + 0.5 * bas) if burun_ok else None
-    for b in bilekler:
-        de = min((_uzak(b, k) for k in kulaklar), default=1e9)
-        dm = _uzak(b, agiz_pt) if agiz_pt is not None else 1e9
-        el_yukarida = omuz_y is None or b[1] <= omuz_y + 0.3 * bas
-        if de < kulak_oran * bas and de <= dm and el_yukarida:
-            kulak = True
-        elif dm < agiz_oran * bas:
+    kulak = agiz = False
+    for b, d in ((BILEK_SOL, DIRSEK_SOL), (BILEK_SAG, DIRSEK_SAG)):
+        if kc[b] <= esik:
+            continue
+        w = kp[b]
+        if omuz_y is not None and w[1] > omuz_y + 0.6 * bas:
+            continue            # el gövdede: ne telefon ne sigara
+        dirsek_ok = kc[d] <= esik or kp[d][1] > w[1] + 0.2 * bas
+        if kulaklar and dirsek_ok:
+            k = min(kulaklar, key=lambda q: _uzak(q, w))
+            dx, dy = (w[0] - k[0]) / bas, (w[1] - k[1]) / bas
+            yanda = not burun_ok or abs(w[0] - kp[BURUN][0]) >= 0.3 * bas
+            if abs(dx) < kulak_oran and 0.5 <= dy <= 2.0 and yanda:
+                kulak = True
+        if agiz_pt is not None and _uzak(w, agiz_pt) < agiz_oran * bas:
             agiz = True
-    # Baş kutusu: doğrulayıcı dedektörlerin bakacağı bölge (burun merkezli 2 baş)
+    # Baş kutusu: doğrulayıcı dedektörlerin bakacağı bölge (burun merkezli)
     if burun_ok:
         cx, cy = kp[BURUN]
     else:
         cx, cy = (kutu[0] + kutu[2]) / 2, kutu[1] + bas
     r = 1.6 * bas
-    bas_kutu = (cx - r, cy - r, cx + r, cy + 1.4 * r)
+    bas_kutu = (cx - r, cy - r, cx + r, cy + 1.6 * r)
     return {"bas": bas, "kulak": kulak, "agiz": agiz, "bas_kutu": bas_kutu}
 
 
@@ -188,7 +200,7 @@ class DavranisTakip:
                  cooldown_sn: float = 120.0, kamera_cooldown_sn: float = 30.0,
                  kayip_sn: float = 2.0, iou_esle: float = 0.3,
                  min_bas_px: float = 24.0, kp_esik: float = 0.3,
-                 kulak_oran: float = 0.8, agiz_oran: float = 0.7) -> None:
+                 kulak_oran: float = 0.8, agiz_oran: float = 1.4) -> None:
         self.telefon_sn = float(telefon_sn)
         self.telefon_oran = float(telefon_oran)
         self.sigara_tekrar = int(sigara_tekrar)
@@ -255,7 +267,8 @@ class DavranisTakip:
             if telefon_kutular:
                 if any(_kesisir(tk, iz.bas_kutu) for tk in telefon_kutular):
                     iz.dogrulama["telefon"] = (ts, "telefon kutusu")
-            self._sigara_dokunus(iz, oz["agiz"], ts, sigara_kontrol)
+            # Telefon pozundaki el ağız yarıçapına da girer: o karede dokunuş sayılmaz
+            self._sigara_dokunus(iz, oz["agiz"] and not oz["kulak"], ts, sigara_kontrol)
             olaylar += self._degerlendir(iz, ts)
         return olaylar
 
@@ -434,7 +447,7 @@ def _takip_kur(cfg) -> DavranisTakip:
         cooldown_sn=g("cooldown_seconds", 120.0),
         kamera_cooldown_sn=g("camera_cooldown_seconds", 30.0),
         kayip_sn=g("kayip_sn", 2.0), min_bas_px=g("min_bas_px", 24.0),
-        kp_esik=g("kp_conf", 0.3), kulak_oran=g("kulak_oran", 0.8), agiz_oran=g("agiz_oran", 0.7),
+        kp_esik=g("kp_conf", 0.3), kulak_oran=g("kulak_oran", 0.8), agiz_oran=g("agiz_oran", 1.4),
     )
 
 

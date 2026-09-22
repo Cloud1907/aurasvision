@@ -349,8 +349,8 @@ davranis:
   sigara_imgsz: 320         # baş kırpması küçük; 320 yeter
 
   # ── Ortak ──
-  kulak_oran: 0.8       # bilek-kulak mesafesi < oran × baş → "el kulakta"
-  agiz_oran: 0.7        # bilek-ağız (burnun 0,5 baş altı) < oran × baş → "el ağızda"
+  kulak_oran: 0.8       # telefon pozu: bilek kulağın 0,5-2 baş ALTINDA, yatayda kulağa bu kadar yakın
+  agiz_oran: 1.4        # bilek-ağız (burnun 0,5 baş altı) < oran × baş → "el ağızda" (nefeste ~1 baş ölçüldü)
   kp_conf: 0.3          # anahtar nokta güven eşiği
   kayip_sn: 2.0         # iz bu kadar sn görülmezse düşer
   dogrulama_taze_sn: 5.0    # doğrulayan kutu en fazla bu kadar eski olabilir
