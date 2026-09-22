@@ -1500,10 +1500,6 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
                                     "intrusions": res.intrusions}
                 videos.append(f"/media/{stem}_count.mp4")
         # İptal edildiyse kalan modüller VE _webify atlanır (yarım videoya dönüşüm israf)
-        if job["cancel"].is_set():
-            with JOBS_STATE_LOCK:
-                job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
-            return
         from .fire_runtime import analyze_includes_fire
         if analyze_includes_fire(p.kind, api_capabilities()["fire"]):
             job.update(stage="Yangın erken uyarısı çalışıyor")

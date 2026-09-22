@@ -25,9 +25,6 @@ function SnapshotCard({ camera, bridge }) {
 
 function LiveCard({ camera, bridge }) {
   const live = bridge.live?.();
-  useEffect(() => {
-    if (live) bridge.mountStreams?.();
-  }, [live, camera.id, bridge]);
   return <button className="monitor-card tile" data-state="wait" onClick={() => bridge.openCamera(camera.id, camera.name)}>
     {live ? <div className="monitor-visual"><div className="skel"/><auras-stream data-src={camera.url_sub ? `${camera.id}-sub` : camera.id}/><span className="nosig"><Icon name="camera" size={18}/> Sinyal yok</span></div> : <SnapshotCard camera={camera} bridge={bridge}/>} 
     <span className="monitor-meta"><span><i/><strong>{camera.name}</strong></span><small>{live ? 'Canlı izleme' : 'Son görüntü'}</small></span>
@@ -38,6 +35,8 @@ export default function LiveCameraGrid({ cameras, bridge }) {
   const [expanded, setExpanded] = useState(false);
   const rows = cameras.data || [];
   const visible = expanded ? rows : rows.slice(0, 4);
+  // Oynatıcı bir kez bağlanır: kart başına çağrı N kez tam tarama demekti.
+  useEffect(() => { if (bridge.live?.()) bridge.mountStreams?.(); }, [visible.length, bridge]);
   return <section className="live-monitoring" aria-label="Canlı kamera izleme">
     <header><div><span className="section-live-dot"/><h3>Canlı kamera izleme</h3><span>{rows.length} kamera</span></div>
       {rows.length > 4 && <button className="ops-link" onClick={() => setExpanded(value => !value)}>{expanded ? 'Öncelikli kameralar' : 'Tüm kameraları göster'} <Icon name="arrow" size={14}/></button>}</header>

@@ -162,14 +162,14 @@ def _gorev_listesi(cid, source, cfg, bstore, tasks, lines, ihlaller,
         gorevler.append(("count", lambda: run_count(
             source, cfg, store=bstore, camera_id=cid, lines=lines,
             intrusions=ihlaller)))
-    if tasks.get("fire"):
+    # Küresel kapalı özellik çöken görev DEĞİLDİR: görev listesine girmez, durumu
+    # "kapalı" olarak görünür (bkz. _gorevleri_kos). Aksi hâlde her turda beş
+    # yeniden deneme, park ve kırmızı kamera üretiyordu — bozuk hiçbir şey yokken.
+    if tasks.get("fire") and cfg.get("fire.enabled", False):
         from .fire import run_fire
-        def _fire():
-            if not cfg.get("fire.enabled", False):
-                raise RuntimeError("yangın görevi açık ama fire.enabled=false")
-            run_fire(source, cfg, store=bstore, camera_id=cid,
-                     bolgeler=fire_izleme, maskeler=fire_maske)
-        gorevler.append(("fire", _fire))
+        gorevler.append(("fire", lambda: run_fire(
+            source, cfg, store=bstore, camera_id=cid,
+            bolgeler=fire_izleme, maskeler=fire_maske)))
     if tasks.get("plate"):
         from .plate import run_plate
         gorevler.append(("plate", lambda: run_plate(
@@ -194,6 +194,8 @@ def _gorevleri_kos(cid: str, source: str, cfg, bstore, tasks: dict, lines,
                               fire_izleme, fire_maske)
     with _STAGE_LOCK:
         _TASK_STAGE[cid] = {}
+    if tasks.get("fire") and not cfg.get("fire.enabled", False):
+        _gorev_durumu_yaz(cid, "fire", "kapalı (fire.enabled=false)")
 
     if not gorevler:
         return False

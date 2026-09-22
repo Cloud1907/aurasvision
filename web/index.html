@@ -465,7 +465,7 @@ async function cikis(){
     toast("Oturum kapatılamadı ("+(e.message||e)+"). Tekrar deneyin.","err");
     return;
   }
-  TOKEN="";try{localStorage.removeItem("vai-token");}catch(e){}
+  // Kurulum erişim anahtarı (vai-token) kişiye değil kuruluma aittir; çıkışta silinmez.
   location.reload();
 }
 async function api(p,o={}){
@@ -617,7 +617,7 @@ const panelBridge={api,go,openCamera:openCam,record:recordAt,snapshot:id=>snap(i
 /* Yeni alarm bildirimi: ilk bağlantıda mevcut geçmişi oynatmaz. Kapatmak veya
    sesi susturmak kabul değildir; kabul yalnız mevcut API üzerinden kaydedilir. */
 const NOTIFICATION_POLICY=AurasUI.createNotificationPolicy();
-let NOTIFICATION_RULES=[],ALERT_CURSOR=null,ALERT_POLL=null,ALARM_AUDIO=null,AUDIO_READY=false;
+let NOTIFICATION_RULES=[],ALERT_CURSOR=null,ALERT_POLL=null,ALARM_AUDIO=null,AUDIO_READY=false,ALERT_FEED_HATA=0;
 const ALARM_QUEUE=[];
 function alarmAudioContext(){
   if(!ALARM_AUDIO){const AudioContext=window.AudioContext||window.webkitAudioContext;if(AudioContext)ALARM_AUDIO=new AudioContext();}
@@ -662,7 +662,11 @@ async function alarmBildirimTuru(){
     const feed=await api(`/alerts/feed?after_id=${ALERT_CURSOR}&limit=100`);ALERT_CURSOR=feed.cursor;
     for(const alert of feed.alerts||[]){const result=NOTIFICATION_POLICY.accept(alert,NOTIFICATION_RULES);if(!result)continue;if(result.sound)alarmSesiCal(result.tone);if(result.popup)alarmPopupGoster(result);}
     if(feed.has_more)setTimeout(alarmBildirimTuru,0);
-  }catch(e){}
+    ALERT_FEED_HATA=0;
+  }catch(e){
+    // Sessiz kalan akış 'alarm var sanıp yok' demektir: üçüncü ardışık hatada bir kez uyar.
+    if(++ALERT_FEED_HATA===3)toast('Alarm akışı alınamıyor — bildirimler duraklamış olabilir. Sayfayı yenileyin.','warn',10000);
+  }
 }
 async function alarmBildirimBaslat(){
   clearInterval(ALERT_POLL);
@@ -2266,7 +2270,6 @@ function welcomeGate(){
     if(forced){entry.searchParams.delete("welcome");history.replaceState(null,"",entry.pathname+(entry.searchParams.toString()?"?"+entry.searchParams:"")+entry.hash);}
     unmount();host.remove();document.body.classList.remove("welcome-active");resolve();
     }});
-    requestAnimationFrame(()=>host.querySelector(".welcome-login-button")?.focus());
   });
 }
 function bootError(e){$('#content').innerHTML=`<div class="card pad" role="alert">Bağlantı kurulamadı: ${esc(e.message)} <button class="btn" onclick="boot()">Yeniden dene</button></div>`;}
