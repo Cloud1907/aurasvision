@@ -1,6 +1,7 @@
 import Icon from './Icon';
 import { updated } from './panelData';
 import StarBorder from '../react-bits/StarBorder';
+import MaskedHeading from '../react-bits/MaskedHeading';
 
 function cameraStatus(health) {
   if (health.error) return { label: 'Platform çalışıyor · kamera durumu alınamadı', tone: 'idle' };
@@ -20,8 +21,8 @@ function systemStatus(status, health) {
 
 export default function CommandHeader({ status, health, bridge }) {
   const { label, tone } = systemStatus(status, health);
-  return <header className="command-header"><div><h2>Görüntü merkezi</h2><p>Kameralar, olaylar ve sistem durumu.</p></div>
+  return <header className="command-header"><div><h2><MaskedHeading>Operasyon paneli</MaskedHeading></h2><p>Canlı kameralar, aktif alarmlar ve analizler tek ekranda.</p></div>
     <div className="command-actions"><button className={`command-system ${tone}`} onClick={() => bridge.go('sys')}><i/><span>{label}<small>Son kontrol {updated(status)}</small></span><Icon name="arrow" size={14}/></button>
-      <StarBorder color="#c8e2ff" backgroundColor="var(--action)" borderColor="var(--action)" onClick={() => bridge.go('live')}><Icon name="grid" size={16}/> Kamera duvarı <Icon name="arrow" size={16}/></StarBorder></div>
+      <StarBorder color="#9fc0f5" backgroundColor="var(--panel)" textColor="var(--ink)" borderColor="var(--line)" onClick={() => bridge.go('sys')}><Icon name="alert" size={16}/> Alarm ayarları <Icon name="arrow" size={16}/></StarBorder></div>
   </header>;
 }

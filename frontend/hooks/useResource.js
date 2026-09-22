@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 export function useResource(bridge, path, interval = 15000) {
-  const [state, setState] = useState({ data: null, error: '', updated: null });
+  const [state, setState] = useState({ data: null, error: '', updated: null, loading: true });
   const [revision, setRevision] = useState(0);
-  const retry = useCallback(() => setRevision(n => n + 1), []);
+  const retry = useCallback(() => {
+    setState(prev => ({ ...prev, error: '', loading: true }));
+    setRevision(n => n + 1);
+  }, []);
   const last = useRef('');
   useEffect(() => {
     const controller = new AbortController();
@@ -15,9 +18,9 @@ export function useResource(bridge, path, interval = 15000) {
         const json = JSON.stringify(data);
         const unchanged = json === last.current;
         last.current = json;
-        setState(prev => ({ data: unchanged && prev.data !== null ? prev.data : data, error: '', updated: Date.now() }));
+        setState(prev => ({ data: unchanged && prev.data !== null ? prev.data : data, error: '', updated: Date.now(), loading: false }));
       } catch (e) {
-        if (current && e.name !== 'AbortError') setState(prev => ({ ...prev, error: e.message }));
+        if (current && e.name !== 'AbortError') setState(prev => ({ ...prev, error: e.message, loading: false }));
       }
     }, interval);
     return () => { current = false; controller.abort(); stop(); };
