@@ -27,6 +27,70 @@ from .store import merged_cameras, open_store
 
 # kamera_id → o an çalışan aşama (heartbeat bunu yayınlar)
 _STAGE: dict[str, str] = {}
+_TASK_STAGE: dict[str, dict[str, str]] = {}
+_STAGE_LOCK = threading.Lock()
+
+
+def _gorev_durumu_yaz(cid: str, ad: str, durum: str) -> None:
+    with _STAGE_LOCK:
+        _TASK_STAGE.setdefault(cid, {})[ad] = durum
+
+
+def _kamera_sagligi(cid: str) -> tuple[str, str]:
+    """Görev durumlarını kamera heartbeat'ine indirger: (status, ayrıntı)."""
+    with _STAGE_LOCK:
+        durumlar = dict(_TASK_STAGE.get(cid, {}))
+    if not durumlar:
+        eski = _STAGE.get(cid, "başlıyor")
+        return ("error" if eski.startswith("error") else "ok", eski)
+    ayrinti = " | ".join(f"{ad}:{durum}" for ad, durum in sorted(durumlar.items()))
+    if any(d.startswith("parked") for d in durumlar.values()):
+        return "error", ayrinti
+    if any(d.startswith("restarting") for d in durumlar.values()):
+        return "degraded", ayrinti
+    if all(d in ("done", "stopped") for d in durumlar.values()):
+        return "idle", ayrinti
+    return "ok", ayrinti
+
+
+def _gorev_gozetmeni(cid: str, ad: str, fn, cfg, *, should_stop=None,
+                     sleep_fn=time.sleep) -> str:
+    """Tek analiz görevini sınırlı üstel geri çekilmeyle yeniden başlatır.
+
+    Sürekli hata sonsuz hızlı yeniden açma döngüsüne girmez. Bütçe dolunca
+    görev ``parked`` olur ve kardeş görevler çalışmayı sürdürür; heartbeat bu
+    durumu hata olarak görünür kılar.
+    """
+    should_stop = should_stop or (lambda: False)
+    azami = max(0, int(cfg.get("worker.task_max_restarts", 5)))
+    ilk = max(0.0, float(cfg.get("worker.task_retry_initial_seconds", 1.0)))
+    tavan = max(ilk, float(cfg.get("worker.task_retry_max_seconds", 30.0)))
+    hata = 0
+    while not should_stop():
+        _gorev_durumu_yaz(cid, ad, "running")
+        try:
+            fn()
+            _gorev_durumu_yaz(cid, ad, "done")
+            return "done"
+        except Exception as e:
+            hata += 1
+            kisa = f"{e.__class__.__name__}: {e}"[:160]
+            if hata > azami:
+                _gorev_durumu_yaz(cid, ad, f"parked ({kisa})")
+                print(f"[worker] {cid}/{ad} park edildi ({hata} hata): {kisa}",
+                      flush=True)
+                return "parked"
+            bekle = min(tavan, ilk * (2 ** (hata - 1)))
+            _gorev_durumu_yaz(
+                cid, ad, f"restarting {hata}/{azami} in {bekle:g}s ({kisa})")
+            print(f"[worker] {cid}/{ad} hata: {kisa}; {bekle:g} sn sonra "
+                  f"yeniden denenecek ({hata}/{azami})", flush=True)
+            if bekle:
+                sleep_fn(bekle)
+    _gorev_durumu_yaz(cid, ad, "stopped")
+    return "stopped"
+
+
 # kamera_id → işlenen toplam kare (heartbeat fps'i bunun farkından türetir)
 _FRAMES: dict[str, int] = {}
 
@@ -225,68 +289,83 @@ def _nvdec_kullanilabilir() -> str:
     return ""
 
 
-def _canli_kaynak(source: str) -> bool:
-    """RTSP/RTMP/HTTP(S) — bitmeyen akış (yolo.track(stream=True) hiç dönmez).
-
-    Dosya kaynağı bunun tersi: işlenir, biter, döner — sıralı görev dispatch'i
-    orada sorun değil (bkz. _run_camera'daki canlı+çoklu-görev dalı).
-    """
-    return str(source).lower().startswith(("rtsp://", "rtmp://", "http://", "https://"))
-
-
-class _CfgSinif:
-    """cfg'yi sarar, davranış hattına hangi sınıfların (telefon/sigara) açık olduğunu taşır."""
-
-    def __init__(self, cfg, siniflar) -> None:
-        self._cfg = cfg
-        self.davranis_siniflar = tuple(siniflar)
-
-    def get(self, *a, **k):
-        return self._cfg.get(*a, **k)
-
-    def __getattr__(self, ad):
-        return getattr(self._cfg, ad)
-
-
-def _gorev_calistir(gorev: str, source: str, cfg, bstore, cid: str,
-                    lines, ihlaller, watch=None, fire_zones=None) -> None:
-    """Tek analiz görevini (count/plate/face/fire/davranis) çalıştırır — dispatch tek yerde,
-    hem sıralı hem eşzamanlı (bkz. _run_camera) çağrı yolu bunu kullanır."""
-    if gorev == "count":
+def _gorev_listesi(cid, source, cfg, bstore, tasks, lines, ihlaller,
+                   fire_izleme, fire_maske):
+    """Etkin kamera görevlerini geç yüklenen çağrılabilirler olarak kurar."""
+    gorevler: list[tuple[str, callable]] = []
+    # main #7 kuralı: çizgi ya da ihlal alanı yoksa sayım motoru hiç açılmaz —
+    # kullanıcının çizmediği hat config varsayılanıyla sayılmasın.
+    if tasks.get("count") and (lines or ihlaller):
         from .count import run_count
-        run_count(source, cfg, store=bstore, camera_id=cid, lines=lines,
-                  intrusions=ihlaller, should_stop=_kare_sayaci(cid),
-                  on_frame=_onizleme_itici(cid), on_detections=_tespit_itici(cid))
-    elif gorev == "plate":
-        from .plate import run_plate
-        run_plate(source, cfg, store=bstore, camera_id=cid,
-                  should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
-    elif gorev == "face":
-        from .face import run_face
-        run_face(source, cfg, store=bstore, camera_id=cid, watch=watch,
-                 should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
-    elif gorev == "davranis":
-        # Telefonla konuşma / sigara — poz sezgiseli + doğrulama (src/davranis.py)
-        from .davranis import SINIFLAR, run_davranis
-        run_davranis(source, cfg, store=bstore, camera_id=cid,
-                     siniflar=getattr(cfg, "davranis_siniflar", SINIFLAR))
-    elif gorev == "fire":
-        # Yangın/duman erken uyarı (sertifikalı alarm DEĞİL — src/fire.py başlığı)
+        gorevler.append(("count", lambda: run_count(
+            source, cfg, store=bstore, camera_id=cid, lines=lines,
+            intrusions=ihlaller, should_stop=_kare_sayaci(cid),
+            on_frame=_onizleme_itici(cid), on_detections=_tespit_itici(cid))))
+    # Küresel kapalı özellik çöken görev DEĞİLDİR: görev listesine girmez, durumu
+    # "kapalı" olarak görünür (bkz. _gorevleri_kos). Aksi hâlde her turda beş
+    # yeniden deneme, park ve kırmızı kamera üretiyordu — bozuk hiçbir şey yokken.
+    if tasks.get("fire") and cfg.get("fire.enabled", False):
         from .fire import run_fire
-        izleme, maske = fire_zones or ([], [])
-        run_fire(source, cfg, store=bstore, camera_id=cid,
-                 bolgeler=izleme, maskeler=maske,
-                 should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
+        gorevler.append(("fire", lambda: run_fire(
+            source, cfg, store=bstore, camera_id=cid,
+            bolgeler=fire_izleme, maskeler=fire_maske,
+            should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))))
+    if tasks.get("plate"):
+        from .plate import run_plate
+        gorevler.append(("plate", lambda: run_plate(
+            source, cfg, store=bstore, camera_id=cid,
+            should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))))
+    if tasks.get("face"):
+        from .face import run_face
+        def _face():
+            rstore = open_store(cfg)
+            try:
+                watch = rstore.faces_with_embedding()
+            finally:
+                rstore.close()
+            run_face(source, cfg, store=bstore, camera_id=cid, watch=watch,
+                     should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
+        gorevler.append(("face", _face))
+    # Telefon ve sigara AYRI görev ama tek poz hattı: ikisi açıksa bir kez koşar
+    # (src/davranis.py). Ad, heartbeat ayrıntısında "telefon+sigara" gibi görünür.
+    siniflar = aktif_siniflar(tasks)
+    if siniflar:
+        from .davranis import run_davranis
+        gorevler.append(("+".join(siniflar), lambda: run_davranis(
+            source, cfg, store=bstore, camera_id=cid, siniflar=siniflar,
+            should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))))
+    return gorevler
 
 
-def _gorev_thread_calistir(gorev: str, source: str, cfg, bstore, cid: str,
-                           lines, ihlaller, watch=None, fire_zones=None) -> None:
-    """_gorev_calistir'i AYRI thread'de sarar — bir görevin hatası diğerini
-    (veya kamerayı) düşürmesin diye burada yutulur (bkz. _run_camera)."""
-    try:
-        _gorev_calistir(gorev, source, cfg, bstore, cid, lines, ihlaller, watch, fire_zones)
-    except Exception as e:
-        print(f"[worker] {cid}/{gorev} hata: {e}", flush=True)
+def _gorevleri_kos(cid: str, source: str, cfg, bstore, tasks: dict, lines,
+                   ihlaller, fire_izleme, fire_maske) -> bool:
+    """Kamera görevlerini bağımsız supervisor thread'lerinde koşar."""
+    gorevler = _gorev_listesi(cid, source, cfg, bstore, tasks, lines, ihlaller,
+                              fire_izleme, fire_maske)
+    with _STAGE_LOCK:
+        _TASK_STAGE[cid] = {}
+    if tasks.get("fire") and not cfg.get("fire.enabled", False):
+        _gorev_durumu_yaz(cid, "fire", "kapalı (fire.enabled=false)")
+
+    if not gorevler:
+        return False
+    azami = max(1, int(cfg.get("worker.max_parallel_tasks_per_camera", 4)))
+    if len(gorevler) > azami:
+        raise RuntimeError(
+            f"{cid}: {len(gorevler)} analiz görevi açık; bağlantı bütçesi {azami} "
+            "(worker.max_parallel_tasks_per_camera)")
+
+    _STAGE[cid] = "+".join(ad for ad, _ in gorevler)
+    threads = [threading.Thread(target=_gorev_gozetmeni,
+                                args=(cid, ad, fn, cfg), daemon=True,
+                                name=f"auras-{cid}-{ad}")
+               for ad, fn in gorevler]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    _STAGE[cid] = _kamera_sagligi(cid)[1]
+    return True
 
 
 def _run_camera(cam: dict, cfg, bus) -> None:
@@ -312,7 +391,7 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             akis.kaydet(fresh.get("source") or source, fresh.get("http_headers") or "")
             tasks = fresh.get("tasks") or {}
             ihlaller = _saved_intrusions(rstore, cid)
-            fire_zones = _saved_fire_zones(rstore, cid)
+            fire_izleme, fire_maske = _saved_fire_zones(rstore, cid)
             cizgiler = _saved_lines(rstore, cid)
             # Worker yalnız UI'da kaydedilmiş geometriyi işler. None, CLI'daki
             # config varsayılanına düşer ve kullanıcının çizmediği hattı sayardı.
@@ -320,50 +399,11 @@ def _run_camera(cam: dict, cfg, bus) -> None:
         finally:
             rstore.close()
 
-        did_work = False
-        aktif = [g for g in ("count", "plate", "face", "fire") if tasks.get(g)]
-        # Telefon ve sigara ayrı görev ama tek poz hattı: ikisi açıksa bir kez koşar
-        davranis_siniflar = aktif_siniflar(tasks)
-        if davranis_siniflar:
-            aktif.append("davranis")
-        cfg_gorev = _CfgSinif(cfg, davranis_siniflar) if davranis_siniflar else cfg
-        # Çizgi de ihlal alanı da yoksa sayımın işleyeceği geometri yoktur (ana dal #7).
-        if "count" in aktif and not (cizgiler or ihlaller):
-            aktif.remove("count")
-        canli = _canli_kaynak(source)
-        watch = None
-        if "face" in aktif:
-            rstore = open_store(cfg)
-            watch = rstore.faces_with_embedding()
-            rstore.close()
         try:
-            if canli and len(aktif) > 1:
-                # RTSP/canlı kaynakta count() BİTMEYEN bir generator'dır
-                # (yolo.track(stream=True), should_stop hep False). Aynı thread'de
-                # sırayla çağrılırsa count SONRAKİ görevi sonsuza dek engeller —
-                # sahada ölçüldü: kamera-204 count+plate açıkken plate_events
-                # HİÇ satır üretmedi (count asla dönmediği için plate'e sıra
-                # gelmiyordu). Her görev kendi RTSP bağlantısını açıp AYRI
-                # thread'de koşar — recorder zaten aynı akışa ayrıca bağlanıyor,
-                # çoklu istemci varsayımı burada yeni değil. Bir görevin hatası
-                # diğerini düşürmez (_gorev_thread_calistir hatayı yutar).
-                _STAGE[cid] = "+".join(aktif)
-                gorev_threads = [threading.Thread(
-                    target=_gorev_thread_calistir,
-                    args=(g, source, cfg_gorev, bstore, cid, lines, ihlaller, watch, fire_zones),
-                    daemon=True) for g in aktif]
-                for t in gorev_threads:
-                    t.start()
-                for t in gorev_threads:
-                    t.join()
-                did_work = bool(aktif)
-            else:
-                for gorev in aktif:
-                    _STAGE[cid] = gorev
-                    _gorev_calistir(gorev, source, cfg_gorev, bstore, cid, lines, ihlaller, watch,
-                                    fire_zones)
-                    did_work = True
-            _STAGE[cid] = "idle"
+            did_work = _gorevleri_kos(cid, source, cfg, bstore, tasks,
+                                      lines, ihlaller, fire_izleme, fire_maske)
+            durum, ayrinti = _kamera_sagligi(cid)
+            _STAGE[cid] = ayrinti if durum == "error" else "idle"
         except Exception as e:
             _STAGE[cid] = f"error: {e}"
             print(f"[worker] {cid} hata: {e}", flush=True)
@@ -378,32 +418,23 @@ def _run_camera(cam: dict, cfg, bus) -> None:
 
 
 def _heartbeat(cams: list[dict], bus, interval: float = 5.0) -> None:
-    """Kamera başına durum + KARE HIZI yayınlar.
-
-    fps'i yalnızca nvdec motoru yayınlıyordu; ultralytics motorunda alan boş
-    kalıyor ve panel (src/server.py, fps > 0.1 şartı) olaylar düzgün yazılırken
-    bile "bağlı ama KARE ÜRETMİYOR" diyordu. Çalışan kurulumu hatalı göstermek,
-    gerçek arızayı fark edilmez yapar — bu yüzden fps burada da üretilir:
-    iki heartbeat arasındaki kare farkı / geçen süre.
-    """
+    """Kamera sağlığı: görev denetçisinin durumu (ok/degraded/error/idle) + analize
+    giren kare hızı (fps; panel bunu 'KARE ÜRETMİYOR' uyarısı için okur)."""
     onceki: dict[str, int] = {}
-    son = time.monotonic()
+    son_t = time.monotonic()
     while True:
         time.sleep(interval)
         simdi = time.monotonic()
-        gecen = max(simdi - son, 1e-6)
-        son = simdi
-        for cam in cams:
+        gecen = max(simdi - son_t, 1e-6)
+        son_t = simdi
+        for cam in list(cams):
             cid = cam["id"]
-            st = _STAGE.get(cid, "başlıyor")
-            if st == "silindi":
-                continue
-            status = "error" if st.startswith("error") else ("idle" if st in ("idle", "görev kapalı", "bitti") else "ok")
+            durum, st = _kamera_sagligi(cid)
+            status = "idle" if st in ("idle", "görev kapalı", "bitti") else durum
             toplam = _FRAMES.get(cid, 0)
             fps = (toplam - onceki.get(cid, 0)) / gecen
             onceki[cid] = toplam
-            publish(bus, "health", cid,
-                    {"status": status, "stage": st, "fps": round(fps, 1)})
+            publish(bus, "health", cid, {"status": status, "stage": st, "fps": round(fps, 1)})
 
 
 def _nvdec_kameralarini_ayir(cams: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -414,17 +445,51 @@ def _nvdec_kameralarini_ayir(cams: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 def _standart_workerlar(cams: list[dict], cfg, bus) -> None:
-    """Standart çok-görevli kamera worker'larını başlat ve tamamlanmalarını bekle."""
+    """Standart çok-görevli kamera worker'larını başlat ve tamamlanmalarını bekle.
+
+    Panelden EKLENEN kamera da alınır (`worker.loop_interval` aralığıyla DB
+    taranır): liste yalnız açılışta okunduğunda "kaydettim, hiçbir şey olmuyor"
+    oluyordu — worker elle yeniden başlatılana dek yeni kamera görünmüyordu.
+    """
     if not cams:
         return
     print(f"[worker] standart hat, {len(cams)} kamera: "
-          f"{', '.join(c['id'] for c in cams)}")
+          f"{', '.join(c['id'] for c in cams)}", flush=True)
     threads = [threading.Thread(target=_run_camera, args=(c, cfg, bus), daemon=True)
                for c in cams]
     for t in threads:
         t.start()
     hb = threading.Thread(target=_heartbeat, args=(cams, bus), daemon=True)
     hb.start()
+    selector = os.environ.get("AURAS_CAMERAS", "")
+    keep = {x.strip() for x in selector.split(",") if x.strip()}
+
+    def _yeni_kameralari_al() -> None:
+        while True:
+            time.sleep(int(cfg.get("worker.loop_interval", 30)) or 30)
+            try:
+                st = open_store(cfg)
+                try:
+                    guncel = [c for c in merged_cameras(cfg, st) if c.get("enabled", True)]
+                finally:
+                    st.close()
+            except Exception as e:
+                print(f"[worker] kamera listesi okunamadı: {e}", flush=True)
+                continue
+            if keep:
+                guncel = [c for c in guncel if c["id"] in keep]
+            var = {c["id"] for c in cams}
+            for c in guncel:
+                if c["id"] in var:
+                    continue
+                print(f"[worker] yeni kamera: {c['id']} — işleme alınıyor", flush=True)
+                cams.append(c)          # heartbeat aynı listeyi okur, o da alır
+                t = threading.Thread(target=_run_camera, args=(c, cfg, bus), daemon=True)
+                t.start()
+                threads.append(t)
+
+    if int(cfg.get("worker.loop_interval", 30)) > 0:
+        threading.Thread(target=_yeni_kameralari_al, daemon=True).start()
     while any(t.is_alive() for t in threads):
         time.sleep(1)
     for c in cams:
@@ -456,52 +521,70 @@ def _kameralari_yukle(cfg):
     return bus, cams
 
 
+def _nvdec_calistir(cams, cfg, bus):
+    """NVDEC bölümünü koşar; fallback gereken kamera listesini veya None döndürür."""
+    nvdec_cams, standart_cams = _nvdec_kameralarini_ayir(cams)
+    if standart_cams:
+        print("[worker] yangın görevi NVDEC hattından ayrıldı; standart hat: "
+              f"{', '.join(c['id'] for c in standart_cams)}", flush=True)
+    if not nvdec_cams:
+        _standart_workerlar(standart_cams, cfg, bus)
+        return None
+    sebep = _nvdec_kullanilabilir()
+    if sebep:
+        print(f"[worker] nvdec kullanılamıyor ({sebep}) — ultralytics fallback",
+              flush=True)
+        return cams
+    try:
+        from .gpu_engine import run_gpu_worker
+        arkadas = None
+        if standart_cams:
+            arkadas = threading.Thread(target=_standart_workerlar,
+                args=(standart_cams, cfg, bus), daemon=True,
+                name="auras-standart-fire-cameras")
+            arkadas.start()
+        print(f"[worker] motor=nvdec, {len(nvdec_cams)} kamera: "
+              f"{', '.join(c['id'] for c in nvdec_cams)}")
+        run_gpu_worker(nvdec_cams, cfg, bus)
+        if arkadas is not None:
+            arkadas.join()
+        return None
+    except Exception as e:
+        print(f"[worker] nvdec çalışma hatası ({e.__class__.__name__}: {e}) — "
+              "ultralytics fallback", flush=True)
+        # Standart yangın kameraları zaten açıldı; yalnız NVDEC bölümünü döndür.
+        return nvdec_cams
+
+
 def main() -> None:
     cfg = load_config()
     from .gunluk import kur as gunluk_kur
     gunluk_kur("worker", cfg)
     apply_cv2_http_headers(cfg)   # HLS/CDN kaynakları için ek başlıklar
     bus, cams = _kameralari_yukle(cfg)
-    selector = os.environ.get("AURAS_CAMERAS", "")
-    keep = {x.strip() for x in selector.split(",") if x.strip()} if selector else set()
 
     from . import donanim
-    prof = donanim.profil()
-    print(f"[worker] donanım: {donanim.ozet_satiri()}", flush=True)
     engine = (cfg.get("worker.engine", "auto") or "auto").lower()
     if engine == "auto":
         # Makine ne ise o: nvdec (GB10/Linux+NVIDIA, PyNvVideoCodec+TensorRT) >
         # akis (taşınabilir: PyAV hwaccel + batch YOLO, her OS/GPU/CPU).
         # ultralytics motoru yalnız açıkça istenirse (dosya kaynağı deneme kipi).
+        prof = donanim.profil()
+        print(f"[worker] donanım: {donanim.ozet_satiri()}", flush=True)
         engine = prof["oneri"]["engine"]
         print(f"[worker] motor=auto → {engine}", flush=True)
     if engine == "nvdec":
-        # GB10 GPU pipeline (ADR-0003): NVDEC decode + batch TensorRT + tracker.
-        # PyNvVideoCodec/TensorRT her platformda YOK (ör. Windows wheel'i belirsiz);
-        # import patlarsa sessizce ölmek yerine ultralytics motoruna düşülür —
-        # yavaş ama çalışır. Sessiz çökme sahada "worker açık ama olay yok" demek.
-        sebep = _nvdec_kullanilabilir()
-        if sebep:
-            print(f"[worker] nvdec motoru kullanılamıyor ({sebep}) — taşınabilir "
-                  f"akis motoruna düşülüyor (config.yaml → worker.engine: auto)", flush=True)
-        else:
-            try:
-                from .gpu_engine import run_gpu_worker
-                print(f"[worker] motor=nvdec, {len(cams)} kamera: "
-                      f"{', '.join(c['id'] for c in cams)}")
-                run_gpu_worker(cams, cfg, bus)
-                return
-            except Exception as e:
-                # Çalışma anında patlarsa (sürücü uyumsuzluğu, engine dosyası başka
-                # karta ait, VRAM yetmedi) worker ÖLMEZ — yavaş motorla devam eder.
-                print(f"[worker] nvdec motoru çalışırken hata verdi "
-                      f"({e.__class__.__name__}: {e}) — akis motoruna "
-                      f"düşülüyor", flush=True)
+        # GB10 GPU hattı (ADR-0003). Yangın kamerası NVDEC'te desteklenmez, standart
+        # hatta ayrılır; NVDEC kullanılamıyor/çökerse kalan kameralar düşer.
+        cams = _nvdec_calistir(cams, cfg, bus)
+        if cams is None:
+            return
+        engine = "ultralytics"   # NVDEC düştü: kalan kameralar standart hatta (çift açma yok)
 
     _onizleme_sunucusu_baslat(int(cfg.get("worker.preview_port", 8801)))
-    if engine in ("akis", "nvdec"):
-        # nvdec buraya yalnız çalışamayınca düşer → taşınabilir motor devralır
-        # (ultralytics'e değil: o yol CPU'yu doyuran eski hattır).
+    if engine == "akis":
+        # Taşınabilir motor: sayım/plaka/yüz/yangın/telefon/sigara tek batch hattında
+        # (src/akis_motoru.py). Çalışamazsa ultralytics standart hatta düşülür.
         from .akis_motoru import run_akis_worker
 
         def _hb(cid: str, du: dict) -> None:
@@ -517,54 +600,8 @@ def main() -> None:
                   f"({e.__class__.__name__}: {e}) — ultralytics motoruna "
                   f"düşülüyor", flush=True)
     print(f"[worker] motor=ultralytics, {len(cams)} kamera: {', '.join(c['id'] for c in cams)}")
-    threads = [threading.Thread(target=_run_camera, args=(c, cfg, bus), daemon=True)
-               for c in cams]
-    for t in threads:
-        t.start()
-    hb = threading.Thread(target=_heartbeat, args=(cams, bus), daemon=True)
-    hb.start()
-
-    def _yeni_kameralari_al() -> None:
-        """Panelden EKLENEN kameraya iş parçacığı açar.
-
-        Kamera listesi yalnız açılışta okunuyordu: silinme ele alınmıştı
-        (_run_camera kendini durdurur) ama EKLENME alınmıyordu. Sonuç: panelden
-        kamera eklenince "kaydettim, hiçbir şey olmuyor" — worker elle yeniden
-        başlatılana kadar o kamera görünmezdi. Görev değişikliği zaten her turda
-        DB'den tazeleniyor; eksik olan tek şey buydu.
-        """
-        while True:
-            time.sleep(int(cfg.get("worker.loop_interval", 30)))
-            try:
-                st = open_store(cfg)
-                try:
-                    guncel = [c for c in merged_cameras(cfg, st) if c.get("enabled", True)]
-                finally:
-                    st.close()
-            except Exception as e:
-                print(f"[worker] kamera listesi okunamadı: {e}", flush=True)
-                continue
-            if selector:
-                guncel = [c for c in guncel if c["id"] in keep]
-            var = {c["id"] for c in cams}
-            for c in guncel:
-                if c["id"] in var:
-                    continue
-                print(f"[worker] yeni kamera: {c['id']} — işleme alınıyor", flush=True)
-                cams.append(c)          # heartbeat aynı listeyi okur, o da alır
-                t = threading.Thread(target=_run_camera, args=(c, cfg, bus), daemon=True)
-                t.start()
-                threads.append(t)
-
-    izci = threading.Thread(target=_yeni_kameralari_al, daemon=True)
-    izci.start()
-
     try:
-        while any(t.is_alive() for t in threads) or izci.is_alive():
-            time.sleep(1)
-        # dosya kaynakları tek geçişte bittiyse son durumu bir kez daha yayınla
-        for c in cams:
-            publish(bus, "health", c["id"], {"status": "idle", "stage": _STAGE.get(c["id"], "bitti")})
+        _standart_workerlar(cams, cfg, bus)
     except KeyboardInterrupt:
         pass
 

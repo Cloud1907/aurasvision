@@ -17,8 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .analytics import AnalyticsMixin
-from .store_fire import (PG_RECENT_EVENTS, SQLITE_FIRE_SCHEMA,
-                         SQLITE_RECENT_EVENTS, ensure_pg_fire)
+from .store_fire import SQLITE_FIRE_SCHEMA, ensure_pg_fire
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -577,24 +576,24 @@ class SqliteStore(BaseStore):
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
                  TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
-                 NULL AS snapshot, zone, direction, NULL AS conf
+                 NULL AS snapshot, zone, direction, NULL AS conf, NULL AS state, NULL AS clip
             FROM count_events
           UNION ALL
           SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot,
-                 NULL AS zone, NULL AS direction, conf
+                 NULL AS zone, NULL AS direction, conf, NULL, NULL
             FROM plate_events
           UNION ALL
           SELECT time, 'face', camera_id,
                  COALESCE(gender,'?')||' ~'||COALESCE(age,0), ts_seconds, frame_idx, NULL,
-                 NULL AS zone, NULL AS direction, NULL AS conf
+                 NULL AS zone, NULL AS direction, NULL AS conf, NULL, NULL
             FROM face_events
           UNION ALL
           SELECT time, 'fire', camera_id, class||' · '||state, ts_seconds, frame_idx,
-                 snapshot, NULL AS zone, NULL AS direction, conf
+                 snapshot, NULL AS zone, NULL AS direction, conf, state, clip
             FROM fire_events
           UNION ALL
           SELECT time, kind, camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
-                 NULL, NULL, snapshot, NULL, NULL, NULL
+                 NULL, NULL, snapshot, NULL, NULL, NULL, NULL, NULL
             FROM alerts WHERE kind IN ('intrusion','telefon','sigara')
         ) ev
         """
@@ -772,24 +771,24 @@ class PgStore(BaseStore):
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
                  TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
-                 NULL AS snapshot, zone, direction, NULL::real AS conf
+                 NULL AS snapshot, zone, direction, NULL::real AS conf, NULL::text AS state, NULL::text AS clip
             FROM count_events
           UNION ALL
           SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot,
-                 NULL AS zone, NULL AS direction, conf
+                 NULL AS zone, NULL AS direction, conf, NULL, NULL
             FROM plate_events
           UNION ALL
           SELECT time, 'face', camera_id,
                  COALESCE(gender, chr(63))||' ~'||COALESCE(age::text,'0'), ts_seconds, frame_idx,
-                 NULL, NULL AS zone, NULL AS direction, NULL::real AS conf
+                 NULL, NULL AS zone, NULL AS direction, NULL::real AS conf, NULL, NULL
             FROM face_events
           UNION ALL
           SELECT time, 'fire', camera_id, class||' · '||state, ts_seconds, frame_idx,
-                 snapshot, NULL AS zone, NULL AS direction, conf
+                 snapshot, NULL AS zone, NULL AS direction, conf, state, clip
             FROM fire_events
           UNION ALL
           SELECT time, kind, camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
-                 NULL, NULL, snapshot, NULL, NULL, NULL
+                 NULL, NULL, snapshot, NULL, NULL, NULL, NULL, NULL
             FROM alerts WHERE kind IN ('intrusion','telefon','sigara')
         ) ev
         """

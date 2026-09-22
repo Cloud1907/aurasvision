@@ -93,4 +93,6 @@ class KameraCooldownTest(unittest.TestCase):
         olaylar = []
         for i in range(6):
             olaylar += t.guncelle([("fire", 800, 800, 900, 900, 0.9)], 65.0 + i * 0.5)
-        self.assertEqual([o["durum"] for o in olaylar], ["alarm"])
+        # max_gap_seconds (ana dal): 60 sn görülmeyen odak birikimini kaybeder, yeniden
+        # doğrulanır → ön uyarı + alarm. Cooldown dolduğu için ikisi de yayınlanır.
+        self.assertEqual([o["durum"] for o in olaylar], ["on_uyari", "alarm"])
