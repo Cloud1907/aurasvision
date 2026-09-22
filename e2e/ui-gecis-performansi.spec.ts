@@ -10,6 +10,8 @@ const EKRANLAR: [string, string][] = [
   ['lists', 'Tanıma listeleri'], ['sys', 'Sistem'],
 ];
 
+// Kosu komutu: npx playwright test -c playwright.ui.config.ts --project=performans --workers=1
+// Paralel kosuda olcum CPU rekabetine takilir; bu dosya varsayilan pakete dahil degildir.
 const SURE_ESIGI = 600;      // ms — tıklamadan boyanmış ekrana
 const UZUN_GOREV_ESIGI = 250; // ms — tek bir uzun görev bu kadar sürerse ekran donmuş demektir
 

@@ -37,8 +37,12 @@ her madde ya ölçülür ya ekran görüntüsüyle gösterilir.
 - Projenin e2e paketi yeşil; kırmızıysa nedeni yazılır.
 
 ## 6. Ekran geçişi performansı
-Ölçüm: `npx playwright test -c playwright.ui.config.ts -g "tüm ekran geçişleri"`
+Ölçüm: `npx playwright test -c playwright.ui.config.ts --project=performans --workers=1`
 (`e2e/ui-gecis-performansi.spec.ts` — her ekranı gezer, tabloyu basar).
+
+Tek işçi şart: paralel koşuda ölçüm CPU rekabetine takılır — aynı geçiş sessiz
+makinede 238 ms, kalabalık koşuda 1009 ms ölçüldü. Kalabalıkta ölçülen sayı
+arayüzü değil makineyi anlatır.
 
 - Tıklamadan boyanmış ekrana kadar **600 ms** üstü geçiş kabul edilmez.
 - Geçiş sırasında **250 ms**'yi aşan tek bir uzun görev bile olmamalı;
