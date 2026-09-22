@@ -29,7 +29,7 @@ export const responses: Record<string, () => unknown> = {
       const camera = cameras[(hourIndex + eventIndex) % cameras.length];
       return { camera_id: camera.id, type: ['count', 'plate', 'count', 'face', 'fire', 'count'][(hourIndex + eventIndex) % 6],
         detail: 'Temsili test olayı', time: new Date(new Date(eventTime).getTime() - (5 - hourIndex) * 60 * 60 * 1000 - eventIndex * 60000).toISOString(), ts_seconds: 12, frame_idx: 60 };
-    })),
+    })).reverse(),   // API gibi: en yeni önce (store.recent_events ORDER BY time DESC)
   '/events/summary': () => ({ hours: 24, cameras: cameras.map((c, i) => ({ camera_id: c.id, count: 34 + i * 12, count_events: 24, plate: 4, face: 0, fire: 0, alerts: i === 1 || i === 2 ? 1 : 0, last: eventTime })) }),
   '/recordings/stats': () => ({ enabled: true, total_bytes: 38 * 1024 ** 3, keep_days: 30,
     cameras: cameras.map((c, i) => ({ camera_id: c.id, segments: 30, bytes: (i + 1) * 256 * 1024 ** 2, oldest: eventTime, newest: new Date().toISOString() })) }),

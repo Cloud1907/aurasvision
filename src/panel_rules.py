@@ -1,6 +1,7 @@
 """Panel bildirim kuralları; kamera/model ayarlarını değiştirmez."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import threading
@@ -33,6 +34,24 @@ class RuleSet(BaseModel):
         return self
 
 
+@contextlib.contextmanager
+def _dosya_kilidi(path: Path):
+    """Süreçler arası kilit: birden çok uvicorn işçisi aynı revizyonu okuyup
+    ikisi de yazamasın. fcntl olmayan platformda (Windows) süreç içi kilide düşer."""
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_name(path.name + '.lock'), 'a+') as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 class RuleRepository:
     def __init__(self, path: Path):
         self.path = path
@@ -47,7 +66,7 @@ class RuleRepository:
             ).model_dump()
 
     def save(self, payload: RuleSet):
-        with self.lock:
+        with self.lock, _dosya_kilidi(self.path):
             current = self.load()
             if current["revision"] != payload.revision:
                 raise ValueError("Rules changed; refresh before saving")

@@ -52,7 +52,7 @@ test('V13: KPI gerçek kaynak kapsamını ve alarm sınırını dürüstçe gös
   await expect(page.getByText('Son olay')).toBeVisible();
   await expect(page.getByText('Kayıt kapsamı')).toBeVisible();
   await expect(page.getByLabel('Operasyon göstergeleri').getByText(/18[/.]09/)).toBeVisible();
-  await expect(page.getByLabel('Operasyon göstergeleri').getByText(/Geçiş · Ana giriş/)).toBeVisible();
+  await expect(page.getByLabel('Operasyon göstergeleri').getByText(/Geçiş · Koridor/)).toBeVisible();
   await expect(page.getByText('Yangın analizi etkin değil')).toBeVisible();
 });
 

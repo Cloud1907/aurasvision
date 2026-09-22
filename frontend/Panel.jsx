@@ -20,7 +20,8 @@ export default function Panel({ bridge }) {
   const health = useResource(bridge, '/health', 10000);
   const alarms = useResource(bridge, '/alerts?limit=500&pending=true', 10000);
   const status = useResource(bridge, '/status', 15000);
-  const events = useResource(bridge, '/events?limit=500', 15000);
+  // Grafik en fazla 12 dilim, akış 5 satır ister: 500 satırı 15 sn'de bir çekip serileştirmek israftı.
+  const events = useResource(bridge, '/events?limit=200', 15000);
   const totals = useResource(bridge, '/events/summary?hours=24', 30000);
   const archive = useResource(bridge, '/recordings/stats', 60000);
   const capabilities = useResource(bridge, '/capabilities', 60000);
