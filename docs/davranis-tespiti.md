@@ -118,3 +118,23 @@ ama HEDEF SAHNE DEĞİLDİR: yüz kadrajı doldurunca `imgsz 960` poz modelini b
 Poz modeli Ultralytics (AGPL-3.0): sayım/plaka/yüz hatlarıyla aynı motor ve aynı
 hukuki durum (`src/dedektor.py` başlığı). Sigara ağırlığı MIT. Ayrı motor
 kararı verilirse değişecek tek yer `davranis._poz_kur`.
+
+
+## Canlı ayrıntı düzeltmesi (2026-09-22)
+
+`davranis.use_main_stream: true` artık canlı kaynak seçimine uygulanır.
+Alt akıştaki küçük başlar minimum piksel eşiğine takıldığı için ana akış kullanılır.
+Telefon doğrulayıcısı canlı ve dosya yolunda kişi kırpmalarını inceler: kamera
+başına saniyede bir, en büyük altı kişi. Kutular ana kare koordinatlarına
+çevrilir ve yalnız bir tarama aralığı boyunca kullanılır.
+
+Telefon kutusu kişinin bileğine yakınsa zamansal telefon adayı sayılır;
+kulakta tutulması şart değildir. Boş el, masadaki telefon ve tek karelik
+tespit yeterli değildir. Etiket bu nedenle **telefon kullanımı**dır;
+görüntüden sesli konuşma yapıldığı iddia edilmez. Telefon tutan el sigara
+hareketinden çıkarılır; diğer elin sigara hareketi bağımsız değerlendirilir.
+
+Yerel CCTV kaydında yeniden analiz (768 kare) telefon kutusuyla doğrulanan
+telefon alarmı ve poz hareketine dayanan sigara alarmları üretti. Üç negatif
+klibin 677 örnek karesinde alarm oluşmadı; bir sigara ön uyarısı oluştu.
+Bu sınırlı saha doğrulamasıdır; sigara için ayrı nesne modeli hâlâ kurulu değildir.

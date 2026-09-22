@@ -1,4 +1,4 @@
-"""Davranış tespiti — telefonla konuşma ve sigara içme (poz sezgiseli + nesne doğrulama).
+"""Davranış tespiti — telefon kullanımı ve sigara içme (poz sezgiseli + nesne doğrulama).
 
 Neden ayrı bir modül: yangın gibi bu da "tek karede karar verilemeyen" bir iştir.
 Sigara birkaç piksel, telefon kulakta ele gizli; tek kare dedektörü sahada
@@ -50,7 +50,7 @@ BURUN, GOZ_SOL, GOZ_SAG, KULAK_SOL, KULAK_SAG = 0, 1, 2, 3, 4
 OMUZ_SOL, OMUZ_SAG, DIRSEK_SOL, DIRSEK_SAG, BILEK_SOL, BILEK_SAG = 5, 6, 7, 8, 9, 10
 
 SINIFLAR = ("telefon", "sigara")   # her biri AYRI görev anahtarı ve AYRI alarm türüdür
-ETIKETLER = {"telefon": "telefonla konuşma", "sigara": "sigara içme"}
+ETIKETLER = {"telefon": "telefon kullanımı", "sigara": "sigara içme"}
 
 
 def aktif_siniflar(tasks: dict | None) -> tuple[str, ...]:
@@ -89,7 +89,7 @@ def bas_olcegi(kp, kc, kutu, esik: float = 0.3) -> float:
 
 
 def ozellikler(kp, kc, kutu, esik: float = 0.3,
-               kulak_oran: float = 0.8, agiz_oran: float = 1.4) -> dict:
+               kulak_oran: float = 0.8, agiz_oran: float = 1.4, ignore_wrists=()) -> dict:
     """Bir kişinin tek karedeki poz özellikleri.
 
     Döner: {bas: px, kulak: bool, agiz: bool, bas_kutu: (x1,y1,x2,y2)}
@@ -114,7 +114,7 @@ def ozellikler(kp, kc, kutu, esik: float = 0.3,
     agiz_pt = (kp[BURUN][0], kp[BURUN][1] + 0.5 * bas) if burun_ok else None
     kulak = agiz = False
     for b, d in ((BILEK_SOL, DIRSEK_SOL), (BILEK_SAG, DIRSEK_SAG)):
-        if kc[b] <= esik:
+        if kc[b] <= esik or b in ignore_wrists:
             continue
         w = kp[b]
         if omuz_y is not None and w[1] > omuz_y + 0.6 * bas:
@@ -267,16 +267,32 @@ class DavranisTakip:
             iz.bas_kutu = oz["bas_kutu"]
             if oz["bas"] < self.min_bas_px:
                 continue            # çok uzak: sezgisel gürültüde, değerlendirme
-            iz.gecmis.append((ts, oz["kulak"], oz["agiz"]))
+            # Telefonun kulakta olması şart değil; kişinin elinde nesne olarak
+            # doğrulanması gerekir. Masadaki/komşu kişideki telefon kabul edilmez.
+            telefon_eller = set()
+            for tk in telefon_kutular or ():
+                if not _kesisir(tk, kutu):
+                    continue
+                for wrist in (BILEK_SOL, BILEK_SAG):
+                    if kc[wrist] <= self.kp_esik:
+                        continue
+                    x, y = kp[wrist]
+                    dx = max(tk[0] - x, 0, x - tk[2])
+                    dy = max(tk[1] - y, 0, y - tk[3])
+                    if (dx * dx + dy * dy) ** 0.5 <= oz["bas"] * 0.9:
+                        telefon_eller.add(wrist)
+            iz.gecmis.append((ts, oz["kulak"] or bool(telefon_eller), oz["agiz"]))
             ufuk = ts - max(self.telefon_sn * 2.5, self.sigara_pencere_sn)
             while iz.gecmis and iz.gecmis[0][0] < ufuk:
                 iz.gecmis.popleft()
             # doğrulayıcılar
             if telefon_kutular:
-                if any(_kesisir(tk, iz.bas_kutu) for tk in telefon_kutular):
+                if telefon_eller or any(_kesisir(tk, iz.bas_kutu) for tk in telefon_kutular):
                     iz.dogrulama["telefon"] = (ts, "telefon kutusu")
             # Telefon pozundaki el ağız yarıçapına da girer: o karede dokunuş sayılmaz
-            self._sigara_dokunus(iz, oz["agiz"] and not oz["kulak"], ts, sigara_kontrol)
+            sig_oz = ozellikler(kp, kc, kutu, self.kp_esik, self.kulak_oran,
+                               self.agiz_oran, ignore_wrists=telefon_eller)
+            self._sigara_dokunus(iz, sig_oz["agiz"] and not sig_oz["kulak"], ts, sigara_kontrol)
             olaylar += self._degerlendir(iz, ts)
         return olaylar
 
@@ -432,7 +448,7 @@ def _sigara_kur(cfg):
 
 
 def _telefon_kur(cfg):
-    """CLI/Test yolu için stok COCO dedektörü: (bgr) → telefon kutuları. akis motorunda gereksiz."""
+    """Canlı ve dosya yolunda stok COCO dedektörü: kişi kırpması → telefon kutuları."""
     if str(cfg.get("davranis.telefon_dogrulama", "tercih")) == "kapali":
         return None
     from ultralytics import YOLO
@@ -487,13 +503,16 @@ class DavranisHatti:
     """
 
     def __init__(self, cfg, w: int, h: int, camera_id: str, efektif_fps: float,
-                 *, poz=None, sigara=None, store=None, on_event=None, on_alert=None,
+                 *, poz=None, sigara=None, telefon=None, store=None, on_event=None, on_alert=None,
                  siniflar=SINIFLAR) -> None:
         self.cfg = cfg
         self.w, self.h = w, h
         self.camera_id = camera_id
         self.poz = poz or _poz_kur(cfg)
         self.sigara = sigara if "sigara" in siniflar else None
+        self.telefon = telefon if "telefon" in siniflar else None
+        self._telefon_ts = -1e9
+        self._telefon_boxes = []
         self.siniflar = tuple(siniflar)
         self.takip = _takip_kur(cfg, siniflar)
         self.efektif_fps = max(1.0, float(efektif_fps))
@@ -525,8 +544,26 @@ class DavranisHatti:
         self.sonuc.frames += 1
         self.halka.append(bgr.copy())
         kisiler = self.poz(bgr)
+        # Tam karede kaybolan küçük telefonu kişi kırpmasında ara. Çağrı sayısı
+        # kamera başına saniyede bir, en büyük altı kişiyle sınırlıdır.
+        interval = max(0.25, float(self.cfg.get("davranis.telefon_aralik_sn", 1.0)))
+        if self.telefon is not None and ts - self._telefon_ts >= interval:
+            self._telefon_boxes = []
+            self._telefon_ts = ts
+            for box, _, _ in sorted(kisiler, key=lambda p: (p[0][2]-p[0][0])*(p[0][3]-p[0][1]), reverse=True)[:6]:
+                x1, y1, x2, y2 = box
+                dx, dy = (x2 - x1) * 0.35, (y2 - y1) * 0.15
+                x1, y1 = max(0, int(x1-dx)), max(0, int(y1-dy))
+                x2, y2 = min(self.w, int(x2+dx)), min(self.h, int(y2+dy))
+                if x2-x1 < 16 or y2-y1 < 16:
+                    continue
+                self._telefon_boxes.extend((a+x1, b+y1, c+x1, d+y1)
+                                           for a,b,c,d in self.telefon(bgr[y1:y2, x1:x2]))
+        boxes = list(telefon_kutular or ())
+        if 0 <= ts - self._telefon_ts < interval:
+            boxes.extend(self._telefon_boxes)
         self.sonuc.kisiler_max = max(self.sonuc.kisiler_max, len(kisiler))
-        for o in self.takip.guncelle(kisiler, ts, telefon_kutular, self._sigara_kontrol(bgr)):
+        for o in self.takip.guncelle(kisiler, ts, boxes, self._sigara_kontrol(bgr)):
             o["camera_id"] = self.camera_id
             o["frame_idx"] = frame_idx
             self._yay(o, bgr)
@@ -596,12 +633,10 @@ def run_davranis(source: str, cfg, store=None, camera_id: str = "",
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     hat = DavranisHatti(cfg, w, h, camera_id, fps / vid_stride,
+                        telefon=_telefon_kur(cfg) if "telefon" in siniflar else None,
                         sigara=_sigara_kur(cfg) if "sigara" in siniflar else None,
                         store=store, on_event=on_event, on_alert=on_alert,
                         siniflar=siniflar)
-    telefonlar = _telefon_kur(cfg) if "telefon" in siniflar else None
-    tel_aralik = float(cfg.get("davranis.telefon_aralik_sn", 1.0))
-    son_tel, tel_kutular = -1e9, []
     ham_idx = 0
     try:
         while should_stop is None or not should_stop():
@@ -612,10 +647,7 @@ def run_davranis(source: str, cfg, store=None, camera_id: str = "",
             if ham_idx % vid_stride:
                 continue
             ts = ham_idx / fps
-            if telefonlar is not None and ts - son_tel >= tel_aralik:
-                son_tel = ts
-                tel_kutular = telefonlar(kare)
-            tespitler = hat.kare(kare, ts, ham_idx, telefon_kutular=tel_kutular or None)
+            tespitler = hat.kare(kare, ts, ham_idx)
             if on_frame is not None:
                 on_frame(_ciz(kare, tespitler))
     finally:

@@ -1221,7 +1221,7 @@ const SCREENS={
       <td><span class="gorevler">${[["count","Sayım"],["plate","Plaka"],["face","Yüz"],["fire","Yangın"],["telefon","Telefon"],["sigara","Sigara"],["record","Kayıt"]].map(([k,l])=>{
         const kapali=(k==='fire'&&!fireCap.available)||(k==='telefon'&&!telCap.available)||(k==='sigara'&&!sigCap.available);
         const eksik=k==="count"&&bolgeEksik(c);
-        const baslik=kapali?(k==='fire'?fireCap.reason:k==='telefon'?telCap.reason:sigCap.reason):(k==='telefon'?'Telefonla konuşma tespiti (poz + telefon kutusu doğrulaması)':k==='sigara'?'Sigara içme tespiti (poz + isteğe bağlı sigara dedektörü)':k==='record'?'Sürekli kaydı aç/kapat (NVR arşivi)':eksik?`${l} açık ama sayım çizgisi yok — Bölgeler ekranından çiz`:l+' görevini aç/kapat');
+        const baslik=kapali?(k==='fire'?fireCap.reason:k==='telefon'?telCap.reason:sigCap.reason):(k==='telefon'?'Telefon kullanımı tespiti (poz + telefon kutusu doğrulaması)':k==='sigara'?'Sigara içme tespiti (poz + isteğe bağlı sigara dedektörü)':k==='record'?'Sürekli kaydı aç/kapat (NVR arşivi)':eksik?`${l} açık ama sayım çizgisi yok — Bölgeler ekranından çiz`:l+' görevini aç/kapat');
         return `<button class="chipbtn ${(k==="record"?t[k]!==false:t[k])?'on':''} ${eksik?'eksik':''}" title="${esc(baslik)}" ${kapali?'disabled':''} onclick="toggleTask('${esc(c.id)}','${k}')">${l}${eksik?' ⚠':''}</button>`;}).join("")}
         ${bolgeEksik(c)?`<a class="eksikrozet" title="Sayım çizgisi çiz" onclick="window._zc='${esc(c.id)}';go('zones')">⚠ çizgi gerekiyor</a>`:""}</span></td>
       <td><span class="eylem">
@@ -1456,7 +1456,7 @@ const SCREENS={
                 plate:["cams","var(--warn-soft)","var(--warn)","Plaka okuma"],
                 face:["events","var(--ok-soft)","var(--ok)","Yüz tespiti"],
                 fire:["events","var(--danger-soft)","var(--danger)","Yangın erken uyarısı"],
-                telefon:["events","var(--warn-soft)","var(--warn)","Telefonla konuşma"],
+                telefon:["events","var(--warn-soft)","var(--warn)","Telefon kullanımı"],
                 sigara:["events","var(--danger-soft)","var(--danger)","Sigara içme"],
                 intrusion:["events","var(--danger-soft)","var(--danger)","Alan ihlali"]};
     const adOf=id=>(CAMS.find(c=>c.id===id)||{}).name||id;
@@ -1464,7 +1464,7 @@ const SCREENS={
     const alarmBasligi=a=>a.kind==='fire_warning'
       ? `Yangın erken uyarısı · <span style="font-weight:700;">${esc(a.ref)}</span>`
       : a.kind==='telefon'
-      ? `📞 Telefonla konuşma · <span class="mut-s">${esc(a.label||'')}</span>`
+      ? `📞 Telefon kullanımı · <span class="mut-s">${esc(a.label||'')}</span>`
       : a.kind==='sigara'
       ? `🚬 Sigara içme · <span class="mut-s">${esc(a.label||'')}</span>`
       : a.kind==='intrusion'

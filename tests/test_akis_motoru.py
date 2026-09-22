@@ -71,6 +71,24 @@ class KaynakSecimiTest(unittest.TestCase):
         url, tip = self.m.kaynak_url(self.cam, cfg, {"count": True})
         self.assertEqual(url, "rtsp://cam/main")
 
+    def test_davranis_ana_akis_ve_acik_alt_akis_tercihi(self):
+        for task in ("telefon", "sigara"):
+            for enabled, expected in ((True, "rtsp://cam/main"), (False, "rtsp://cam/sub")):
+                cfg = _Cfg({"davranis": {"use_main_stream": enabled}})
+                self.assertEqual(self.m.kaynak_url(self.cam, cfg, {task: True})[0], expected)
+
+    def test_davranis_yeniden_baglantida_geri_gelen_zamani_kabul_eder(self):
+        from unittest.mock import Mock
+        kademe = self.m._DavranisKademe(_Cfg({}), None)
+        kademe.pool.shutdown()
+        kademe.pool = Mock()
+        kademe._modeller = Mock(return_value=True)
+        kademe.last['k1'] = 100
+        kademe.hat_key['k1'] = 'old'
+        kademe.maybe_submit('k1', {}, None, 1, (640, 480))
+        kademe.pool.submit.assert_called_once()
+        self.assertNotIn('k1', kademe.hat_key)
+
 
 @unittest.skipUnless(_numpy_var(), "numpy/torch/ultralytics gerekir (takipçi)")
 class HatUctanUcaTest(unittest.TestCase):

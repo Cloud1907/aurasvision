@@ -68,6 +68,35 @@ def _takip(**kw):
 
 
 class TelefonTest(unittest.TestCase):
+    def test_ayni_kiside_telefon_ve_sigara_bagimsizdir(self):
+        from src.davranis import BILEK_SOL
+        t = _takip()
+        events = []
+        for i in range(100):
+            b, kp, kc = kisi(bilek=(345, 195))
+            kp[BILEK_SOL] = AGIZ if i % 32 < 4 else (300, 400)
+            kc[BILEK_SOL] = .9
+            events += t.guncelle([(b, kp, kc)], i/4, [(335, 177, 355, 200)])
+        self.assertEqual({e['sinif'] for e in events if e['durum'] == 'alarm'}, {'telefon', 'sigara'})
+
+    def test_onunde_elde_dogrulanan_telefon_alarm_uretir(self):
+        t = _takip()
+        ol = self._kos(t, 6, bilek=(335, 190), telefon=[(323, 169, 345, 197)])
+        self.assertTrue(any(o['sinif'] == 'telefon' and o['durum'] == 'alarm' for o in ol))
+
+    def test_masadaki_telefon_ve_bos_el_alarm_uretmez(self):
+        for boxes in (None, [(240, 300, 265, 330)]):
+            ol = self._kos(_takip(), 20, bilek=(335, 190), telefon=boxes)
+            self.assertFalse(any(o['sinif'] == 'telefon' for o in ol))
+
+    def test_tek_kare_telefon_dogrulamasi_alarm_uretmez(self):
+        t = _takip()
+        ol = []
+        for i in range(40):
+            boxes = [(323, 169, 345, 197)] if i == 0 else None
+            ol += t.guncelle([kisi(bilek=(335, 190))], i / 4, telefon_kutular=boxes)
+        self.assertFalse(any(o['sinif'] == 'telefon' for o in ol))
+
     def _kos(self, takip, saniye, fps=4, bilek=TELEFON, telefon=None):
         olaylar = []
         for i in range(int(saniye * fps)):
@@ -200,6 +229,23 @@ class SinifSecimiTest(unittest.TestCase):
 
 
 class HatTest(unittest.TestCase):
+    def test_telefon_kirpma_koordinatlari_ve_bayat_kutu(self):
+        from src.config import Config
+        from unittest.mock import Mock
+        cfg = Config({'evidence': {'enabled': False}})
+        detect = Mock(return_value=[(10, 20, 25, 40)])
+        hat = DavranisHatti(cfg, 640, 480, 'test', 4, telefon=detect,
+                           poz=lambda frame: [kisi(bilek=(335, 190))])
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        hat.kare(frame, 10, 0)
+        self.assertEqual(detect.call_count, 1)
+        self.assertEqual(hat._telefon_boxes, [(174, 26, 189, 46)])
+        hat.kare(frame, 10.5, 1)
+        self.assertEqual(detect.call_count, 1)
+        detect.return_value = []
+        hat.kare(frame, 11, 2)
+        self.assertEqual(hat._telefon_boxes, [])
+
     def test_hat_sahte_pozla_etiket_uretir(self):
         class Cfg(dict):
             def get(self, k, d=None):

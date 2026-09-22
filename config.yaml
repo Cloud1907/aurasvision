@@ -327,8 +327,7 @@ davranis:
   conf: 0.4             # kişi tespit eşiği (poz modeli)
   fps: 4                # akis motoru: kamera başına tempo (yangınla aynı desen)
   vid_stride: 3         # dosya/Test yolu: her N karede bir
-  use_main_stream: false   # substream (896 px) yakın plandaki kişi için yeter; uzak kişi
-                           # zaten min_bas_px altında kalır — ana akış çözümü boşa gider.
+  use_main_stream: true    # küçük el/baş ayrıntıları için ana akış; kaynak seçimi bu ayarı uygular.
   min_bas_px: 16        # baş (kulaklar arası) bu pikselin altındaysa kişi DEĞERLENDİRİLMEZ:
                         # bilek-kulak mesafesi gürültüye gömülür. Ölçüm: 720×1280 sokak
                         # klibinde baş 22 px, imgsz 960 ile yakalandı; 24 sınırı kaçırıyordu.

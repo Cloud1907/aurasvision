@@ -202,7 +202,8 @@ def kaynak_url(cam: dict, cfg, gorevler: dict) -> tuple[str, str]:
     # yeni tutuşan alev 2×2 karoyla bile görülmez (docs/olcumler-yangin-saha-*).
     # Ana akış burada NVDEC/d3d11va'da çözülür, CPU'ya eski yük binmez.
     yangin = bool(gorevler.get("fire")) and bool(cfg.get("fire.use_main_stream", True))
-    sub = sub_ok and not (plaka or yangin)
+    davranis = _davranis_acik(gorevler) and bool(cfg.get("davranis.use_main_stream", True))
+    sub = sub_ok and not (plaka or yangin or davranis)
     tip = "substream" if sub else "ana akış"
     if go2rtc:
         # go2rtc dosya kaynaklarını da (exec ffmpeg döngüsü) aynı adla yayınlar
@@ -382,6 +383,7 @@ class _DavranisKademe:
         self.fps = float(cfg.get("davranis.fps", 4.0))
         self.poz = None
         self.sigara = None
+        self.telefon = None
         self.hata = ""
         self.deneme = 0
         self.son_deneme = 0.0
@@ -391,18 +393,22 @@ class _DavranisKademe:
         self.last: dict[str, float] = {}
         self.kare_n = 0
 
+        self.camera_frames: dict[str, int] = {}
+
     def _modeller(self):
         if self.poz is not None:
             return self.poz
         if self.hata and (self.deneme >= _YUKLEME_DENEME
                           or time.time() - self.son_deneme < _YUKLEME_ARALIK):
             return None
-        from .davranis import _poz_kur, _sigara_kur
+        from .davranis import _poz_kur, _sigara_kur, _telefon_kur
         self.deneme += 1
         self.son_deneme = time.time()
         try:
-            self.poz = _poz_kur(self.cfg)
-            self.sigara = _sigara_kur(self.cfg)
+            poz = _poz_kur(self.cfg)
+            sigara = _sigara_kur(self.cfg)
+            telefon = _telefon_kur(self.cfg)
+            self.poz, self.sigara, self.telefon = poz, sigara, telefon
             self.hata = ""
             poz_ad = self.cfg.get("davranis.pose_model", "weights/yolo11n-pose.pt")
             print(f"{_ON} davranış hattı yüklendi: poz {poz_ad} · sigara dedektörü "
@@ -417,7 +423,14 @@ class _DavranisKademe:
         return self.poz
 
     def maybe_submit(self, cid: str, st: dict, bgr, ts: float, wh) -> None:
-        if ts - self.last.get(cid, -1e9) < 1.0 / max(self.fps, 0.1) or cid in self.busy:
+        if cid in self.busy:
+            return
+        if ts < self.last.get(cid, -1e9):
+            # RTSP yeniden bağlanınca PTS sıfırlanabilir. Eski zamana kadar
+            # beklemek yerine yalnız bu kameranın zamansal izini yenile.
+            self.last.pop(cid, None)
+            self.hat_key.pop(cid, None)
+        if ts - self.last.get(cid, -1e9) < 1.0 / max(self.fps, 0.1):
             return
         if self._modeller() is None:
             return
@@ -433,7 +446,7 @@ class _DavranisKademe:
             key = repr((w, h, siniflar))
             if self.hat_key.get(cid) != key:
                 self.hat[cid] = DavranisHatti(
-                    self.cfg, w, h, cid, self.fps, poz=self.poz, sigara=self.sigara,
+                    self.cfg, w, h, cid, self.fps, poz=self.poz, sigara=self.sigara, telefon=self.telefon,
                     store=None, on_event=lambda o, c=cid: self._olay(c, o),
                     on_alert=lambda o, c=cid: self._olay(c, o), siniflar=siniflar)
                 self.hat_key[cid] = key
@@ -443,6 +456,7 @@ class _DavranisKademe:
                 tel = tk[1]
             tespitler = self.hat[cid].kare(bgr, ts, st["frame_idx"], telefon_kutular=tel)
             self.kare_n += 1
+            self.camera_frames[cid] = self.camera_frames.get(cid, 0) + 1
             # Panel: yalnız işaretli kişiler (sayım zaten herkesi çiziyor)
             st["davranis_dets"] = [
                 {"id": 0, "x1": round(float(x1) / w, 4), "y1": round(float(y1) / h, 4),
@@ -803,10 +817,13 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                 publish(bus, "health", cid, du)
             yk, yangin.kare_n = yangin.kare_n, 0
             dk, davranis.kare_n = davranis.kare_n, 0
+            behavior_rates = ', '.join(f'{cid}={n / max(now - last_hb_t, 1e-6):.1f}'
+                                       for cid, n in davranis.camera_frames.items())
+            davranis.camera_frames = {}
             print(f"{_ON} inference {rate:.1f} kare/sn · CPU {kul.get('cpu_pct', '?')}% · "
                   f"GPU {kul.get('gpu_pct', '?')}% · NVDEC {kul.get('nvdec_pct', '?')}%"
                   + (f" · yangın {yk / max(now - last_hb_t, 1e-6):.1f} kare/sn" if yk else "")
-                  + (f" · davranış {dk / max(now - last_hb_t, 1e-6):.1f} kare/sn" if dk else ""),
+                  + (f" · davranış {dk / max(now - last_hb_t, 1e-6):.1f} kare/sn ({behavior_rates})" if dk else ""),
                   flush=True)
         if now - last_refresh >= 30.0:
             last_refresh = now
