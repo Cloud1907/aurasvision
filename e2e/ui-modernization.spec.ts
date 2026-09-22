@@ -11,6 +11,7 @@ test('K1: geç olay yanıtı yeni ekranı ezmez', async ({ page }) => {
     await route.fulfill({ json: [] });
   });
   await page.locator('[data-nav="events"]').click();
+  await page.locator('.nav-group-toggle').filter({ hasText: 'Ayarlar' }).click();
   await page.locator('[data-nav="cams"]').click();
   await expect(page.getByRole('heading', { name: 'Kameralar', exact: true })).toBeVisible();
   await expect(page.getByText('Kamera envanteri', { exact: true })).toBeVisible();
@@ -34,6 +35,7 @@ test('K4: dar ekranda çalışma alanı ve klavye navigasyonu', async ({ page })
   await expect(page.locator('#content')).toBeVisible();
   expect((await page.locator('#content').boundingBox())!.y).toBeLessThan(180);
   await page.getByRole('button', { name: 'Menüyü aç' }).click();
+  await page.locator('.nav-group-toggle').filter({ hasText: 'Ayarlar' }).click();
   const nav = page.locator('[data-nav="cams"]');
   await nav.focus();
   await expect(nav).toBeFocused();
