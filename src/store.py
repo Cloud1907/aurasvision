@@ -343,8 +343,25 @@ class BaseStore(AnalyticsMixin):
             self._x(f"DELETE FROM {t}")
         self.commit()
 
+    def _event_where(self, tur, kamera, start, end, text):
+        conditions, params = [], []
+        for column, value in (("type", tur), ("camera_id", kamera)):
+            if value:
+                conditions.append(column + "=?")
+                params.append(value)
+        for operator, value in ((">=", start), ("<=", end)):
+            if value:
+                conditions.append(f"time {operator} ?::timestamptz" if self._ph == "%s"
+                                  else f"julianday(time) {operator} julianday(?)")
+                params.append(value)
+        if text:
+            conditions.append("LOWER(detail) LIKE LOWER(?) ESCAPE '!'")
+            params.append("%" + text.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%")
+        return (" WHERE " + " AND ".join(conditions) if conditions else ""), params
+
     def recent_events(self, limit: int = 50, tur: str = "",
-                      kamera: str = "") -> list[dict[str, Any]]:
+                      kamera: str = "", *, start: str = "", end: str = "",
+                      q: str = "", offset: int = 0) -> list[dict[str, Any]]:
         """Birleşik olay akışı. tur: count|plate|face (boş = hepsi)."""
         raise NotImplementedError
 
@@ -504,8 +521,10 @@ class SqliteStore(BaseStore):
             " WHERE id IN (SELECT MAX(id) FROM camera_health GROUP BY camera_id)")
 
     def recent_events(self, limit: int = 50, tur: str = "",
-                      kamera: str = "") -> list[dict[str, Any]]:
-        q = """
+                      kamera: str = "", *, start: str = "", end: str = "",
+                      q: str = "", offset: int = 0) -> list[dict[str, Any]]:
+        where, params = self._event_where(tur, kamera, start, end, q)
+        query = """
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
                  TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
@@ -520,10 +539,15 @@ class SqliteStore(BaseStore):
                  COALESCE(gender,'?')||' ~'||COALESCE(age,0), ts_seconds, frame_idx, NULL,
                  NULL AS zone, NULL AS direction, NULL AS conf
             FROM face_events
-        ) WHERE (?='' OR type=?) AND (?='' OR camera_id=?)
-        ORDER BY time DESC, ts_seconds DESC LIMIT ?
+          UNION ALL
+          SELECT time, CASE WHEN kind='fire_warning' THEN 'fire' ELSE kind END,
+                 camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
+                 NULL, NULL, snapshot, NULL, NULL, NULL
+            FROM alerts WHERE kind IN ('fire','fire_warning','intrusion','telefon','sigara')
+        ) ev
         """
-        return self._all(q, (tur, tur, kamera, kamera, limit))
+        query += where + " ORDER BY time DESC, type, camera_id, detail, ts_seconds DESC LIMIT ? OFFSET ?"
+        return self._all(query, (*params, limit, offset))
 
     def commit(self) -> None:
         self.conn.commit()
@@ -687,8 +711,10 @@ class PgStore(BaseStore):
         return rows
 
     def recent_events(self, limit: int = 50, tur: str = "",
-                      kamera: str = "") -> list[dict[str, Any]]:
-        q = """
+                      kamera: str = "", *, start: str = "", end: str = "",
+                      q: str = "", offset: int = 0) -> list[dict[str, Any]]:
+        where, params = self._event_where(tur, kamera, start, end, q)
+        query = """
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
                  TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
@@ -703,10 +729,15 @@ class PgStore(BaseStore):
                  COALESCE(gender, chr(63))||' ~'||COALESCE(age::text,'0'), ts_seconds, frame_idx,
                  NULL, NULL AS zone, NULL AS direction, NULL::real AS conf
             FROM face_events
-        ) ev WHERE (?='' OR type=?) AND (?='' OR camera_id=?)
-        ORDER BY time DESC, ts_seconds DESC NULLS LAST LIMIT ?
+          UNION ALL
+          SELECT time, CASE WHEN kind='fire_warning' THEN 'fire' ELSE kind END,
+                 camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
+                 NULL, NULL, snapshot, NULL, NULL, NULL
+            FROM alerts WHERE kind IN ('fire','fire_warning','intrusion','telefon','sigara')
+        ) ev
         """
-        rows = self._all(q, (tur, tur, kamera, kamera, limit))
+        query += where + " ORDER BY time DESC, type, camera_id, detail, ts_seconds DESC NULLS LAST LIMIT ? OFFSET ?"
+        rows = self._all(query, (*params, limit, offset))
         for r in rows:
             r["time"] = str(r["time"])
         return rows

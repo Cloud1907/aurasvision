@@ -8,6 +8,38 @@ from typing import Any
 class AnalyticsMixin:
     """BaseStore'un iki backend tarafından paylaşılan raporlama davranışı."""
 
+    def dashboard_alerts(self, start, end, excluded=()):
+        params = list(excluded)
+        camera_filter = "camera_id NOT IN (" + ','.join('?' for _ in excluded) + ")" if excluded else "1=1"
+        period = "time >= ? AND time < ? AND " + camera_filter
+        totals = self._all(
+            "SELECT COUNT(*) AS total, SUM(CASE WHEN acked_at IS NULL THEN 1 ELSE 0 END) AS pending "
+            "FROM alerts WHERE " + period, (start, end, *params))[0]
+        backlog = self._all("SELECT COUNT(*) AS total FROM alerts WHERE acked_at IS NULL AND " + camera_filter, tuple(params))[0]
+        bucket = "strftime('%Y-%m-%d %H:00:00',time)" if self._ph == '?' else "date_trunc('hour',time)"
+        series = self._all(f"SELECT {bucket} AS bucket, COUNT(*) AS total FROM alerts WHERE " + period +
+                           " GROUP BY bucket ORDER BY bucket", (start, end, *params))
+        kinds = self._all("SELECT kind, COUNT(*) AS total FROM alerts WHERE " + period +
+                          " GROUP BY kind ORDER BY total DESC", (start, end, *params))
+        total, pending = int(totals['total']), int(totals['pending'] or 0)
+        return {'total': total, 'pending': pending, 'acknowledged': total - pending,
+                'pending_all': int(backlog['total']), 'kinds': kinds,
+                'series': [{'bucket': str(r['bucket']), 'total': int(r['total'])} for r in series]}
+
+    def alert_feed(self, after_id, limit=100):
+        if after_id is None:
+            row = self._all('SELECT COALESCE(MAX(id),0) AS cursor FROM alerts')[0]
+            return {'cursor': int(row['cursor']), 'alerts': [], 'has_more': False}
+        rows = self._all('SELECT id, camera_id, kind, ref, label, time, snapshot, acked_at '
+                         'FROM alerts WHERE id > ? ORDER BY id LIMIT ?', (after_id, limit + 1))
+        visible = rows[:limit]
+        for row in visible:
+            row['time'] = str(row['time'])
+            if row.get('acked_at') is not None:
+                row['acked_at'] = str(row['acked_at'])
+        return {'cursor': int(visible[-1]['id']) if visible else after_id,
+                'alerts': visible, 'has_more': len(rows) > limit}
+
     def count_totals(self) -> list[dict[str, Any]]:
         return self._all("SELECT camera_id, "
                          "SUM(CASE WHEN direction='in' THEN 1 ELSE 0 END) AS in_count, "

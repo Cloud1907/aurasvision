@@ -36,6 +36,7 @@ from . import akis, kimlik
 from .analytics import build_count_trend, build_event_summary
 from .config import apply_cv2_http_headers, http_options, load_config
 from .store import DEFAULT_TASKS, merged_cameras, open_store
+from .panel_rules import RuleRepository, RuleSet
 
 cfg = load_config()
 apply_cv2_http_headers(cfg)   # cv2 tabanlı analiz de CDN başlıklarını göndersin
@@ -2130,13 +2131,28 @@ def api_run_frame(job_id: str):
 
 
 @app.get("/api/events")
-def api_events(limit: int = Query(50, ge=1, le=500), tur: str = "", kamera: str = ""):
+def api_events(limit: int = Query(50, ge=1, le=500), tur: str = "", kamera: str = "",
+               start: str = "", end: str = "", q: str = "",
+               offset: int = Query(0, ge=0, le=1000000)):
     # sınırsız int SQLite'ı taşırıp 500 döndürüyordu (Schemathesis bulgusu) — 422'ye bağlanır
-    if tur and tur not in ("count", "plate", "face"):
-        raise HTTPException(422, "tur: count | plate | face")
+    if tur and tur not in ("count", "plate", "face", "fire", "intrusion", "telefon", "sigara"):
+        raise HTTPException(422, "Geçersiz olay türü")
+    def event_time(value):
+        if not value:
+            return ""
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=parsed.tzinfo or timezone.utc).astimezone(timezone.utc).isoformat()
+        except ValueError:
+            raise HTTPException(422, "Geçersiz tarih-saat")
+    start, end = event_time(start), event_time(end)
+    if start and end and start > end:
+        raise HTTPException(422, "Başlangıç tarihi bitişten sonra olamaz")
+    if len(q) > 200:
+        raise HTTPException(422, "Arama en fazla 200 karakter olabilir")
     s = _store()
     try:
-        olaylar = s.recent_events(limit, tur, kamera)
+        olaylar = s.recent_events(limit, tur, kamera, start=start, end=end, q=q.strip(), offset=offset)
     finally:
         s.close()
     # Yabancı plaka etiketi: TR formatı yapısal doğrulamadan geçer, yabancı
@@ -2157,6 +2173,59 @@ def api_events_summary(hours: int = Query(24, ge=1, le=720)):
     dikkat isteyen kamerayı oradan seçer.
     """
     return build_event_summary(_store, hours)
+
+
+@app.get("/api/dashboard")
+def api_dashboard(start: datetime, end: datetime):
+    start = start.replace(tzinfo=start.tzinfo or timezone.utc).astimezone(timezone.utc)
+    end = end.replace(tzinfo=end.tzinfo or timezone.utc).astimezone(timezone.utc)
+    if not start < end or end - start > timedelta(days=93):
+        raise HTTPException(422, "Tarih aralığı 1 ile 93 gün arasında olmalı")
+    cameras = _cameras()
+    def test_source(cam):
+        value = str(cam.get('source', ''))
+        return not (value.startswith(('rtsp://', 'rtsps://', 'http://', 'https://', 'rtmp://')) or value.isdigit())
+    tests = [c['id'] for c in cameras if test_source(c)]
+    s = _store()
+    try:
+        stats = s.dashboard_alerts(start.strftime('%Y-%m-%d %H:%M:%S'), end.strftime('%Y-%m-%d %H:%M:%S'), tests)
+        health = {r['camera_id']: r for r in s.latest_health()}
+        zones = s.zone_counts()
+    finally:
+        s.close()
+    return {'start': start.isoformat(), 'end': end.isoformat(), 'as_of': datetime.now(timezone.utc).isoformat(),
+            'alarms': stats, 'test_sources': len(tests),
+            'cameras': [{'id': c['id'], 'name': c['name'], 'tasks': c.get('tasks') or {},
+                         'health': health.get(c['id']), 'zones': zones.get(c['id'], {})}
+                        for c in cameras if c['id'] not in tests]}
+
+
+@app.get("/api/alerts/feed")
+def api_alert_feed(after_id: int | None = Query(None, ge=0), limit: int = Query(100, ge=1, le=500)):
+    s = _store()
+    try:
+        return s.alert_feed(after_id, limit)
+    finally:
+        s.close()
+
+
+_panel_rules = RuleRepository(ROOT / 'output' / 'panel-alert-rules.json')
+
+
+@app.get("/api/alerts/rules")
+def api_panel_rules():
+    return _panel_rules.load()
+
+
+@app.put("/api/alerts/rules")
+def api_save_panel_rules(payload: RuleSet):
+    known = {c['id'] for c in _cameras()}
+    if any(rule.camera_id not in known for rule in payload.rules):
+        raise HTTPException(422, "Kuraldaki kamera bulunamadı")
+    try:
+        return _panel_rules.save(payload)
+    except ValueError as exc:
+        raise HTTPException(409, "Kurallar başka bir oturumda değişti. Yenileyip tekrar deneyin.") from exc
 
 
 @app.get("/api/events/trend")

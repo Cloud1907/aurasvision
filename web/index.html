@@ -135,6 +135,17 @@
      çizgi/kutu bantların üstüne taşıp gerçek görüntüyle hizasız görünürdü. */
   .ov-wrap{position:absolute;inset:0;pointer-events:none;z-index:2;}
   .det-canvas{position:absolute;inset:0;width:100%;height:100%;background:transparent;border:0;border-radius:0;box-shadow:none;}
+  .event-filters{padding:20px;margin-bottom:18px;}
+  .event-filter-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;}
+  .event-filter-grid label{display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--ink-2);}
+  .event-filter-grid input,.event-filter-grid select{width:100%;min-width:0;min-height:42px;}
+  .event-search{grid-column:span 2;}
+  .event-filter-actions,.event-paging{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:16px;}
+  .event-paging{justify-content:space-between;padding:14px 0;}
+  .event-filter-error{color:var(--danger);font-size:12px;}
+  .event-context{margin-bottom:16px;}.event-context summary{cursor:pointer;font-weight:600;padding:12px 0;}
+  @media(max-width:800px){.event-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.event-search{grid-column:span 2;}}
+  @media(max-width:480px){.event-filter-grid{grid-template-columns:1fr;}.event-search{grid-column:auto;}}
   .tileact button.on{background:var(--accent);color:#fff;}
   .tile .nm{position:absolute;left:16px;bottom:14px;color:#fff;font-weight:700;font-size:15px;text-shadow:0 1px 4px rgba(0,0,0,.5);}
   .countbox{position:absolute;left:12px;top:10px;display:flex;gap:8px;background:rgba(8,9,11,.88);color:#fff;font-size:11px;font-weight:600;padding:4px 8px;border-radius:3px;z-index:2;border:1px solid rgba(255,255,255,.08);}
@@ -330,6 +341,7 @@
   </main>
 </div>
 <script src="/static/ui-runtime.js"></script>
+<script src="/static/event-filters.js"></script>
 <script src="/static/dist/auras-ui.js"></script>
 <script>
 /* ---- ikonlar (inline svg, bağımsız) ---- */
@@ -737,18 +749,7 @@ function loadPlayer(){
         const v=this.video;
         v.controls=false;v.muted=true;v.disablePictureInPicture=true;
         v.addEventListener("error",()=>{
-          // Ana akış çözülemiyorsa büyütülmüş görünümü çalışan alt akışla aç.
-          // VideoRTC soketi kapatıp yeniden bağlanır; yeni bağlantı bu URL'yi kullanır.
-          const fallback=this.dataset.fallbackSrc;
-          if(!fallback||this.dataset.src===fallback||![3,4].includes(v.error?.code))return;
-          delete this.dataset.fallbackSrc;
-          this.dataset.src=fallback;
-          this._ct=0;this._seen=false;this._stall=0;
-          const tile=this.closest(".tile");
-          if(tile){tile.dataset.state="wait";const badge=tile.querySelector(".live b");if(badge)badge.textContent="BAĞLANIYOR";}
-          const quality=this.closest(".camview")?.querySelector(".stream-quality");
-          if(quality)quality.textContent="uyumlu akış";
-          this.src=`/api/stream?src=${encodeURIComponent(fallback)}${tokq()}`;
+          if([3,4].includes(v.error?.code))this.fallbackStream();
         });
         // go2rtc oynatıcısı gecikmeyi kapatmak için playbackRate'i DOĞRUDAN tampon
         // farkına eşitler (video-rtc.js: `playbackRate = gap`): 5 sn tampon → 5x hızlı,
@@ -761,6 +762,22 @@ function loadPlayer(){
         Object.defineProperty(v,"playbackRate",{configurable:true,
           get(){return d.get.call(this);},
           set(gap){d.set.call(this,Math.max(0.9,Math.min(1.25,1+(gap-HEDEF)*0.15)));}});
+      }
+      fallbackStream(){
+        // Çözme hatası veya sessiz takılmada alt akışı yalnız bir kez dene.
+        const fallback=this.dataset.fallbackSrc;
+        if(!fallback||this.dataset.src===fallback)return false;
+        delete this.dataset.fallbackSrc;
+        this.dataset.src=fallback;
+        this._ct=0;this._seen=false;this._stall=0;
+        const tile=this.closest(".tile");
+        if(tile){tile.dataset.state="wait";const badge=tile.querySelector(".live b");if(badge)badge.textContent="BAĞLANIYOR";}
+        const quality=this.closest(".camview")?.querySelector(".stream-quality");
+        if(quality)quality.textContent="uyumlu akış";
+        this.src=`/api/stream?src=${encodeURIComponent(fallback)}${tokq()}`;
+        // src setter açık soketi değiştirmez; yeniden bağlantıyı tetikle.
+        if(this.ws)this.ws.close();
+        return true;
       }
     }
     customElements.define("auras-stream",AurasStream);
@@ -790,7 +807,8 @@ function setGrid(v){
   SCREENS.live();
 }
 function mountStreams(){
-  if(!SYS.go2rtc)return;
+  // İsteğe bağlı /sysinfo başarısız olsa da panelden açılan kamerayı bağla.
+  // Akışın kullanılabilirliğini aynı-origin /api/stream belirler.
   loadPlayer().then(()=>{
     document.querySelectorAll("auras-stream[data-src]").forEach(el=>{
       if(el.wsURL)return;   // zaten bağlı
@@ -973,6 +991,7 @@ function watchTiles(){
       const s=tile.querySelector(".stallct");if(s)s.textContent=`· ${el._takilma} takılma`;}
     el._stall=moved?0:(el._stall||0)+1;
     if(moved)el._seen=true;
+    if(el._stall>=6&&el.fallbackStream?.())return;
     // Histerezis — rozet titremesin: bağlantı GERÇEKTEN koptuysa (soket kapalı) hızlı
     // "çevrimdışı"; soket açıkken görüntü takılması ağ/çözme dalgalanması olabilir,
     // uzun sabır. İlk kare hiç gelmediyse (yüksek çözünürlüklü kaynak 10+ sn açılabilir)
@@ -1060,6 +1079,19 @@ async function kullaniciSil(ad){
   if(r.detail){toast(r.detail,"err");return;}
   toast("Kullanıcı silindi","ok");kullaniciYukle();
 }
+function applyEventFilters(form){
+  const values=Object.fromEntries(new FormData(form));
+  const next={...EventFilters.defaults(),...values};
+  try{EventFilters.query(next);}catch(e){form.querySelector('[role=alert]').textContent=e.message;return;}
+  window._ef=next;SCREENS.events();
+}
+function eventRange(hours){
+  const form=document.querySelector('#event-filters'),now=new Date();
+  form.elements.end.value='';
+  form.elements.start.value=hours?EventFilters.localTime(new Date(now.getTime()-hours*3600000)):'';
+  applyEventFilters(form);
+}
+function eventPage(delta){window._ef.offset=Math.max(0,(window._ef.offset||0)+delta*50);SCREENS.events();}
 const SCREENS={
   /* Panel — giriş ekranı. Operatörün ilk sorusu "her şey yolunda mı", ikincisi
      "dikkat isteyen ne var". Kamera duvarı bunları söylemiyordu. */
@@ -1414,17 +1446,19 @@ const SCREENS={
     await recYukle(camId,gun,ctx);
   },
   async events(ctx){
-    const f={...(window._ef||(window._ef={tur:"",kamera:""}))};
-    const qs=`limit=60${f.tur?`&tur=${f.tur}`:""}${f.kamera?`&kamera=${encodeURIComponent(f.kamera)}`:""}`;
-    const [ev,bekleyen,gecmis]=await Promise.all([
+    const f={...EventFilters.defaults(),...(window._ef||{})};window._ef=f;
+    const qs=EventFilters.query(f);
+    const [results,bekleyen,gecmis]=await Promise.all([
       ctx.get("/events?"+qs),ctx.get("/alerts?limit=50&pending=true"),ctx.get("/alerts?limit=15")]);
+    const ev=results.slice(0,50),hasMore=results.length>50;
     const kabulEdilen=gecmis.filter(a=>a.acked_at).length;
     const meta={count:["live","var(--accent-soft)","var(--accent)","Çizgi geçişi"],
                 plate:["cams","var(--warn-soft)","var(--warn)","Plaka okuma"],
                 face:["events","var(--ok-soft)","var(--ok)","Yüz tespiti"],
                 fire:["events","var(--danger-soft)","var(--danger)","Yangın erken uyarısı"],
                 telefon:["events","var(--warn-soft)","var(--warn)","Telefonla konuşma"],
-                sigara:["events","var(--danger-soft)","var(--danger)","Sigara içme"]};
+                sigara:["events","var(--danger-soft)","var(--danger)","Sigara içme"],
+                intrusion:["events","var(--danger-soft)","var(--danger)","Alan ihlali"]};
     const adOf=id=>(CAMS.find(c=>c.id===id)||{}).name||id;
     // Bekleyen alarmlar en üstte, kabul butonuyla — operatörün ilk baktığı yer
     const alarmBasligi=a=>a.kind==='fire_warning'
@@ -1442,7 +1476,7 @@ const SCREENS={
       const el=$("#camsum");if(!el)return;
       if(!r.cameras?.length){el.innerHTML='<div class="mut-s" style="padding:6px 2px;">Son 24 saatte olay yok.</div>';return;}
       el.innerHTML=r.cameras.map(c=>`<div class="k ${f.kamera===c.camera_id?'on':''} ${c.alerts?'uyari':''}"
-          onclick="window._ef.kamera='${f.kamera===c.camera_id?'':esc(c.camera_id)}';SCREENS.events()">
+          onclick="window._ef.kamera='${f.kamera===c.camera_id?'':esc(c.camera_id)}';window._ef.offset=0;SCREENS.events()">
         <div class="ad">${esc(adOf(c.camera_id))}${c.alerts?`<span class="chip" style="background:var(--danger-soft);color:var(--danger);">${c.alerts} uyarı</span>`:''}</div>
         <div class="buyuk">${c.count}</div>
         <div class="mut-s">olay · ${esc(gecenSure(c.last))}</div>
@@ -1457,8 +1491,30 @@ const SCREENS={
         <div class="mut-s">${esc(a.label||'—')} ${a.camera_id?'· '+esc(adOf(a.camera_id)):''} · ${esc(gecenSure(a.time))}</div></div>
       <span class="chip" style="background:var(--danger-soft);color:var(--danger);flex-shrink:0;">${esc(listeEtiketi[a.list_type]||a.list_type||'liste')}</span>
       <button class="btn sm" onclick="ackAlert(${a.id})">Kabul et</button></div>`;
-    const filtreBtn=(k,l)=>`<button class="${f.tur===k?'on':''}" onclick="window._ef.tur='${k}';SCREENS.events()">${l}</button>`;
+    const filtered=!!(f.tur||f.kamera||f.q||f.start||f.end);
+    const filtersHtml=`<form class="card event-filters" id="event-filters" onsubmit="event.preventDefault();applyEventFilters(this)">
+      <div class="section-head"><b>Olayları filtrele</b><span class="mut-s">Filtreleri birlikte kullanabilirsiniz</span></div>
+      <div class="event-filter-grid">
+        <label>Kamera<select name="kamera"><option value="">Tüm kameralar</option>${CAMS.map(c=>`<option value="${esc(c.id)}" ${f.kamera===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label>
+        <label>Olay türü<select name="tur"><option value="">Tüm olay türleri</option>${Object.entries(meta).map(([k,m])=>`<option value="${k}" ${f.tur===k?'selected':''}>${m[3]}</option>`).join('')}</select></label>
+        <label>Başlangıç<input type="datetime-local" name="start" value="${esc(f.start)}"/></label>
+        <label>Bitiş<input type="datetime-local" name="end" value="${esc(f.end)}"/></label>
+        <label class="event-search">Plaka, bölge veya açıklama<input type="search" name="q" maxlength="200" placeholder="Örn. 34 ABC veya giriş" value="${esc(f.q)}"/></label>
+      </div>
+      <div class="event-filter-actions">
+        <button class="btn pri" type="submit">Filtrele</button>
+        <button class="btn" type="button" onclick="window._ef=EventFilters.defaults();SCREENS.events()">Temizle</button>
+        <span class="mut-s">Hızlı zaman:</span>
+        <button class="btn sm" type="button" onclick="eventRange(1)">Son 1 saat</button>
+        <button class="btn sm" type="button" onclick="eventRange(24)">Son 24 saat</button>
+        <button class="btn sm" type="button" onclick="eventRange(168)">Son 7 gün</button>
+        <button class="btn sm" type="button" onclick="eventRange(0)">Tüm zamanlar</button>
+      </div><div role="alert" class="event-filter-error"></div>
+      <div class="mut-s" style="margin-top:10px;">Tarihler cihazınızın yerel saatine göredir. Filtreler aşağıdaki olay akışına uygulanır.</div>
+    </form>`;
     $("#content").innerHTML=`
+      ${filtersHtml}
+      <details class="event-context"><summary>Bekleyen uyarılar · tüm kameralar (${bekleyen.length})</summary>
       ${bekleyen.length?`<div class="card" style="border-color:var(--danger);margin-bottom:18px;overflow:hidden;">
         <div style="padding:13px 16px;border-bottom:1px solid var(--line);color:var(--danger);font-weight:700;display:flex;align-items:center;gap:9px;">
           ${svg('events',17)} Bekleyen uyarı <span class="chip" style="background:var(--danger-soft);color:var(--danger);">${bekleyen.length}</span>
@@ -1468,15 +1524,13 @@ const SCREENS={
           <span class="av" style="background:var(--ok-soft);color:var(--ok);">✓</span>
           <div><div style="font-weight:700;">Bekleyen uyarı yok</div>
             <div class="mut-s">${kabulEdilen?kabulEdilen+' uyarı kabul edilmiş durumda.':'İzleme listesi eşleşmesi olduğunda burada görünür.'}</div></div></div>`}
-      <div class="section-head"><b>Kamera bazında son 24 saat</b>
+      </details>
+      <details class="event-context"><summary>Kamera bazında son 24 saat</summary>
+      <div class="section-head"><b>Kamera özeti</b>
         <span class="mut-s">Karta tıklayın, akış filtrelenir</span></div>
       <div class="camsum" id="camsum"><div class="mut-s" style="padding:6px 2px;">yükleniyor…</div></div>
-      <div class="section-head"><b>Olay akışı</b>
-        <span style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-          <div class="seg">${filtreBtn("","Hepsi")}${filtreBtn("count","Sayım")}${filtreBtn("plate","Plaka")}${filtreBtn("face","Yüz")}${filtreBtn("fire","Yangın")}</div>
-          <select onchange="window._ef.kamera=this.value;SCREENS.events()">
-            <option value="">Tüm kameralar</option>
-            ${CAMS.map(c=>`<option value="${esc(c.id)}" ${f.kamera===c.id?'selected':''}>${esc(c.name)}</option>`).join("")}</select></span></div>
+      </details>
+      <div class="section-head"><b>Olay akışı</b><span class="mut-s" role="status">${filtered?'Filtrelenmiş sonuçlar · ':''}${ev.length?`${f.offset+1}–${f.offset+ev.length} gösteriliyor`:'0 sonuç'}</span></div>
       <div class="card">${ev.length?ev.map(e=>{const m=meta[e.type]||["live","var(--hover)","var(--ink-2)",esc(e.type)];return `<div class="row">
         ${e.snapshot?`<img class="kanit" src="/media/${esc(e.snapshot)}${tokq().replace('&','?')}" alt="kanıt"
              title="Kanıt görüntüsü — büyütmek için tıklayın" onclick="kanitAc('${esc(e.snapshot)}')"/>`
@@ -1484,8 +1538,12 @@ const SCREENS={
         <div style="flex:1;min-width:0;"><div style="font-weight:700;">${m[3]}${e.camera_id?' · <span class="mut-s">'+esc(adOf(e.camera_id))+'</span>':''}</div>
           <div class="mono mut-s">${esc(e.detail)}${e.plaka_tur==="yabanci"
             ?' <span title="TR formatı dışında — yapısal doğrulama yok, yalnız OCR güveniyle kabul edildi" style="font-family:var(--sans,inherit);font-size:10px;font-weight:700;letter-spacing:.4px;padding:1px 6px;border-radius:99px;background:color-mix(in srgb,var(--uyari,#f59e0b) 18%,transparent);color:var(--uyari,#f59e0b);vertical-align:1px;">YABANCI</span>':''}</div></div>
-        <span class="mut-s" style="text-align:right;">${esc(gecenSure(e.time))}<br><span style="font-size:11px;">${(+e.ts_seconds).toFixed(1)} sn · kare ${e.frame_idx}</span></span></div>`}).join("")
-        :`<div class="empty">${f.tur||f.kamera?'Bu filtreyle olay yok.':'Henüz olay yok. Test ekranından bir analiz çalıştırın.'}</div>`}</div>`;
+        <span class="mut-s" style="text-align:right;">${esc(gecenSure(e.time))}<br><time style="font-size:11px;">${esc(AurasRuntime.parseTime(e.time)?.toLocaleString('tr-TR')||e.time)}</time>
+          ${e.camera_id?`<br><button class="btn sm" style="margin-top:6px;" onclick="recordAt('${esc(e.camera_id)}','${esc(e.time)}')">Kayda git</button>`:''}</span></div>`}).join("")
+        :`<div class="empty">${filtered?'Bu filtrelerle eşleşen olay yok. Tarih aralığını genişletebilir veya filtreleri temizleyebilirsiniz.':'Henüz olay yok.'}</div>`}</div>
+      <div class="event-paging"><span class="mut-s">Sayfa ${Math.floor(f.offset/50)+1} · sayfa başına 50 olay</span><span style="display:flex;gap:8px;">
+        <button class="btn" ${f.offset?'':'disabled'} onclick="eventPage(-1)">Önceki</button>
+        <button class="btn" ${hasMore?'':'disabled'} onclick="eventPage(1)">Sonraki</button></span></div>`;
   },
   async lists(ctx){
     const kind=window._lk||"plate";window._lk=kind;
