@@ -101,13 +101,24 @@ class BusStore:
 
     def add_fire_event(self, camera_id, olay) -> None:
         # Ön uyarı ve alarm aynı sözleşmeyle taşınır. Alarmın DB/webhook kararı
-        # analiz worker'ında değil, iki bus kipinin ortak tüketicisi olay.py'dedir.
-        publish(self.r, "fire", camera_id, dict(olay))
+        # analiz worker'ında değil, iki bus kipinin ortak tüketicisi olay.py'dedir
+        # (fire.py bus üstünden koşarken alerts satırı YAZMAZ; çift kayıt olmasın).
+        publish(self.r, "fire", camera_id, {k: v for k, v in dict(olay).items() if k != "kutu"}
+                | {"kutu": [round(float(x), 1) for x in olay.get("kutu", ())]})
 
-    def add_alert(self, kind, ref, list_type, label, camera_id) -> None:
+    def add_alert(self, kind, ref, list_type, label, camera_id, snapshot=None) -> None:
         # İhlal alanı alarmı worker'da doğar; DB yazımı ingestor'ın işi (ADR-0002)
+        # snapshot: count.py ihlal anının kanıt karesini burada verir (kanit_kaydet).
+        # Eksikti — imza uyuşmazlığı, ihlal alanı olan kamerada HER alarmda worker
+        # thread'ini TypeError ile düşürüyordu (sahada yakalandı: kamera-206 log'unda
+        # "BusStore.add_alert() got an unexpected keyword argument 'snapshot'").
+        # Kamera-206'daki uzun kesinti ayrıca gerçek bir RTSP zaman aşımıyla da
+        # çakışıyordu (go2rtc'nin BAĞIMSIZ bağlantısı da aynı aralıkta hata veriyordu)
+        # — bu bug TEK sebep değildi, ama HER ihlalde worker'ı kesin düşüren gerçek
+        # bir hataydı ve düzeltilmesi gerekiyordu.
         publish(self.r, "alert", camera_id,
-                {"kind": kind, "ref": ref, "list_type": list_type, "label": label})
+                {"kind": kind, "ref": ref, "list_type": list_type, "label": label,
+                 "snapshot": snapshot})
 
     def commit(self) -> None:
         pass

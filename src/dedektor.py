@@ -39,6 +39,8 @@ LISANSLAR = {
 
 # Açık onay istemeyen, ticari kullanımda serbest lisanslar.
 SERBEST = {"Apache-2.0"}
+
+# Motor → çalışma-anı paketi (calisma_kapisi: lisans + kurulum birlikte doğrulanır)
 MOTOR_PAKETLERI = {"rfdetr": "rfdetr", "ultralytics": "ultralytics"}
 
 
@@ -120,12 +122,37 @@ class Dedektor:
             return normalize(self._rfdetr_tahmin(bgr), self.adlar)
         return normalize(self._ultralytics_tahmin(bgr), self.adlar)
 
-    def _rfdetr_tahmin(self, bgr):
-        import cv2
+    def tespit_coklu(self, bgrler: list) -> list[list[tuple]]:
+        """Birden çok kareyi (ör. 2×2 karolar) tek çağrıda geçirir; sıra korunur."""
+        if not bgrler:
+            return []
+        if self.motor == "rfdetr":
+            cikti = self._ic.predict([self._rgb_tensor(b) for b in bgrler],
+                                     threshold=self.esik)
+            if not isinstance(cikti, list):
+                cikti = [cikti]
+            return [normalize(c, self.adlar) for c in cikti]
+        return [self.tespit(b) for b in bgrler]
 
-        # RF-DETR RGB bekler; OpenCV BGR verir
-        return self._ic.predict(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
-                                threshold=self.esik)
+    def _rgb_tensor(self, bgr):
+        """BGR numpy → modelin AYGITINDA (C,H,W) float [0,1] RGB tensörü.
+
+        rfdetr'e numpy/PIL verilince to_tensor + yeniden boyutlama + normalize
+        CPU'da koşar: 2K karede 2×2 karo tek başına ~2,6 çekirdek yiyordu
+        (ölçüm 2026-09-07, torch 4 iş parçacığı). Ham baytlar GPU'ya taşınıp
+        dönüşüm orada yapılınca CPU payı düşer; H2D kopyası karo başına ~3,5 MB.
+        """
+        import numpy as np
+        import torch
+
+        dev = getattr(getattr(self._ic, "model", None), "device", None)
+        if dev is None:
+            dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        t = torch.from_numpy(np.ascontiguousarray(bgr)).to(dev)
+        return t.permute(2, 0, 1).flip(0).float().div_(255.0)   # BGR→RGB, [0,1]
+
+    def _rfdetr_tahmin(self, bgr):
+        return self._ic.predict(self._rgb_tensor(bgr), threshold=self.esik)
 
     def _ultralytics_tahmin(self, bgr):
         r = self._ic.predict(bgr, conf=self.esik, verbose=False)[0]
@@ -158,8 +185,14 @@ def _rfdetr_yukle(model: str):
     try:
         from rfdetr import RFDETRSmall
     except ImportError as e:
-        raise ImportError(
-            "rfdetr paketi kurulu değil (Apache-2.0, ticari serbest). "
-            "Kurulum: pip install rfdetr — ayrıntı docs/yangin-modeli.md"
-        ) from e
+        # Paket gerçekten yoksa e.name == "rfdetr"; aksi hâlde bağımlılığı ya da
+        # başka iş parçacığının yarım kalmış import'u patlamıştır (2026-09-09:
+        # worker açılışında SigLIP/timm yüklenirken "kurulu değil" sanıldı).
+        # Asıl hata mesajda GÖRÜNSÜN, yoksa yanlış teşhis konur.
+        if getattr(e, "name", None) == "rfdetr":
+            raise ImportError(
+                "rfdetr paketi kurulu değil (Apache-2.0, ticari serbest). "
+                "Kurulum: pip install rfdetr — ayrıntı docs/yangin-modeli.md"
+            ) from e
+        raise ImportError(f"rfdetr import edilemedi (paket var, bağımlılık/yarış): {e}") from e
     return RFDETRSmall(pretrain_weights=model)

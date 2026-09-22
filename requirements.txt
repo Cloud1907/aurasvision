@@ -16,6 +16,10 @@ onnxruntime>=1.18.0        # Apple Silicon: CPU provider (POC için yeterli)
 #   pip install onnxruntime-gpu --index-url https://pypi.jetson-ai-lab.io/sbsa/cu130
 # TensorRT engine (detect.model: yolo11s.engine) için: pip install tensorrt
 
+# --- Donanım profili / kaynak telemetrisi (src/donanim.py) ---
+psutil>=5.9                 # CPU/RAM yüzdesi (her OS)
+nvidia-ml-py>=12.0          # GPU/NVDEC yüzdesi (NVIDIA yoksa sessizce atlanır)
+
 # --- Web arayüzü ---
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0

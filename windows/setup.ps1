@@ -138,6 +138,37 @@ if (-not $dockerVar) {
     Ye "Profil: tek makine (SQLite · Docker gerekmez)"
 }
 
+# ffmpeg: go2rtc dosya kaynaklarını ve özel başlıklı HTTP/HLS akışlarını
+# "exec:ffmpeg ..." ile besler. Docker profilinde ffmpeg imajın içindedir;
+# Windows'ta PATH'te GENELDE YOKTUR — eksikse go2rtc her akış için
+# "executable file not found in %PATH%" verir, canlı izleme ve kayıt sessizce
+# hiç çalışmaz (panel açılır, görüntü gelmez).
+$ffmpegExe = Join-Path $Kok "binfmpeg.exe"
+if (-not $dockerVar) {
+    if (Test-Path $ffmpegExe) {
+        Ye "ffmpeg mevcut"
+    } elseif (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+        Ye "ffmpeg PATH'te bulundu"
+    } else {
+        Uy "ffmpeg eksik — indiriliyor (canlı izleme ve kayıt bunsuz çalışmaz)"
+        try {
+            $fzip = Join-Path $env:TEMP "ffmpeg-win64.zip"
+            Invoke-WebRequest -UseBasicParsing -OutFile $fzip `
+                "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
+            $fdir = Join-Path $env:TEMP "ffmpeg-cikar"
+            if (Test-Path $fdir) { Remove-Item -Recurse -Force $fdir }
+            Expand-Archive -Path $fzip -DestinationPath $fdir -Force
+            $bulunan = Get-ChildItem -Recurse -Filter ffmpeg.exe $fdir | Select-Object -First 1
+            if ($bulunan) { Copy-Item $bulunan.FullName $ffmpegExe -Force; Ye "ffmpeg kuruldu" }
+            else { Uy "ffmpeg arşivde bulunamadı — canlı izleme sınırlı çalışır" }
+            Remove-Item -Recurse -Force $fdir, $fzip -ErrorAction SilentlyContinue
+        } catch {
+            Uy "ffmpeg indirilemedi: $($_.Exception.Message)"
+            Uy "Elle kurun: https://www.gyan.dev/ffmpeg/builds/ — ffmpeg.exe'yi bin\ altına koyun"
+        }
+    }
+}
+
 # Visual C++ 2015-2022 çalışma zamanı. torch'un c10.dll'i buna bağlıdır ve
 # temiz bir Windows'ta KURULU DEĞİLDİR. Eksikse pip sorunsuz biter, kurulum
 # "TAMAMLANDI" der, ama uygulama açılmaz:
@@ -211,7 +242,24 @@ $gpu = $false
 try { if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { nvidia-smi | Out-Null; $gpu = ($LASTEXITCODE -eq 0) } } catch { }
 if ($gpu) {
     Ye "NVIDIA GPU bulundu"
-    Uy "TensorRT motoru bu makinede üretilmeli: .venv\Scripts\yolo export model=yolo11s.pt format=engine half=True dynamic=True batch=32"
+    # GPU'lu makinede config'e DOKUNMAMAK sessiz bir tuzaktı: varsayılan
+    # detect.model yolo11s.engine'dir, .engine dosyası KARTA ÖZELDİR ve repoda
+    # gelmez. src/detect.py'de fallback de yoktur — analiz servisi açılışta
+    # "model bulunamadı" ile ölür, panel boş kalır. GPU'da güvenli varsayılan
+    # yolo11s.pt (PyTorch, CUDA'da koşar); TensorRT isteyen engine'i bu makinede
+    # üretip config'i elle çevirir.
+    $yamlYol = Join-Path $Kok "config.yaml"
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $yaml = [IO.File]::ReadAllText($yamlYol, $utf8)
+    $yaml = $yaml -replace '(?m)^(\s*)model: yolo11s\.engine', '${1}model: yolo11s.pt'
+    # nvdec motoru PyNvVideoCodec + tensorrt ister; Windows'ta ikisi de yok.
+    # worker zaten ultralytics'e düşüyor ama config'i doğru yazmak logu temiz tutar.
+    if ($env:OS -eq "Windows_NT") {
+        $yaml = $yaml -replace '(?m)^(\s*)engine: nvdec', '${1}engine: ultralytics'
+    }
+    [IO.File]::WriteAllText($yamlYol, $yaml, $utf8)
+    Ye "Model GPU için ayarlandı (yolo11s.pt)"
+    Uy "TensorRT istenirse motoru bu makinede üretin: .venv\Scripts\yolo export model=yolo11s.pt format=engine half=True dynamic=True batch=32"
 } else {
     Uy "GPU yok — CPU modeline geçiliyor (yavaş ama çalışır)"
     # Kodlama AÇIKÇA belirtilir. Windows PowerShell 5.1'de Get-Content dosyayı
@@ -299,7 +347,10 @@ try {
     $gorev = "AurasVision"
     schtasks /Query /TN $gorev >$null 2>&1
     if ($LASTEXITCODE -ne 0) {
-        schtasks /Create /TN $gorev /TR "`"$Kok\windows\AurasVision-Baslat.bat`"" `
+        # Baslat.bat servisleri BİR KEZ başlatır; biri çökerse kimse geri getirmez
+        # (panel "açık" görünür, veri üretmez). Açılışta gözcü koşar: eksik olanı
+        # başlatır, çalışana dokunmaz, her müdahaleyi output\logs\gozcu.log'a yazar.
+        schtasks /Create /TN $gorev /TR "`"$Kok\windows\AurasVision-Gozcu.bat`"" `
                  /SC ONSTART /RL HIGHEST /RU SYSTEM /F | Out-Null
         Ye "Açılışta otomatik başlatma tanımlandı"
     } else { Ye "Açılış görevi zaten tanımlı" }
@@ -333,6 +384,27 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 Ye "Bağımlılıklar kuruldu"
+
+# requirements.txt torch'u dolaylı olarak (ultralytics üzerinden) PyPI'den çeker.
+# Linux'ta o wheel CUDA'yı içinde taşır; WINDOWS'TA CPU-ONLY'dir. Yani GPU'lu bir
+# Windows makinesinde kurulum "başarılı" biter, kart boşta durur ve analiz 10 kat
+# yavaş koşar — hiçbir hata mesajı çıkmadan. CUDA'lı wheel yalnız PyTorch'un kendi
+# indeksinde bulunur, oradan kurulur.
+if ($gpu) {
+    $torchSurum = (& $vpy -c "import torch;print(torch.__version__)" 2>$null)
+    if ($torchSurum -like "*+cpu*") {
+        Uy "GPU var ama torch CPU sürümü ($torchSurum) — CUDA'lı sürüm kuruluyor (~2 GB)"
+        $tv = (& $vpy -c "import torchvision;print(torchvision.__version__.split('+')[0])" 2>$null)
+        $tsade = $torchSurum -replace '\+cpu$', ''
+        & $vpy -m pip install -q --index-url https://download.pytorch.org/whl/cu130 `
+            "torch==$tsade+cu130" "torchvision==$tv+cu130" --upgrade
+        $cuda = (& $vpy -c "import torch;print(torch.cuda.is_available())" 2>$null)
+        if ($cuda -eq "True") { Ye "GPU hızlandırma etkin (CUDA)" }
+        else { Uy "CUDA'lı torch kurulamadı — CPU'da çalışmaya devam eder (yavaş)" }
+    } else {
+        Ye "torch CUDA sürümü: $torchSurum"
+    }
+}
 
 # Duman testi: pip'in "başarılı" demesi paketlerin AÇILDIĞI anlamına gelmez.
 # torch, C çalışma zamanına bağlı DLL'ler yükler; av (PyAV) ffmpeg ikililerini.

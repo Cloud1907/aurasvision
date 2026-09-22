@@ -64,7 +64,10 @@ def ac(source: str, cfg=None, timeout_ms: int = 15000):
                                        [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_ms,
                                         cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout_ms])
             else:
-                cap = cv2.VideoCapture(source)
+                # Dosya: sarılabilir sarmalayıcı (Test ekranı ileri sarma) —
+                # cv2 arayüzü aynen korunur, yalnız read() öncesi bekleyen
+                # sarma isteği uygulanır ve konum raporlanır.
+                cap = _Sarilabilir(cv2.VideoCapture(source), source)
         finally:
             if onceki is None:
                 os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
@@ -110,3 +113,66 @@ def av_secenekleri(source: str, cfg=None) -> dict:
     """PyAV (kayıt/dışa aktarma) için aynı başlıklar — seçenek sözlüğü olarak."""
     opt = _secenek(source, cfg)
     return {"headers": opt[len("headers;"):]} if opt else {}
+
+
+# ── Dosya kaynağında ileri sarma (Test ekranı) ──────────────────────────
+# Kaynak yolu → {"hedef": sn | None, "konum": sn, "sure": sn}. Analiz modülleri
+# (fire/plate/face) kaynağı KENDİ açıp cap.read() ile okur; sunucu bu kayıt
+# üzerinden "bir sonraki karede şuraya atla" der, modül kodu değişmez.
+# Sınır: count hattı akışı ultralytics'e devreder (yolo.track) — bizim cap'ten
+# geçmez, orada sarma etkisizdir. Canlı (RTSP/HTTP) kaynakta sarma anlamsızdır.
+_SAR: dict[str, dict] = {}
+
+
+def dosya_mi(source) -> bool:
+    return not str(source).lower().startswith(("rtsp://", "rtmp://", "http://", "https://"))
+
+
+def sar(source, sn: float) -> None:
+    """Kaynağın bir sonraki read()'inde `sn` saniyesine atlanmasını ister."""
+    d = _SAR.setdefault(str(source), {"hedef": None, "konum": 0.0, "sure": 0.0})
+    d["hedef"] = max(0.0, float(sn))
+
+
+def sar_sifirla(source) -> None:
+    """Yeni koşu öncesi eski hedef/konum kalıntısını temizler."""
+    _SAR.pop(str(source), None)
+
+
+def konum(source) -> tuple[float, float]:
+    """(mevcut saniye, toplam saniye) — dosya açılmadıysa (0, 0)."""
+    d = _SAR.get(str(source))
+    return (d["konum"], d["sure"]) if d else (0.0, 0.0)
+
+
+class _Sarilabilir:
+    """cv2.VideoCapture sarmalayıcısı — dosya kaynağı için.
+
+    read(): bekleyen sarma hedefi varsa önce CAP_PROP_POS_MSEC ile atlar, sonra
+    okur; okunan karenin konumunu kayda yazar. Diğer her şey (get/set/isOpened/
+    release/grab/retrieve) sarmalanan nesneye aynen gider.
+    """
+
+    def __init__(self, cap, source) -> None:
+        import cv2
+        self._cap = cap
+        d = _SAR.setdefault(str(source), {"hedef": None, "konum": 0.0, "sure": 0.0})
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        n = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+        d["sure"] = (n / fps) if fps > 0 and n > 0 else 0.0
+        d["konum"] = 0.0
+        self._d = d
+
+    def read(self):
+        import cv2
+        hedef = self._d.get("hedef")
+        if hedef is not None:
+            self._d["hedef"] = None
+            self._cap.set(cv2.CAP_PROP_POS_MSEC, hedef * 1000.0)
+        ok, kare = self._cap.read()
+        if ok:
+            self._d["konum"] = (self._cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0) / 1000.0
+        return ok, kare
+
+    def __getattr__(self, ad):
+        return getattr(self._cap, ad)

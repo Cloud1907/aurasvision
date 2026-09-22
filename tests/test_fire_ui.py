@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_events_api_fire_filtresini_kabul_eder(monkeypatch):
     """K17: Operatör yalnız yangın olaylarını API'den filtreleyebilmeli."""
     class Store:
-        def recent_events(self, limit, tur, kamera):
+        def recent_events(self, limit, tur, kamera, **_filtre):   # start/end/q/offset (olay filtreleri)
             return [{"type": tur, "detail": "duman · on_uyari"}]
 
         def close(self):

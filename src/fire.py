@@ -103,6 +103,36 @@ def _piksel_poligonlar(bolgeler, w: int, h: int) -> list[list[tuple[float, float
     return cikti
 
 
+def _ortusme_orani(kutu, kisi) -> float:
+    """Kesişim alanı / tespit kutusu alanı (IoU değil: küçük alev kutusu büyük
+    kişi kutusunun içindeyse IoU düşük kalır, bu oran 1'e yaklaşır)."""
+    x1 = max(kutu[0], kisi[0]); y1 = max(kutu[1], kisi[1])
+    x2 = min(kutu[2], kisi[2]); y2 = min(kutu[3], kisi[3])
+    kesisim = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    alan = max(1e-6, (kutu[2] - kutu[0]) * (kutu[3] - kutu[1]))
+    return kesisim / alan
+
+
+def kisi_bastir(tespitler, kisiler, oran: float = 0.5) -> list:
+    """Kişi kutusuyla `oran` ve üstünde örtüşen alev/duman tespitlerini atar.
+
+    Gerekçe (ölçüm 2026-09-07/08, kamera-210 ofis, 36 sahte alarm, 0 gerçek):
+    dedektör kapıdan geçen kişinin kot pantolonunu "duman", parlak giysiyi
+    "alev" sandı. Kişi üstünde yangın olmaz; sayım hattı zaten kişiyi
+    biliyor. Yanan kişi senaryosu bilinçli kapsam dışı — o ölçekteki alev
+    kişi kutusundan taşar ve bu oranın altında kalır.
+    """
+    if not kisiler or oran <= 0:
+        return list(tespitler)
+    kalan = []
+    for d in tespitler:
+        kutu = (float(d[1]), float(d[2]), float(d[3]), float(d[4]))
+        if any(_ortusme_orani(kutu, k) >= oran for k in kisiler):
+            continue
+        kalan.append(d)
+    return kalan
+
+
 class DumanTakip:
     """Kareler arası duman/alev odaklarını izler; kademeli uyarı üretir.
 
@@ -113,21 +143,35 @@ class DumanTakip:
     def __init__(self, w: int, h: int, *, pencere_sn: float = 6.0,
                  dogrulama_kare: int = 4, iou_baglama: float = 0.2,
                  alarm_sn: float = 3.0, cooldown_sn: float = 120.0,
-                 azami_bosluk_sn: float = 2.0,
                  bolgeler: list[dict] | None = None,
-                 maskeler: list[dict] | None = None) -> None:
+                 maskeler: list[dict] | None = None,
+                 kisi_oran: float = 0.5, azami_bosluk_sn: float = 2.0) -> None:
         self.pencere = float(pencere_sn)
+        # Kesinti sınırı: odak bu kadar sn görülmezse eski birikimini kaybeder
+        # (ana dal incelemesi: tek yeni kare dakikalar önceki birikimle doğrudan
+        # alarma dönüşüyordu).
+        self.azami_bosluk = max(0.0, min(float(azami_bosluk_sn), self.pencere))
         self.dogrulama = int(dogrulama_kare)
         self.iou_baglama = float(iou_baglama)
         self.alarm_sn = float(alarm_sn)
         self.cooldown = float(cooldown_sn)
-        self.azami_bosluk = max(0.0, min(float(azami_bosluk_sn), self.pencere))
         # İzleme bölgesi: TANIMLIYSA yalnız içi değerlendirilir (boşsa tüm kadraj).
         self.bolgeler = _piksel_poligonlar(bolgeler, w, h)
         # Maske: içine düşen tespit hiç değerlendirilmez (ISO/TS 7240-30).
         self.maskeler = _piksel_poligonlar(maskeler, w, h)
+        # Kişi bastırma: kişi kutusuyla bu oranda örtüşen alev/duman tespiti
+        # değerlendirilmez. Ölçüm 2026-09-08 (kamera-210, ofis, 36 sahte alarm):
+        # "duman" tespitlerinin tamamı kapıdan geçen kişilerin bacağı/kotu,
+        # "alev"lerin çoğu kişi üstündeki parlak giysiydi. 0 = kapalı.
+        self.kisi_oran = float(kisi_oran)
         self.odaklar: list[dict[str, Any]] = []
         self._sonraki_id = 1
+        # KAMERA düzeyi alarm cooldown'u. Odak-başına cooldown yetmiyor: gerçek
+        # yangında alev yer değiştirdikçe (IoU bağı kopar) her yeni odak kendi
+        # alarmını üretiyordu — FURG mangal videosunda 30 sn'de 35 alarm (ölçüm
+        # 2026-09-07). Aynı kamerada bir alarm verildikten sonra cooldown dolana
+        # dek yeni odaklar alarm/ön uyarı YAYMAZ; hatırlatma tek odaktan gelir.
+        self._kamera_son_alarm = -1e9
 
     def _gecerli(self, kutu) -> bool:
         cx = (kutu[0] + kutu[2]) / 2.0
@@ -155,12 +199,17 @@ class DumanTakip:
                 en_iyi, en_iou = o, s
         return en_iyi
 
-    def guncelle(self, tespitler, ts: float) -> list[dict]:
+    def guncelle(self, tespitler, ts: float, kisiler=None) -> list[dict]:
         """tespitler: [(sinif, x1, y1, x2, y2, conf)] piksel. Yeni olayları döndürür.
+
+        `kisiler`: aynı kadrajdaki kişi kutuları [(x1, y1, x2, y2)] piksel
+        (sayım hattının YOLO çıktısı). Verilirse kişiyle örtüşen tespit atılır.
 
         Dönen olaylar yalnız DURUM DEĞİŞİMLERİdir (ve cooldown dolmuş alarm
         tekrarları); her karede olay üretmez — aksi hâlde panel spam olur.
         """
+        if kisiler and self.kisi_oran > 0:
+            tespitler = kisi_bastir(tespitler, kisiler, self.kisi_oran)
         kullanilan: set[int] = set()
         for d in tespitler:
             sinif = SINIF_ADLARI.get(str(d[0]).lower(), str(d[0]).lower())
@@ -172,14 +221,12 @@ class DumanTakip:
             if o is None:
                 o = {"id": self._sonraki_id, "sinif": sinif, "kutu": kutu,
                      "conf": conf, "vurus": deque(), "durum": "izle",
-                     "onay_ts": 0.0, "son_alarm": -1e9,
-                     "son_gorulme_ts": ts}
+                     "onay_ts": 0.0, "son_alarm": -1e9, "son_gorulme_ts": ts}
                 self._sonraki_id += 1
                 self.odaklar.append(o)
             elif ts - o["son_gorulme_ts"] > self.azami_bosluk:
                 # Aynı yerde yeniden görünen nesne, kesinti sınırı aşıldıysa
-                # eski ön-uyarı/alarm saatini miras alamaz. Aksi hâlde tek yeni
-                # kare dakikalar önceki birikimle doğrudan alarma dönüşebilir.
+                # eski ön-uyarı/alarm saatini miras alamaz.
                 o["vurus"].clear()
                 o["durum"] = "izle"
                 o["onay_ts"] = 0.0
@@ -210,19 +257,24 @@ class DumanTakip:
         n = len(o["vurus"])
         if n < self.dogrulama:
             return []
+        sessiz = ts - self._kamera_son_alarm < self.cooldown   # kamera alarmda
         if o["durum"] == "izle":
             o["durum"] = "on_uyari"
             # Alarm süresi ham ilk tespitten değil, N-kare doğrulamasının
-            # tamamlandığı ön-uyarı anından başlar.
+            # tamamlandığı ön-uyarı anından başlar (ana dal incelemesi).
             o["onay_ts"] = ts
-            return [self._olay(o, "on_uyari", ts, n)]
+            return [] if sessiz else [self._olay(o, "on_uyari", ts, n)]
         if o["durum"] == "on_uyari" and ts - o["onay_ts"] >= self.alarm_sn:
             o["durum"] = "alarm"
             o["son_alarm"] = ts
+            if sessiz:
+                return []
+            self._kamera_son_alarm = ts
             return [self._olay(o, "alarm", ts, n)]
         # Süren yangın sessizleşmesin: cooldown dolunca hatırlatılır
-        if o["durum"] == "alarm" and ts - o["son_alarm"] >= self.cooldown:
+        if o["durum"] == "alarm" and ts - o["son_alarm"] >= self.cooldown and not sessiz:
             o["son_alarm"] = ts
+            self._kamera_son_alarm = ts
             return [self._olay(o, "alarm", ts, n)]
         return []
 
@@ -276,6 +328,7 @@ def _takip_kur(cfg, w: int, h: int, bolgeler, maskeler) -> DumanTakip:
         cooldown_sn=cfg.get("fire.cooldown_seconds", 120.0),
         azami_bosluk_sn=cfg.get("fire.max_gap_seconds", 2.0),
         bolgeler=bolgeler, maskeler=maskeler,
+        kisi_oran=cfg.get("fire.person_overlap", 0.5),
     )
 
 
@@ -306,6 +359,48 @@ def _alarm_kanitla(cfg, olay: dict, kare, halka, camera_id: str,
                                fps=efektif_fps)
 
 
+def _karo_birlestir(tespitler: list[tuple], iou_esik: float = 0.5) -> list[tuple]:
+    """Bindirmeli karolarda aynı nesne iki kez çıkar: aynı sınıf + IoU ≥ eşik → yüksek güvenli kalır."""
+    sirali = sorted(tespitler, key=lambda t: -float(t[5]))
+    kalan: list[tuple] = []
+    for t in sirali:
+        if any(t[0] == k[0] and _iou(t[1:5], k[1:5]) >= iou_esik for k in kalan):
+            continue
+        kalan.append(t)
+    return kalan
+
+
+def tespit_karolu(ded, kare, n: int, bindirme: float = 0.08) -> list[tuple]:
+    """Kareyi n×n bindirmeli karoya böler, her karoyu ayrı geçirir, kutuları geri taşır.
+
+    Neden: dedektör 512'ye küçültür; 2K kadrajda kovada yeni tutuşan alev ~10
+    piksele iner ve ilk 10-15 sn GÖRÜLMEZ. Saha ölçümü (docs/olcumler-yangin-saha-
+    2026-09-02.md): tek karede ilk alev tespiti tutuşmadan 14 sn sonra, 2×2 karoda
+    3 sn sonra; tespitli kare oranı 100/550 → 349/550. Maliyet n² kat inference —
+    yangın hattı zaten seyrek (stride) koştuğu için kabul edilebilir.
+    """
+    if n <= 1:
+        return ded.tespit(kare)
+    h, w = kare.shape[:2]
+    kh, kw = h // n, w // n
+    ph, pw = int(kh * bindirme), int(kw * bindirme)
+    karolar, ofsetler = [], []
+    for i in range(n):
+        for j in range(n):
+            y0, x0 = max(0, i * kh - ph), max(0, j * kw - pw)
+            y1, x1 = min(h, (i + 1) * kh + ph), min(w, (j + 1) * kw + pw)
+            karolar.append(kare[y0:y1, x0:x1])
+            ofsetler.append((x0, y0))
+    # Karolar tek çağrıda (batch) geçer — dedektör destekliyorsa; yoksa tek tek.
+    coklu = getattr(ded, "tespit_coklu", None)
+    sonuclar = coklu(karolar) if coklu else [ded.tespit(k) for k in karolar]
+    out: list[tuple] = []
+    for (x0, y0), tespitler in zip(ofsetler, sonuclar):
+        for s, bx1, by1, bx2, by2, c in tespitler:
+            out.append((s, bx1 + x0, by1 + y0, bx2 + x0, by2 + y0, c))
+    return _karo_birlestir(out)
+
+
 def _ciz(kare, tespitler) -> Any:
     """Canlı görünüm için tespitleri kareye çizer (ultralytics plot yerine)."""
     import cv2
@@ -318,12 +413,61 @@ def _ciz(kare, tespitler) -> Any:
     return img
 
 
+class YanginHatti:
+    """Kare-bazlı yangın hattı: dedektör + zamansal doğrulama + kanıt halkası.
+
+    Kaynağı AÇMAZ — kareyi çağıran verir. İki çağrı yolu vardır: `run_fire`
+    (dosya/RTSP'yi kendisi okur, CLI ve Test ekranı) ve akis motoru
+    (`src/akis_motoru.py`, kareyi donanım çözücüden alır; ana akış NVDEC'te
+    çözülür, CPU'ya tam çözünürlük decode yükü binmez — 2026-09-05 denetiminin
+    sebebi buydu). Mantık tek yerde kalsın diye ikisi de bu sınıfı kullanır.
+    """
+
+    def __init__(self, cfg, ded, w: int, h: int, camera_id: str, efektif_fps: float,
+                 bolgeler=None, maskeler=None, store=None,
+                 on_event=None, on_alert=None) -> None:
+        self.cfg = cfg
+        self.ded = ded
+        self.camera_id = camera_id
+        self.karo = int(cfg.get("fire.tiles", 1))   # 2 = 2×2 karo (erken/küçük alev için)
+        self.takip = _takip_kur(cfg, w, h, bolgeler, maskeler)
+        self.efektif_fps = max(1.0, float(efektif_fps))
+        self.halka: deque = deque(maxlen=max(2, int(cfg.get("fire.clip_seconds", 4.0)
+                                                    * self.efektif_fps)))
+        self.sonuc = FireResult(fps=efektif_fps)
+        self.store = store
+        self.on_event = on_event
+        self.on_alert = on_alert
+
+    def kare(self, bgr, ts: float, frame_idx: int, kisiler=None) -> list[tuple]:
+        """Bir kareyi işler; tespitleri (sinif, x1, y1, x2, y2, conf) döndürür.
+
+        `kisiler`: kadrajdaki kişi kutuları (piksel) — sayım hattından gelir,
+        kişiyle örtüşen tespit bastırılır (`kisi_bastir`). Dönen liste
+        bastırma SONRASIdır: panel, kişi üstündeki sahte kutuyu da görmesin.
+        """
+        self.sonuc.frames += 1
+        self.halka.append(bgr.copy())
+        tespitler = tespit_karolu(self.ded, bgr, self.karo)
+        if kisiler and self.takip.kisi_oran > 0:
+            tespitler = kisi_bastir(tespitler, kisiler, self.takip.kisi_oran)
+        for olay in self.takip.guncelle(tespitler, ts):
+            olay["camera_id"] = self.camera_id
+            olay["frame_idx"] = frame_idx
+            _yay(self.cfg, olay, self.sonuc, bgr, self.halka, self.camera_id,
+                 self.efektif_fps, self.store, self.on_event, self.on_alert)
+        return tespitler
+
+
 def run_fire(source: str, cfg, store=None, camera_id: str = "",
              bolgeler: list[dict] | None = None, maskeler: list[dict] | None = None,
              on_event=None, on_alert=None, on_frame=None,
              on_detection=None,
              should_stop: Callable[[], bool] | None = None) -> FireResult:
     """Kaynakta yangın/duman erken uyarısı koşar.
+
+    `on_detection(ts, ham_idx, tespitler)`: saha kabul ölçümü ham model
+    sürekliliğini gözleyebilsin (fire_metrik).
 
     `bolgeler` / `maskeler`: normalize poligonlar (zones tablosundan; kind
     'fire' ve 'firemask'). Bölge verilmezse tüm kadraj izlenir.
@@ -333,13 +477,9 @@ def run_fire(source: str, cfg, store=None, camera_id: str = "",
     camera_id = camera_id or Path(source).stem
     ded = _dedektor_kur(cfg)
     cap, w, h, fps = _kaynak_ac(source, cfg)
-    takip = _takip_kur(cfg, w, h, bolgeler, maskeler)
-
     # İşlenen kare temposu — klip halkasının uzunluğu buna göre hesaplanır
-    efektif_fps = max(1.0, fps / vid_stride)
-    halka: deque = deque(maxlen=max(2, int(cfg.get("fire.clip_seconds", 4.0)
-                                           * efektif_fps)))
-    sonuc = FireResult(fps=fps)
+    hat = YanginHatti(cfg, ded, w, h, camera_id, fps / vid_stride,
+                      bolgeler, maskeler, store, on_event, on_alert)
     ham_idx = 0
     canli = str(source).startswith(("rtsp://", "rtmp://", "http://", "https://"))
     baslangic = time.monotonic()
@@ -351,29 +491,19 @@ def run_fire(source: str, cfg, store=None, camera_id: str = "",
             ham_idx += 1
             if ham_idx % vid_stride:
                 continue          # stride: her N karede bir analiz
-            sonuc.frames += 1
-            halka.append(kare.copy())
-            tespitler = ded.tespit(kare)
             # Canlı akışta kamera FPS metadatası sıkça nominal/yanlıştır; alarm
-            # süresi duvar saatidir. Dosyada ise hızlı analizden etkilenmemek
-            # için video zamanını kullanırız.
+            # süresi duvar saatidir. Dosyada video zamanı (hızlı analizden etkilenmez).
             ts = time.monotonic() - baslangic if canli else ham_idx / fps
+            tespitler = hat.kare(kare, ts, ham_idx)
             if on_detection is not None:
-                # Saha kabul ölçümü ham model sürekliliğini gözleyebilsin;
-                # mutable listeyi callback'in değiştirmemesi için kopyalanır.
                 on_detection(ts, ham_idx, list(tespitler))
-            for olay in takip.guncelle(tespitler, ts):
-                olay["camera_id"] = camera_id
-                olay["frame_idx"] = ham_idx
-                _yay(cfg, olay, sonuc, kare, halka, camera_id, efektif_fps,
-                     store, on_event, on_alert)
             if on_frame is not None:
                 on_frame(_ciz(kare, tespitler))
     finally:
         cap.release()
         if store is not None:
             store.commit()
-    return sonuc
+    return hat.sonuc
 
 
 def _yay(cfg, olay: dict, sonuc: FireResult, kare, halka, camera_id: str,
@@ -385,8 +515,7 @@ def _yay(cfg, olay: dict, sonuc: FireResult, kare, halka, camera_id: str,
     """
     if olay["durum"] == "on_uyari":
         sonuc.on_uyarilar.append(olay)
-        if store is not None:
-            store.add_fire_event(camera_id, olay)
+        _fire_event_yaz(store, camera_id, olay)
         if on_event is not None:
             on_event(olay)
         return
@@ -394,5 +523,26 @@ def _yay(cfg, olay: dict, sonuc: FireResult, kare, halka, camera_id: str,
     sonuc.alarmlar.append(olay)
     if on_alert is not None:
         on_alert(olay)
-    if store is not None:
-        store.add_fire_event(camera_id, olay)
+    _fire_event_yaz(store, camera_id, olay)
+    if store is not None and not _bus_mu(store) and hasattr(store, "add_alert"):
+        # Doğrudan DB (CLI, Test kum havuzu): alarm satırını burada yaz. Bus
+        # üstünde bunu olay.py yazar — burada da yazmak çift alarm üretiyordu.
+        store.add_alert("fire_warning", olay["sinif"], "fire",
+                        f"{olay['dogrulama']} kare / {olay['sure']} sn · {FERAGAT}",
+                        camera_id, snapshot=olay["snapshot"])
+
+
+def _bus_mu(store) -> bool:
+    try:
+        from .bus import BusStore
+        return isinstance(store, BusStore)
+    except Exception:
+        return False
+
+
+def _fire_event_yaz(store, camera_id: str, olay: dict) -> None:
+    """fire_events satırı — `(camera_id, olay)` sözleşmesi (BusStore yayınlar,
+    SqliteStore/PgStore dict'i açar). Sözleşmesiz store (kum havuzu) atlanır."""
+    if store is None or not hasattr(store, "add_fire_event"):
+        return
+    store.add_fire_event(camera_id, olay)

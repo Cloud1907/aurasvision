@@ -17,8 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .analytics import AnalyticsMixin
-from .store_fire import (PG_RECENT_EVENTS, SQLITE_FIRE_SCHEMA,
-                         SQLITE_RECENT_EVENTS, ensure_pg_fire)
+from .store_fire import SQLITE_FIRE_SCHEMA, ensure_pg_fire
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -26,8 +25,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 # record: kameranın NVR kaydı (analiz değil arşiv). Varsayılan AÇIK — kayıt
 # bilinçli kapatılır; sessizce kapalı başlayan kamera sahada "o gün kayıt yok"
 # olarak patlar ve geri getirilemez.
-DEFAULT_TASKS = {"count": True, "plate": False, "face": False,
-                 "fire": False, "record": True}
+DEFAULT_TASKS = {"count": True, "plate": False, "face": False, "fire": False,
+                 "telefon": False, "sigara": False, "record": True}
 
 
 def open_store(cfg) -> "BaseStore":
@@ -117,11 +116,22 @@ class BaseStore(AnalyticsMixin):
                 (camera_id, age, gender, conf, round(ts_seconds, 2), frame_idx,
                  track_id, match_name, match_score))
 
-    def add_fire_event(self, camera_id: str, state: str, sinif: str,
-                       conf: float | None, confirm_frames: int, duration: float,
-                       ts_seconds: float, frame_idx: int, snapshot: str = "",
-                       clip: str = "") -> None:
-        """Yangın durum geçişini saklar; ön uyarıda medya yolları boş kalır."""
+    def add_fire_event(self, camera_id: str, state, sinif: str = "duman",
+                       conf: float | None = None, confirm_frames: int = 0,
+                       duration: float = 0.0, ts_seconds: float = 0.0,
+                       frame_idx: int = 0, snapshot: str = "", clip: str = "") -> None:
+        """Yangın durum geçişini saklar; ön uyarıda medya yolları boş kalır.
+
+        İki çağrı biçimi: `(camera_id, olay_dict)` (fire.py / BusStore sözleşmesi)
+        ve açık alanlar (olay.py tüketicisi). Tek satıra iner.
+        """
+        if isinstance(state, dict):
+            o = state
+            state, sinif = o.get("durum", "on_uyari"), o.get("sinif", "duman")
+            conf, confirm_frames = o.get("conf"), o.get("dogrulama", 0)
+            duration, ts_seconds = o.get("sure", 0.0), o.get("ts_seconds", 0.0)
+            frame_idx = o.get("frame_idx", 0)
+            snapshot, clip = o.get("snapshot", ""), o.get("clip", "")
         self._x("INSERT INTO fire_events (camera_id, state, class, conf, confirm_frames,"
                 " duration, ts_seconds, frame_idx, snapshot, clip)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -131,6 +141,35 @@ class BaseStore(AnalyticsMixin):
     # --- Bölgeler ---
     def list_zones(self, camera_id: str) -> list[dict[str, Any]]:
         raise NotImplementedError
+
+    def zone_counts(self) -> dict[str, dict[str, int]]:
+        """Kamera başına bölge türü sayıları — {camera_id: {kind: adet}}.
+
+        Sayım görevi açık ama çizgisi çizilmemiş kamera TANIM GEREĞİ hiçbir şey
+        üretemez; GPU harcar, panelde "çalışıyor" görünür. Arayüz bunu uyarı
+        olarak gösterebilsin diye tek sorguda toplanır — kamera başına ayrı
+        istek 100 kameralı kurulumda 100 sorgu demekti.
+        """
+        out: dict[str, dict[str, int]] = {}
+        for r in self._all("SELECT camera_id, kind, COUNT(*) AS n FROM zones"
+                           " GROUP BY camera_id, kind"):
+            out.setdefault(r["camera_id"], {})[r["kind"]] = int(r["n"])
+        return out
+
+    def all_zones(self) -> dict[str, list[dict[str, Any]]]:
+        """Tüm kameraların TAM bölge/çizgi geometrisi — {camera_id: [zone, ...]}.
+
+        Canlı duvar görünümü, kamera başına ayrı /api/zones isteği atmak yerine
+        tek çağrıda çizilecek çizgi/bölgeleri alır (zone_counts() ile aynı N+1
+        gerekçesi — burada sayı değil geometri lazım). points/classes'ın
+        SQLite/Postgres'te farklı ayrıştırılması gerektiğinden (bkz. list_zones)
+        alt sınıfların kendi list_zones'u kamera kamera çağrılır; kamera sayısı
+        küçük olduğundan (onlarca) bu, ayrı SQL yolu yazmaktan daha güvenli.
+        """
+        out: dict[str, list[dict[str, Any]]] = {}
+        for r in self._all("SELECT DISTINCT camera_id FROM zones"):
+            out[r["camera_id"]] = self.list_zones(r["camera_id"])
+        return out
 
     def add_zone(self, camera_id: str, kind: str, name: str,
                  points: list, classes: list, direction: str) -> None:
@@ -204,6 +243,20 @@ class BaseStore(AnalyticsMixin):
     def latest_health(self) -> list[dict[str, Any]]:
         """Kamera başına en son heartbeat."""
         raise NotImplementedError
+
+    def prune_camera_health(self, ts) -> int:
+        """`ts`'den eski heartbeat satırlarını siler; silinen satır sayısını döndürür.
+
+        Heartbeat kamera başına 5 saniyede bir satır yazar: 4 kamerada günde
+        ~69 bin, 20 kamerada ~345 bin satır. Tablo YALNIZCA kamera silinince
+        temizleniyordu, yani süresiz büyüyordu — ölçüm (2026-08-27): 4 günde
+        214 bin satır. Panelin durum sorgusu her kamera için MAX(id) tarar,
+        yani tablo büyüdükçe panel de yavaşlar. Geçmiş heartbeat KANIT DEĞİLDİR
+        (olay/kayıt satırlarına dokunulmaz); yalnız anlık durum için tutulur.
+        """
+        cur = self._x("DELETE FROM camera_health WHERE time < ?", (ts,))
+        self.commit()
+        return int(getattr(cur, "rowcount", 0) or 0)
 
     def delete_camera(self, cid: str) -> None:
         self._x("DELETE FROM cameras WHERE id=?", (cid,))
@@ -336,9 +389,26 @@ class BaseStore(AnalyticsMixin):
             self._x(f"DELETE FROM {t}")
         self.commit()
 
+    def _event_where(self, tur, kamera, start, end, text):
+        conditions, params = [], []
+        for column, value in (("type", tur), ("camera_id", kamera)):
+            if value:
+                conditions.append(column + "=?")
+                params.append(value)
+        for operator, value in ((">=", start), ("<=", end)):
+            if value:
+                conditions.append(f"time {operator} ?::timestamptz" if self._ph == "%s"
+                                  else f"julianday(time) {operator} julianday(?)")
+                params.append(value)
+        if text:
+            conditions.append("LOWER(detail) LIKE LOWER(?) ESCAPE '!'")
+            params.append("%" + text.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%")
+        return (" WHERE " + " AND ".join(conditions) if conditions else ""), params
+
     def recent_events(self, limit: int = 50, tur: str = "",
-                      kamera: str = "") -> list[dict[str, Any]]:
-        """Birleşik olay akışı. tur: count|plate|face|fire (boş = hepsi)."""
+                      kamera: str = "", *, start: str = "", end: str = "",
+                      q: str = "", offset: int = 0) -> list[dict[str, Any]]:
+        """Birleşik olay akışı. tur: count|plate|face|fire|intrusion|telefon|sigara (boş = hepsi)."""
         raise NotImplementedError
 
     def commit(self) -> None:
@@ -495,12 +565,40 @@ class SqliteStore(BaseStore):
     def latest_health(self) -> list[dict[str, Any]]:
         # MAX(time) saniye çözünürlüğünde eşitlik yapar → en son satırı id ile seç
         return self._all(
-            "SELECT camera_id, time, status, fps, detail FROM camera_health"
+            "SELECT camera_id, time, status, fps, dropped, detail FROM camera_health"
             " WHERE id IN (SELECT MAX(id) FROM camera_health GROUP BY camera_id)")
 
     def recent_events(self, limit: int = 50, tur: str = "",
-                      kamera: str = "") -> list[dict[str, Any]]:
-        return self._all(SQLITE_RECENT_EVENTS, (tur, tur, kamera, kamera, limit))
+                      kamera: str = "", *, start: str = "", end: str = "",
+                      q: str = "", offset: int = 0) -> list[dict[str, Any]]:
+        where, params = self._event_where(tur, kamera, start, end, q)
+        query = """
+        SELECT * FROM (
+          SELECT time, 'count' AS type, camera_id,
+                 TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
+                 NULL AS snapshot, zone, direction, NULL AS conf, NULL AS state, NULL AS clip
+            FROM count_events
+          UNION ALL
+          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot,
+                 NULL AS zone, NULL AS direction, conf, NULL, NULL
+            FROM plate_events
+          UNION ALL
+          SELECT time, 'face', camera_id,
+                 COALESCE(gender,'?')||' ~'||COALESCE(age,0), ts_seconds, frame_idx, NULL,
+                 NULL AS zone, NULL AS direction, NULL AS conf, NULL, NULL
+            FROM face_events
+          UNION ALL
+          SELECT time, 'fire', camera_id, class||' · '||state, ts_seconds, frame_idx,
+                 snapshot, NULL AS zone, NULL AS direction, conf, state, clip
+            FROM fire_events
+          UNION ALL
+          SELECT time, kind, camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
+                 NULL, NULL, snapshot, NULL, NULL, NULL, NULL, NULL
+            FROM alerts WHERE kind IN ('intrusion','telefon','sigara')
+        ) ev
+        """
+        query += where + " ORDER BY time DESC, type, camera_id, detail, ts_seconds DESC LIMIT ? OFFSET ?"
+        return self._all(query, (*params, limit, offset))
 
     def commit(self) -> None:
         self.conn.commit()
@@ -636,7 +734,7 @@ class PgStore(BaseStore):
 
     def latest_health(self) -> list[dict[str, Any]]:
         rows = self._all(
-            "SELECT DISTINCT ON (camera_id) camera_id, time, status, fps, detail"
+            "SELECT DISTINCT ON (camera_id) camera_id, time, status, fps, dropped, detail"
             " FROM camera_health ORDER BY camera_id, time DESC")
         for r in rows:
             r["time"] = str(r["time"])
@@ -666,8 +764,36 @@ class PgStore(BaseStore):
         return rows
 
     def recent_events(self, limit: int = 50, tur: str = "",
-                      kamera: str = "") -> list[dict[str, Any]]:
-        rows = self._all(PG_RECENT_EVENTS, (tur, tur, kamera, kamera, limit))
+                      kamera: str = "", *, start: str = "", end: str = "",
+                      q: str = "", offset: int = 0) -> list[dict[str, Any]]:
+        where, params = self._event_where(tur, kamera, start, end, q)
+        query = """
+        SELECT * FROM (
+          SELECT time, 'count' AS type, camera_id,
+                 TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
+                 NULL AS snapshot, zone, direction, NULL::real AS conf, NULL::text AS state, NULL::text AS clip
+            FROM count_events
+          UNION ALL
+          SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot,
+                 NULL AS zone, NULL AS direction, conf, NULL, NULL
+            FROM plate_events
+          UNION ALL
+          SELECT time, 'face', camera_id,
+                 COALESCE(gender, chr(63))||' ~'||COALESCE(age::text,'0'), ts_seconds, frame_idx,
+                 NULL, NULL AS zone, NULL AS direction, NULL::real AS conf, NULL, NULL
+            FROM face_events
+          UNION ALL
+          SELECT time, 'fire', camera_id, class||' · '||state, ts_seconds, frame_idx,
+                 snapshot, NULL AS zone, NULL AS direction, conf, state, clip
+            FROM fire_events
+          UNION ALL
+          SELECT time, kind, camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
+                 NULL, NULL, snapshot, NULL, NULL, NULL, NULL, NULL
+            FROM alerts WHERE kind IN ('intrusion','telefon','sigara')
+        ) ev
+        """
+        query += where + " ORDER BY time DESC, type, camera_id, detail, ts_seconds DESC NULLS LAST LIMIT ? OFFSET ?"
+        rows = self._all(query, (*params, limit, offset))
         for r in rows:
             r["time"] = str(r["time"])
         return rows

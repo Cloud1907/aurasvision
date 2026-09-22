@@ -12,6 +12,7 @@ __pycache__/
 
 # Veri & çıktı
 data/videos/
+data/gt-*.json
 output/
 *.db
 *.sqlite
@@ -35,3 +36,8 @@ allure-report/
 # windows/AurasVision-Kurulum.exe — artık repoda: sunucular farklı ağdan indirebilsin (5 MB)
 .agents/runtime/
 .codegraph/
+
+# Windows tek-makine ikilileri (setup.ps1 indirir) ve yerel sırlar
+bin/*.exe
+ERISIM-ANAHTARI.txt
+kurulum-log.txt
