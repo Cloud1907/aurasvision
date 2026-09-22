@@ -235,7 +235,7 @@ def _canli_kaynak(source: str) -> bool:
 
 def _gorev_calistir(gorev: str, source: str, cfg, bstore, cid: str,
                     lines, ihlaller, watch=None, fire_zones=None) -> None:
-    """Tek analiz görevini (count/plate/face/fire) çalıştırır — dispatch tek yerde,
+    """Tek analiz görevini (count/plate/face/fire/davranis) çalıştırır — dispatch tek yerde,
     hem sıralı hem eşzamanlı (bkz. _run_camera) çağrı yolu bunu kullanır."""
     if gorev == "count":
         from .count import run_count
@@ -250,6 +250,10 @@ def _gorev_calistir(gorev: str, source: str, cfg, bstore, cid: str,
         from .face import run_face
         run_face(source, cfg, store=bstore, camera_id=cid, watch=watch,
                  should_stop=_kare_sayaci(cid), on_frame=_onizleme_itici(cid))
+    elif gorev == "davranis":
+        # Telefonla konuşma / sigara — poz sezgiseli + doğrulama (src/davranis.py)
+        from .davranis import run_davranis
+        run_davranis(source, cfg, store=bstore, camera_id=cid)
     elif gorev == "fire":
         # Yangın/duman erken uyarı (sertifikalı alarm DEĞİL — src/fire.py başlığı)
         from .fire import run_fire
@@ -301,7 +305,7 @@ def _run_camera(cam: dict, cfg, bus) -> None:
             rstore.close()
 
         did_work = False
-        aktif = [g for g in ("count", "plate", "face", "fire") if tasks.get(g)]
+        aktif = [g for g in ("count", "plate", "face", "fire", "davranis") if tasks.get(g)]
         # Çizgi de ihlal alanı da yoksa sayımın işleyeceği geometri yoktur (ana dal #7).
         if "count" in aktif and not (cizgiler or ihlaller):
             aktif.remove("count")

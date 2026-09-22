@@ -242,6 +242,7 @@ def _yangin_bolgeleri(store, cid: str) -> tuple[list[dict], list[dict]]:
 # Hareket filtresi durgun sahnede batch'i atlar; kapıda duran kişi bu süre boyunca
 # hâlâ bastırılır, sonra kutu bayat sayılır (kişi gitmiş olabilir).
 _KISI_TAZE = 5.0
+_TELEFON_CLASS = 67    # COCO "cell phone" — davranış kademesinin telefon doğrulaması
 # Yangın dedektörü yükleme denemesi: sayı ve aralık (sn).
 _YUKLEME_DENEME = 5
 _YUKLEME_ARALIK = 30.0
@@ -358,6 +359,110 @@ class _YanginKademe:
         publish(self.bus, "fire", cid, yuk)
 
 
+class _DavranisKademe:
+    """Davranış kademesi (telefonla konuşma / sigara) — src/davranis.py hattı.
+
+    Yangın kademesiyle aynı desen: kendi iş parçacığı, kendi temposu
+    (`davranis.fps`), meşgulse kare atılır. Poz modeli (YOLO11n-pose, ~20 ms)
+    sayım batch'inden ayrı koşar; telefon doğrulaması için batch'in COCO
+    "cell phone" kutuları (`st["telefon_kutular"]`) bedavaya gelir.
+    """
+
+    def __init__(self, cfg, bus) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        self.cfg = cfg
+        self.bus = bus
+        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="davranis")
+        self.fps = float(cfg.get("davranis.fps", 4.0))
+        self.poz = None
+        self.sigara = None
+        self.hata = ""
+        self.deneme = 0
+        self.son_deneme = 0.0
+        self.hat: dict[str, Any] = {}
+        self.hat_key: dict[str, str] = {}
+        self.busy: set[str] = set()
+        self.last: dict[str, float] = {}
+        self.kare_n = 0
+
+    def _modeller(self):
+        if self.poz is not None:
+            return self.poz
+        if self.hata and (self.deneme >= _YUKLEME_DENEME
+                          or time.time() - self.son_deneme < _YUKLEME_ARALIK):
+            return None
+        from .davranis import _poz_kur, _sigara_kur
+        self.deneme += 1
+        self.son_deneme = time.time()
+        try:
+            self.poz = _poz_kur(self.cfg)
+            self.sigara = _sigara_kur(self.cfg)
+            self.hata = ""
+            poz_ad = self.cfg.get("davranis.pose_model", "weights/yolo11n-pose.pt")
+            print(f"{_ON} davranış hattı yüklendi: poz {poz_ad} · sigara dedektörü "
+                  f"{'açık' if self.sigara else 'yok (yalnız poz)'} · hedef {self.fps} fps/kamera",
+                  flush=True)
+        except Exception as e:
+            self.hata = f"{e.__class__.__name__}: {e}"
+            son = self.deneme >= _YUKLEME_DENEME
+            print(f"{_ON} davranış hattı YÜKLENEMEDİ ({self.deneme}/{_YUKLEME_DENEME}: {self.hata}) — "
+                  + ("VAZGEÇİLDİ" if son else f"{_YUKLEME_ARALIK:.0f} sn sonra yeniden denenecek"),
+                  flush=True)
+        return self.poz
+
+    def maybe_submit(self, cid: str, st: dict, bgr, ts: float, wh) -> None:
+        if ts - self.last.get(cid, -1e9) < 1.0 / max(self.fps, 0.1) or cid in self.busy:
+            return
+        if self._modeller() is None:
+            return
+        self.last[cid] = ts
+        self.busy.add(cid)
+        self.pool.submit(self._run, cid, st, bgr, ts, wh)
+
+    def _run(self, cid: str, st: dict, bgr, ts: float, wh) -> None:
+        try:
+            from .davranis import DavranisHatti
+            w, h = wh
+            key = repr((w, h))
+            if self.hat_key.get(cid) != key:
+                self.hat[cid] = DavranisHatti(
+                    self.cfg, w, h, cid, self.fps, poz=self.poz, sigara=self.sigara,
+                    store=None, on_event=lambda o, c=cid: self._olay(c, o),
+                    on_alert=lambda o, c=cid: self._olay(c, o))
+                self.hat_key[cid] = key
+            tel = None
+            tk = st.get("telefon_kutular")
+            if tk and time.time() - tk[0] <= _KISI_TAZE:
+                tel = tk[1]
+            tespitler = self.hat[cid].kare(bgr, ts, st["frame_idx"], telefon_kutular=tel)
+            self.kare_n += 1
+            # Panel: yalnız işaretli kişiler (sayım zaten herkesi çiziyor)
+            st["davranis_dets"] = [
+                {"id": 0, "x1": round(float(x1) / w, 4), "y1": round(float(y1) / h, 4),
+                 "x2": round(float(x2) / w, 4), "y2": round(float(y2) / h, 4),
+                 "cls": et, "conf": round(float(c), 2)}
+                for et, x1, y1, x2, y2, c in tespitler if et != "kisi"]
+            tasks = st["cam"].get("tasks") or {}
+            if not (tasks.get("count") or tasks.get("plate") or tasks.get("face")):
+                dets = list(st.get("fire_dets") or []) + st["davranis_dets"]
+                if st.get("push_dets"):
+                    st["push_dets"](dets, st["frame_idx"])
+                if st.get("push_frame"):
+                    st["push_frame"](_annotate(bgr, dets, w, h, None, None))
+        except Exception as e:
+            print(f"{_ON} {cid}: davranış kademesi hatası: {e}", flush=True)
+        finally:
+            self.busy.discard(cid)
+
+    def _olay(self, cid: str, o: dict) -> None:
+        print(f"{_ON} {cid}: DAVRANIŞ {o['durum'].upper()} · {o['sinif']} · iz {o['track_id']} · "
+              f"doğrulama {o['dogrulama']} · {o['sure']} sn"
+              + (f" · kanıt {o.get('snapshot')}" if o.get("snapshot") else ""), flush=True)
+        yuk = {k: v for k, v in o.items() if k != "kutu"}
+        yuk["kutu"] = [round(float(x), 1) for x in o.get("kutu", ())]
+        publish(self.bus, "davranis", cid, yuk)
+
+
 def _annotate(bgr, dets: list[dict], w: int, h: int, sayac, ihlal):
     """Canlı görünüm "Analiz" modu için kutu+çizgi çizili kopya (count.py görünümü)."""
     import cv2
@@ -459,6 +564,7 @@ def run_akis_worker(cams: list[dict], cfg, bus,
     store.close()
     stage2 = _SecondStage(cfg, bstore, watch)
     yangin = _YanginKademe(cfg, bus)
+    davranis = _DavranisKademe(cfg, bus)
 
     import os
     sec = os.environ.get("AURAS_CAMERAS", "")
@@ -476,7 +582,7 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                           "counter": None, "counter_key": None, "lines": [],
                           "ihlal": None, "ihlal_key": None, "prev": None,
                           "seq": 0, "frame_idx": 0, "next_ts": 0.0, "hb_idx": 0,
-                          "fire_dets": [], "fire_tanim": ([], []),
+                          "fire_dets": [], "fire_tanim": ([], []), "davranis_dets": [],
                           "push_frame": on_frame(c["id"]) if on_frame else None,
                           "push_dets": on_detections(c["id"]) if on_detections else None}
         print(f"{_ON} {c['id']}: {tip} <- {url.split('@')[-1]}", flush=True)
@@ -521,6 +627,8 @@ def run_akis_worker(cams: list[dict], cfg, bus,
         # Ana iş parçacığında, döngü ve ikinci kademe başlamadan ÖNCE yükle:
         # iş parçacıkları arası import yarışı (SigLIP ↔ rfdetr) burada olmaz.
         yangin._dedektor()
+    if any((st["cam"].get("tasks") or {}).get("davranis") for st in state.values()):
+        davranis._modeller()
     print(f"{_ON} {len(state)} kamera · model={model_ad} · hedef {fps} fps · "
           f"hwaccel adayları: {','.join(hw_adaylar) or 'yok (yazılım)'} · "
           f"{donanim.ozet_satiri()}", flush=True)
@@ -549,7 +657,12 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                 # Hareket filtresinden ÖNCE: duman yavaş, alev küçük — filtre
                 # ilk kareleri yutmasın. Kendi temposu/iş parçacığı var.
                 yangin.maybe_submit(cid, st, bgr, ts, wh)
-            if not (tasks.get("count") or tasks.get("plate") or tasks.get("face")):
+            if tasks.get("davranis"):
+                davranis.maybe_submit(cid, st, bgr, ts, wh)
+            # Davranış açık kamera batch'e de girer: telefon doğrulaması COCO
+            # "cell phone" kutusunu buradan alır (ek model yok).
+            if not (tasks.get("count") or tasks.get("plate") or tasks.get("face")
+                    or tasks.get("davranis")):
                 continue
             if motion_on:
                 g = _gri_kucuk(bgr)
@@ -576,6 +689,10 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                         st["kisi_kutular"] = (wall, [tuple(map(float, xyxy[i]))
                                                      for i in range(len(cls))
                                                      if int(cls[i]) == _PERSON_CLASS])
+                    if tasks.get("davranis"):
+                        st["telefon_kutular"] = (wall, [tuple(map(float, xyxy[i]))
+                                                        for i in range(len(cls))
+                                                        if int(cls[i]) == _TELEFON_CLASS])
                     if tasks.get("count"):
                         keep = np.array([int(c) in count_classes for c in cls], dtype=bool)
                         # ihlal alanı insan dışı sınıf da isteyebilir
@@ -634,6 +751,8 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                                             "cls": names.get(c, "obj"), "conf": round(cf, 2)})
                     if st.get("fire_dets"):
                         dets_ui = dets_ui + list(st["fire_dets"])
+                    if st.get("davranis_dets"):
+                        dets_ui = dets_ui + list(st["davranis_dets"])
                     if st["push_dets"]:
                         st["push_dets"](dets_ui, st["frame_idx"])
                     if st["push_frame"]:
@@ -676,9 +795,11 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                     health_cb(cid, du)
                 publish(bus, "health", cid, du)
             yk, yangin.kare_n = yangin.kare_n, 0
+            dk, davranis.kare_n = davranis.kare_n, 0
             print(f"{_ON} inference {rate:.1f} kare/sn · CPU {kul.get('cpu_pct', '?')}% · "
                   f"GPU {kul.get('gpu_pct', '?')}% · NVDEC {kul.get('nvdec_pct', '?')}%"
-                  + (f" · yangın {yk / max(now - last_hb_t, 1e-6):.1f} kare/sn" if yk else ""),
+                  + (f" · yangın {yk / max(now - last_hb_t, 1e-6):.1f} kare/sn" if yk else "")
+                  + (f" · davranış {dk / max(now - last_hb_t, 1e-6):.1f} kare/sn" if dk else ""),
                   flush=True)
         if now - last_refresh >= 30.0:
             last_refresh = now

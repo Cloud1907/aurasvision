@@ -137,6 +137,7 @@ evidence:
   plate: true       # plaka kırpması + bağlam karesi (ALPR'ın asli işlevi)
   intrusion: true   # alarm anının karesi (güvenlik amacının kendisi)
   face: false       # biyometrik veri — varsayılan KAPALI, yalnız embedding saklanır
+  davranis: true    # telefon/sigara alarm karesi (kişi görünür; KVKK: amaçla sınırlı, süreli)
   keep_days: 30     # bu süreden eski kanıt klasörleri silinir (0 = silme)
 
 intrusion:
@@ -306,3 +307,53 @@ fire:
   # Bölgeler DB'den gelir (zones tablosu): kind='fire' izleme alanı (tanımlıysa
   # yalnız içi değerlendirilir), kind='firemask' maske (kaynak makinesi, egzoz,
   # güneş vuran pencere). ISO/TS 7240-30 kurulum standardının karşılığı.
+
+davranis:
+  # DAVRANIŞ TESPİTİ — telefonla konuşma ve sigara içme (src/davranis.py başlığı).
+  # KVKK: kişi davranışı izlenir; kimlik eşlemesi YAPILMAZ, yüz vektörü üretilmez.
+  # Kanıt karesi kişiyi içerir → evidence.davranis ile kapatılır.
+  #
+  # İki katman: (1) poz sezgiseli — el-kulak / el-ağız ilişkisi ZAMAN içinde,
+  # (2) nesne doğrulama — telefon: stok COCO "cell phone" (akis motorunda sayım
+  # batch'inden bedava), sigara: isteğe bağlı ayrı ağırlık (aşağıda).
+  pose_model: weights/yolo11n-pose.pt   # Ultralytics resmi ağırlık; yoksa bu yola indirilir.
+                                        # AGPL-3.0 — sayım/plaka/yüz ile aynı motor, aynı karar.
+  imgsz: 640
+  conf: 0.4             # kişi tespit eşiği (poz modeli)
+  fps: 4                # akis motoru: kamera başına tempo (yangınla aynı desen)
+  vid_stride: 3         # dosya/Test yolu: her N karede bir
+  use_main_stream: false   # substream (896 px) yakın plandaki kişi için yeter; uzak kişi
+                           # zaten min_bas_px altında kalır — ana akış çözümü boşa gider.
+  min_bas_px: 24        # baş (kulaklar arası) bu pikselin altındaysa kişi DEĞERLENDİRİLMEZ:
+                        # bilek-kulak mesafesi gürültüye gömülür. Kişi yakın olmalı.
+
+  # ── Telefonla konuşma ──
+  telefon_sn: 4.0       # el kulakta kesintisiz bu kadar sn → ön uyarı (kaşıma 1-2 sn sürer)
+  telefon_oran: 0.7     # penceredeki karelerin bu oranında el kulakta olmalı (kısa kopmalar tolere)
+  telefon_dogrulama: tercih   # tercih : COCO telefon kutusu başın yanındaysa HEMEN alarm,
+                              #          yoksa el telefon_sn kadar daha kalırsa alarm (toplam ~8 sn)
+                              # zorunlu: kutu görülmeden alarm YOK (ön uyarı kalır)
+                              # kapali : yalnız poz (telefon kutusu aranmaz)
+
+  # ── Sigara içme ──
+  sigara_tekrar: 2          # el ağza bu kadar kez gidip gelirse ön uyarı
+  sigara_pencere_sn: 40     # ...bu pencere içinde (bir nefes ~20-40 sn'de bir)
+  dokunus_min_sn: 0.3       # bir "dokunuş" en az bu kadar sürmeli (geçen el sayılmaz)
+  dokunus_max_sn: 6.0       # ...en fazla bu kadar (çene sıkma/düşünme pozu dokunuş değil)
+  sigara_dogrulama: tercih  # tercih/zorunlu/kapali (telefonla aynı anlam; "tercih"te kutu
+                            # yoksa pencerenin yarısı kadar sürerse alarm)
+  sigara_model: ""          # isteğe bağlı sigara ağırlığı (ultralytics .pt), örn.
+                            # models/sigara.pt ← huggingface.co/Beehzod/smoke_cigarette-detection2-yolo11m
+                            # (MIT). Boş/yoksa hat yalnız pozla çalışır, hata vermez.
+  sigara_conf: 0.35
+  sigara_imgsz: 320         # baş kırpması küçük; 320 yeter
+
+  # ── Ortak ──
+  kulak_oran: 0.8       # bilek-kulak mesafesi < oran × baş → "el kulakta"
+  agiz_oran: 0.7        # bilek-ağız (burnun 0,5 baş altı) < oran × baş → "el ağızda"
+  kp_conf: 0.3          # anahtar nokta güven eşiği
+  kayip_sn: 2.0         # iz bu kadar sn görülmezse düşer
+  dogrulama_taze_sn: 5.0    # doğrulayan kutu en fazla bu kadar eski olabilir
+  cooldown_seconds: 120     # aynı kişi + aynı davranış bu aralıkla hatırlatılır
+  camera_cooldown_seconds: 30   # aynı kamerada aynı davranış türü için asgari alarm aralığı
+  clip_seconds: 5.0     # kanıt klibi

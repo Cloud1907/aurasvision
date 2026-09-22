@@ -68,6 +68,17 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
             _web(cfg, {"tur": "fire_warning", "ref": p.get("sinif", "duman"),
                        "etiket": etiket, "kamera": camera_id,
                        "kanit": p.get("snapshot", ""), "klip": p.get("clip", "")})
+    elif type_ == "davranis":
+        # Davranış (telefonla konuşma / sigara) — src/davranis.py. Yangınla aynı
+        # kural: ön uyarı panelde kalır, uyarı satırı + webhook yalnız alarmda.
+        if p.get("durum") == "alarm":
+            from .davranis import alarm_etiketi
+            etiket = alarm_etiketi(p)
+            store.add_alert("davranis", p.get("sinif", ""), "davranis", etiket,
+                            camera_id, snapshot=p.get("snapshot", ""))
+            _web(cfg, {"tur": "davranis", "ref": p.get("sinif", ""), "etiket": etiket,
+                       "kamera": camera_id, "kanit": p.get("snapshot", ""),
+                       "klip": p.get("clip", "")})
     elif type_ == "vektor":
         # Görünüm araması örneği (base64 float16, arama.BOYUT boyutlu)
         import base64

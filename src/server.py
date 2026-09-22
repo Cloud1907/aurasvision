@@ -1160,6 +1160,39 @@ def api_status():
     return {"ok": all(b["ok"] for b in bilesenler), "bilesenler": bilesenler}
 
 
+@app.get("/api/capabilities")
+def api_capabilities():
+    """Hangi isteğe bağlı analitik hatlar bu kurulumda kullanılabilir.
+
+    Arayüz görev rozetini buna göre açar/kapatır ve nedenini gösterir.
+    Kontrol ucuz olmalı (her Kameralar ekranı açılışında çağrılır): model
+    yüklenmez, yalnız dosya/lisans/paket varlığına bakılır.
+    """
+    from .dedektor import LisansHatasi, lisans_kapisi
+    from .fire import model_yolu
+    yangin = {"enabled": True, "available": True, "reason": ""}
+    try:
+        model_yolu(cfg.get("fire.model", "models/fire.pt"))
+        lisans_kapisi(cfg.get("fire.engine", "rfdetr"), bool(cfg.get("fire.agpl_kabul", False)))
+    except (FileNotFoundError, LisansHatasi) as e:
+        yangin.update(available=False, reason=str(e))
+    davranis = {"enabled": True, "available": True, "reason": ""}
+    try:
+        import importlib.util
+        if importlib.util.find_spec("ultralytics") is None:
+            raise FileNotFoundError("ultralytics paketi kurulu değil")
+        poz = Path(str(cfg.get("davranis.pose_model", "weights/yolo11n-pose.pt")))
+        if not poz.is_absolute():
+            poz = ROOT / poz
+        if not poz.exists() and not poz.parent.exists():
+            raise FileNotFoundError(f"poz modeli yok ve klasörü de yok: {poz}")
+        sig = cfg.get("davranis.sigara_model", "") or ""
+        davranis["sigara_dedektoru"] = bool(sig) and (ROOT / sig).exists()
+    except Exception as e:
+        davranis.update(available=False, reason=str(e))
+    return {"fire": yangin, "davranis": davranis}
+
+
 @app.get("/api/health")
 def api_health():
     s = _store()
@@ -1528,7 +1561,7 @@ def _saved_lines(camera_id: str) -> list[dict]:
 
 class RunPayload(BaseModel):
     camera: str
-    kind: str = "count"   # count | plate | face | fire | analyze
+    kind: str = "count"   # count | plate | face | fire | davranis | analyze
     realtime: bool = True  # dosya kaynağını kamera hızında oynat (bkz. _frame_pusher)
     # Boşsa kameranın CANLI kaynağı analiz edilir. Doluysa (ISO zaman damgası)
     # o anı kapsayan ARŞİV segmenti analiz edilir — "istediğim ana gidip
@@ -1711,6 +1744,8 @@ def _pace_seconds(source: str, kind: str = "count") -> float:
         return 0.0
     if kind == "fire":
         adim = cfg.get("fire.vid_stride", cfg.get("detect.vid_stride", 3))
+    elif kind == "davranis":
+        adim = cfg.get("davranis.vid_stride", cfg.get("detect.vid_stride", 3))
     else:
         adim = cfg.get("detect.vid_stride", 1)
     return max(1, int(adim)) / fps
@@ -1765,7 +1800,7 @@ def _run_analysis(job_id: str, p: "RunPayload", arsiv_yolu: str = "") -> None:
     # Dosya kaynağı: ileri sarma + hız. Sarma yalnız kaynağı kendi okuyan
     # hatlarda işler (fire/plate/face; count ultralytics'e devreder — akis.py).
     dosya = akis.dosya_mi(source)
-    sarilabilir = dosya and p.kind in ("fire", "plate", "face")
+    sarilabilir = dosya and p.kind in ("fire", "plate", "face", "davranis")
     hiz = max(0.25, min(float(p.hiz or 1.0), 32.0))
     tempo = (_pace_seconds(source, p.kind) / hiz) if p.realtime else 0.0
     if dosya:
@@ -1917,6 +1952,55 @@ def _run_analysis(job_id: str, p: "RunPayload", arsiv_yolu: str = "") -> None:
                                "feragat": FERAGAT}
             if "w" in yazici:
                 videos.append(f"/media/{stem}_fire.mp4")
+        # Davranış (telefon/sigara): yangınla aynı kalıp — poz modeli küçük (~6 MB),
+        # "Hepsi"de yalnız kamerada görev açıksa.
+        if p.kind == "davranis" or (p.kind == "analyze" and (cam.get("tasks") or {}).get("davranis")):
+            job.update(stage="Davranış çalışıyor")
+            job["davranis_live"] = {"frames": 0, "on_uyari": 0, "alarm": 0, "olaylar": []}
+            from .davranis import ETIKETLER, run_davranis
+            dl = job["davranis_live"]
+
+            def _on_dav(o):
+                dl[o["durum"]] = dl.get(o["durum"], 0) + 1
+                dl["olaylar"].append({"durum": o["durum"], "sinif": o["sinif"],
+                                      "etiket": ETIKETLER.get(o["sinif"], o["sinif"]),
+                                      "conf": o["conf"], "ts": o["ts_seconds"],
+                                      "dogrulama": o.get("dogrulama", "poz"), "sure": o.get("sure", 0),
+                                      "video_sn": round(akis.konum(source)[0], 1)
+                                      if job.get("dosya") else None,
+                                      "frame": o["frame_idx"], "snapshot": o.get("snapshot", ""),
+                                      "clip": o.get("clip", "")})
+                dl["olaylar"] = dl["olaylar"][-30:]
+
+            import cv2
+            out_dir = Path(cfg.get("paths.output_dir", "output"))
+            out_dir.mkdir(parents=True, exist_ok=True)
+            vid_path = out_dir / f"{stem}_davranis.mp4"
+            yazici_d: dict = {}
+
+            def _on_dav_frame(kare):
+                dl["frames"] += 1
+                if "w" not in yazici_d:
+                    h, w = kare.shape[:2]
+                    yazici_d["w"] = cv2.VideoWriter(str(vid_path), cv2.VideoWriter_fourcc(*"mp4v"),
+                                                    8.0, (w, h))
+                if yazici_d["w"].isOpened():
+                    yazici_d["w"].write(kare)
+                push_frame(kare)
+
+            s.start_run("davranis", source)
+            try:
+                res = run_davranis(source, cfg, store=kum, camera_id=p.camera,
+                                   on_event=_on_dav, on_alert=_on_dav,
+                                   on_frame=_on_dav_frame, should_stop=job["cancel"].is_set)
+            finally:
+                if "w" in yazici_d:
+                    yazici_d["w"].release()
+            summary["davranis"] = {"frames": res.frames, "on_uyari": len(res.on_uyarilar),
+                                   "alarm": len(res.alarmlar), "kisiler_max": res.kisiler_max,
+                                   "olaylar": dl["olaylar"]}
+            if "w" in yazici_d:
+                videos.append(f"/media/{stem}_davranis.mp4")
         if job["cancel"].is_set():
             with JOBS_STATE_LOCK:
                 job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
