@@ -628,15 +628,17 @@ class TestSqliteStore:
         s.add_camera("yeni", "Y", "z.mp4")
         cams = merged_cameras(Config({}), s)
         assert cams[0]["tasks"] == DEFAULT_TASKS
+        assert cams[0]["tasks"]["fire"] is False
         s.close()
 
     def test_health_son_durum(self, tmp_path):
         s = self._store(tmp_path)
-        s.add_camera_health("k1", 5.0, 0, "ok")
-        s.add_camera_health("k1", 4.0, 0, "error")
+        s.add_camera_health("k1", 5.0, 0, "ok", "fire:running")
+        s.add_camera_health("k1", 4.0, 0, "error", "fire:parked (model yok)")
         s.commit()
         h = s.latest_health()
         assert len(h) == 1 and h[0]["status"] == "error"
+        assert "fire:parked" in h[0]["detail"]
         s.close()
 
     def test_izleme_listesi_normalize(self, tmp_path):
@@ -669,7 +671,6 @@ class TestTekMakineKipi:
         assert len(bus.store.recent_events(tur="count")) == 1
         assert bus.store.latest_health()[0]["status"] == "ok"
         bus.close()
-
     def test_alarm_esigi_tek_makinede_de_gecerli(self, tmp_path, monkeypatch):
         bus = self._bus(tmp_path, monkeypatch)
         bus.store.add_watch_plate("34ABC123", "test aracı", "watch")
@@ -689,7 +690,6 @@ class TestTekMakineKipi:
         st.add_count_event("giris", 1, "in", "", 1.0, 1)   # sonrası çalışmaya devam
         assert len(bus.store.recent_events(tur="count")) == 1
         bus.close()
-
 
 class TestYabanciPlaka:
     """TR dışı plakalar (turist, TIR, sınır trafiği) görünmeli — ama TR kadar

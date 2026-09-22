@@ -6,7 +6,7 @@ Basit, kullanıcı-dostu yönetim arayüzü için backend:
   GET  /api/snapshot?camera= → kameradan anlık kare (JPEG; diske YAZILMAZ — KVKK)
   GET  /api/zones?camera=    → bölge/çizgi tanımları
   POST /api/zones            → bölge/çizgi kaydet (canvas editöründen)
-  GET  /api/events?limit=    → birleşik olay akışı (count/plate/face)
+  GET  /api/events?limit=    → birleşik olay akışı (count/plate/face/fire)
   GET  /api/lists?kind=      → izleme listesi (plate | face)
   POST /api/lists            → listeye ekle
   DELETE /api/lists/{kind}/{id} → listeden sil
@@ -34,12 +34,14 @@ from pydantic import BaseModel
 
 from . import akis, kimlik
 from .config import apply_cv2_http_headers, http_options, load_config
+from .panel_rules import RuleRepository, RuleSet
 from .store import DEFAULT_TASKS, merged_cameras, open_store
 
 cfg = load_config()
 apply_cv2_http_headers(cfg)   # cv2 tabanlı analiz de CDN başlıklarını göndersin
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
+_panel_rules = RuleRepository(ROOT / "output" / "panel-alert-rules.json")
 
 app = FastAPI(title="AurasVision")
 
@@ -358,6 +360,11 @@ def api_cameras():
     return _cameras()
 
 
+@app.get("/api/capabilities")
+def api_capabilities():
+    """Rollout ve çalışma-anı önkoşullarını operatöre açıkça bildirir."""
+    from .fire_runtime import capability
+    return {"fire": capability(cfg, ROOT)}
 class CameraPayload(BaseModel):
     name: str
     source: str
@@ -520,6 +527,10 @@ def api_set_tasks(cid: str, p: TasksPayload):
     # False'a düşürüyordu: DEFAULT_TASKS'a "record" eklenince, görev değiştiren
     # her tıklama kaydı sessizce kapatırdı.
     eski_tasks = cam.get("tasks") or {}
+    if bool(p.tasks.get("fire")) and not bool(eski_tasks.get("fire", False)):
+        fire_cap = api_capabilities()["fire"]
+        if not fire_cap["available"]:
+            raise HTTPException(409, fire_cap["reason"])
     tasks = {k: bool(p.tasks[k]) if k in p.tasks
              else bool(eski_tasks.get(k, DEFAULT_TASKS[k]))
              for k in DEFAULT_TASKS}
@@ -1221,6 +1232,7 @@ class ZonePayload(BaseModel):
     zones: list[dict]   # [{kind, name, points:[[x,y]..], classes:[..], direction}]
 
 
+ZONE_KINDS = {"line", "zone", "intrusion", "fire", "firemask"}
 @app.get("/api/zones")
 def api_get_zones(camera: str = Query(...)):
     s = _store()
@@ -1232,6 +1244,9 @@ def api_get_zones(camera: str = Query(...)):
 
 @app.post("/api/zones")
 def api_save_zones(payload: ZonePayload):
+    gecersiz = sorted({str(z.get("kind", "line")) for z in payload.zones} - ZONE_KINDS)
+    if gecersiz:
+        raise HTTPException(422, f"Geçersiz bölge türü: {', '.join(gecersiz)}")
     s = _store()
     try:
         s.clear_zones(payload.camera)   # editör tam durumu gönderir → değiştir
@@ -1276,7 +1291,7 @@ def _saved_lines(camera_id: str) -> list[dict]:
 
 class RunPayload(BaseModel):
     camera: str
-    kind: str = "count"   # count | plate | face | analyze
+    kind: str = "count"   # count | plate | face | fire | analyze
     realtime: bool = True  # dosya kaynağını kamera hızında oynat (bkz. _frame_pusher)
 
 
@@ -1413,6 +1428,7 @@ class _SandboxStore:
     def add_count_event(self, *a, **k): pass
     def add_plate_event(self, *a, **k): pass
     def add_face_event(self, *a, **k): pass
+    def add_fire_event(self, *a, **k): pass
     def add_alert(self, *a, **k): pass
     def commit(self): pass
     def close(self): pass
@@ -1486,6 +1502,16 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
             with JOBS_STATE_LOCK:
                 job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
             return
+        from .fire_runtime import analyze_includes_fire
+        if analyze_includes_fire(p.kind, api_capabilities()["fire"]):
+            job.update(stage="Yangın erken uyarısı çalışıyor")
+            from .fire_runtime import run_test
+            summary["fire"] = run_test(
+                source, cfg, s, kum, p.camera, job, push_frame)
+        if job["cancel"].is_set():
+            with JOBS_STATE_LOCK:
+                job.update(status="cancelled", cancelled=True, stage="iptal edildi", videos=[])
+            return
         if p.kind in ("plate", "analyze"):
             job.update(stage="Plaka çalışıyor")
             job["live"] = []   # okundukça canlı eklenir (UI aşağı akıtır)
@@ -1548,6 +1574,10 @@ def _run_analysis(job_id: str, p: "RunPayload") -> None:
 
 @app.post("/api/run")
 def api_run(p: RunPayload):
+    if p.kind == "fire":
+        fire_cap = api_capabilities()["fire"]
+        if not fire_cap["available"]:
+            raise HTTPException(409, fire_cap["reason"])
     # Yeni koşu eski koşuyu bekletmez: çalışan tüm job'lar iptale çekilir
     # (nihai "cancelled" durumunu analiz thread'i yazar). Check-and-set kilit
     # altında: thread'in az önce yazdığı terminal durum ezilmez.
@@ -1613,8 +1643,8 @@ def api_run_frame(job_id: str):
 @app.get("/api/events")
 def api_events(limit: int = Query(50, ge=1, le=500), tur: str = "", kamera: str = ""):
     # sınırsız int SQLite'ı taşırıp 500 döndürüyordu (Schemathesis bulgusu) — 422'ye bağlanır
-    if tur and tur not in ("count", "plate", "face"):
-        raise HTTPException(422, "tur: count | plate | face")
+    if tur and tur not in ("count", "plate", "face", "fire"):
+        raise HTTPException(422, "tur: count | plate | face | fire")
     s = _store()
     try:
         olaylar = s.recent_events(limit, tur, kamera)
@@ -1637,40 +1667,14 @@ def api_events_summary(hours: int = Query(24, ge=1, le=720)):
     Olay akışını kamera kamera taramak yerine operatör önce özete bakar;
     dikkat isteyen kamerayı oradan seçer.
     """
-    from datetime import timedelta
-
-    sinir = datetime.now(timezone.utc) - timedelta(hours=hours)
     s = _store()
     try:
         olaylar = s.recent_events(20000)
         bekleyen = s.recent_alerts(500, pending_only=True)
     finally:
         s.close()
-    ozet: dict[str, dict] = {}
-    for e in olaylar:
-        try:
-            t = datetime.fromisoformat(str(e["time"]).replace(" ", "T"))
-            if t.tzinfo is None:
-                t = t.replace(tzinfo=timezone.utc)
-            if t < sinir:
-                continue
-        except ValueError:
-            pass
-        k = ozet.setdefault(e["camera_id"], {"camera_id": e["camera_id"], "count": 0,
-                                             "plate": 0, "face": 0, "alerts": 0,
-                                             "last": None})
-        k["count"] += 1
-        if e["type"] in k:
-            k[e["type"]] += 1
-        if k["last"] is None:
-            k["last"] = str(e["time"])   # liste zaten zaman DESC
-    for a in bekleyen:
-        k = ozet.setdefault(a["camera_id"] or "?", {"camera_id": a["camera_id"] or "?",
-                                                    "count": 0, "plate": 0, "face": 0,
-                                                    "alerts": 0, "last": None})
-        k["alerts"] += 1
-    return {"hours": hours,
-            "cameras": sorted(ozet.values(), key=lambda x: (-x["alerts"], -x["count"]))}
+    from .event_summary import summarize
+    return summarize(olaylar, bekleyen, hours)
 
 
 @app.get("/api/alerts")
@@ -1680,6 +1684,35 @@ def api_alerts(limit: int = Query(20, ge=1, le=500), pending: bool = False):
         return s.recent_alerts(limit, pending_only=pending)
     finally:
         s.close()
+
+
+@app.get("/api/alerts/feed")
+def api_alert_feed(after_id: int | None = Query(None, ge=0),
+                   limit: int = Query(100, ge=1, le=500)):
+    """Yalnız yeni alarmları kimlik sırasıyla verir; ilk çağrı geçmişi oynatmaz."""
+    s = _store()
+    try:
+        return s.alert_feed(after_id, limit)
+    finally:
+        s.close()
+
+
+@app.get("/api/alerts/rules")
+def api_panel_rules():
+    return _panel_rules.load()
+
+
+@app.put("/api/alerts/rules")
+def api_save_panel_rules(payload: RuleSet):
+    known = {camera["id"] for camera in _cameras()}
+    if any(rule.camera_id not in known for rule in payload.rules):
+        raise HTTPException(422, "Kuraldaki kamera bulunamadı")
+    try:
+        return _panel_rules.save(payload)
+    except ValueError as exc:
+        raise HTTPException(
+            409, "Kurallar başka bir oturumda değişti. Yenileyip tekrar deneyin."
+        ) from exc
 
 
 @app.post("/api/alerts/{alert_id}/ack")

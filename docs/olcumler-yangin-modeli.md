@@ -1,10 +1,11 @@
 # Yangın/duman modeli — eğitim ve ölçüm kaydı
 
-> **Durum: EĞİTİM SÜRÜYOR.** Bu belge ölçüldükçe doldurulur. İçindeki her sayı
+> **Durum: MODEL ARTEFAKTI BEKLENİYOR.** Bu belge ölçüldükçe doldurulur. İçindeki her sayı
 > bu makinede gerçekten ölçülmüştür; ölçülmemiş alanlar `— bekliyor —` olarak
 > işaretlidir ve tahminle doldurulmaz.
 >
-> Son güncelleme: 2026-09-03 11:30 · epoch 2/10 koşuyor
+> Son güncelleme: 2026-09-04 · son gözlemlenen koşu epoch 2/10; tamamlanmış
+> checkpoint ve `models/fire.pt` bu repoda/yerel indirmelerde bulunamadı
 
 Mimari, lisans ve kabul ölçütü: [yangin-modeli.md](yangin-modeli.md).
 
@@ -212,6 +213,18 @@ Marj `--marj 0.05` olarak verildi.
 | Kaynak checkpoint | — bekliyor — |
 | SHA-256 | — bekliyor — |
 | Boyut | — bekliyor — |
+
+### 7.1 Müşteri videosu kabul durumu
+
+`TRASSIR-4.9.9.0-1308508 2026-09-02 09-22-42.mp4` görsel olarak tarandı.
+Manuel kabul etiketi 00:00–07:55 negatif, yaklaşık 07:56–14:44 görünür alevdir;
+14:44 sonrası söndürme bulutu/artık duman içerdiği için negatif sayılmamıştır.
+
+`scripts/fire_video_eval.py` ile gerçek kabul koşusu başlatıldı ve açık biçimde
+`status=blocked` döndü: `models/fire.pt` yok. Bu nedenle bu video için gecikme,
+tespit boşluğu veya yanlış alarm sonucu **henüz ölçülmedi** ve sistemin stabil
+çalıştığı iddia edilemez. Tekrarlanabilir komut ve işletim adımları
+`docs/yangin-pilot-runbook.md` içindedir.
 
 ---
 

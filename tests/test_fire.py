@@ -16,9 +16,15 @@ Kriter → test eşlemesi (EARS):
   K7 kanıt klibi yazılır               → test_kanit_klibi_yazilir
   K8 model yoksa AÇIK hata             → test_model_dosyasi_yoksa_acik_hata
   K9 feragat etiketi zorunlu           → test_alarm_etiketi_feragat_tasir
+  K23 uzun tespit boşluğu reset        → test_uzun_bosluk_eski_on_uyariyi_alarma_cevirmez
+  K24 sınıf değişimi aynı odaktır      → test_alev_duman_gecisi_tek_odakta_alarm_uretir
+  K25 kısa kaçırma alarmı bozmaz       → test_kisa_tespit_boslugu_alarm_surekliligini_bozmaz
+  K33 model hatasında kaynak kapanır    → test_model_hatasinda_video_kaynagi_serbest_birakilir
+  K34 ham tespit gözlemlenebilir        → test_tespit_callbacki_video_zamanini_tasir
   +  pencere dışı vuruş sayılmaz       → test_pencere_disinda_kalan_vuruslar_sayilmaz
 """
 import unittest
+from unittest.mock import patch
 
 from src.fire import FERAGAT, DumanTakip, alarm_etiketi, model_yolu
 
@@ -34,7 +40,7 @@ def tespit(kutu=KUTU, sinif="duman", conf=0.7):
 def takip(**kw):
     """Testte okunur varsayılanlar: 4 kare / 6 sn pencere, 3 sn'de alarm."""
     varsayilan = dict(pencere_sn=6.0, dogrulama_kare=4, iou_baglama=0.2,
-                      alarm_sn=3.0, cooldown_sn=120.0)
+                      alarm_sn=3.0, cooldown_sn=120.0, azami_bosluk_sn=2.0)
     varsayilan.update(kw)
     return DumanTakip(W, H, **varsayilan)
 
@@ -119,6 +125,52 @@ class Alarm(unittest.TestCase):
         self.assertEqual(len(alarm["kutu"]), 4)
         self.assertEqual(tuple(int(v) for v in alarm["kutu"]), KUTU)
 
+    def test_bos_kareler_on_uyariyi_alarma_yukseltmez(self):
+        """K10: Güncel tespit yokken zamanın geçmesi alarm üretmemeli."""
+        t = takip(dogrulama_kare=4, alarm_sn=1.0)
+        olaylar = besle(t, 4, adim=0.5)  # son tespit 1.5 sn: ön uyarı
+        olaylar += t.guncelle([], 2.0)
+        olaylar += t.guncelle([], 2.5)
+        olaylar += t.guncelle([], 3.0)
+        self.assertEqual([o["durum"] for o in olaylar], ["on_uyari"])
+
+    def test_alarm_suresi_on_uyari_anindan_baslar(self):
+        """K11: Ham ilk vuruş değil, doğrulanmış ön uyarı alarm saatini başlatır."""
+        t = takip(dogrulama_kare=4, alarm_sn=3.0)
+        olaylar = besle(t, 9, adim=0.5)  # ön uyarı 1.5; son kare 4.0
+        self.assertEqual([o["durum"] for o in olaylar], ["on_uyari"])
+        olaylar += t.guncelle(tespit(), 4.5)
+        self.assertEqual([o["durum"] for o in olaylar], ["on_uyari", "alarm"])
+
+    def test_uzun_bosluk_eski_on_uyariyi_alarma_cevirmez(self):
+        """K23: Kesinti sınırı aşılırsa yeni tespit eski alarm saatini kullanmamalı."""
+        t = takip(dogrulama_kare=4, alarm_sn=1.0, azami_bosluk_sn=1.0)
+        olaylar = besle(t, 4, adim=0.5)  # ön uyarı: t=1.5
+        olaylar += t.guncelle([], 2.0)
+        olaylar += t.guncelle([], 2.5)
+        olaylar += t.guncelle(tespit(), 3.0)  # son görülmeden 1.5 sn sonra
+        self.assertEqual([o["durum"] for o in olaylar], ["on_uyari"])
+
+    def test_alev_duman_gecisi_tek_odakta_alarm_uretir(self):
+        """K24: Model sınıfı değişse de aynı kutu tek yangın odağıdır."""
+        t = takip(dogrulama_kare=4, alarm_sn=1.0)
+        olaylar = []
+        for i in range(7):
+            sinif = "alev" if i % 2 == 0 else "duman"
+            olaylar += t.guncelle(tespit(sinif=sinif), i * 0.5)
+        self.assertEqual([o["durum"] for o in olaylar], ["on_uyari", "alarm"])
+        self.assertEqual(len(t.odaklar), 1)
+
+    def test_kisa_tespit_boslugu_alarm_surekliligini_bozmaz(self):
+        """K25: Sınır içindeki model kaçırması ön-uyarı saatini sıfırlamamalı."""
+        t = takip(dogrulama_kare=4, alarm_sn=2.0, azami_bosluk_sn=1.5)
+        olaylar = besle(t, 4, adim=0.5)  # ön uyarı: t=1.5
+        olaylar += t.guncelle([], 2.0)
+        olaylar += t.guncelle([], 2.5)
+        olaylar += t.guncelle(tespit(), 3.0)
+        olaylar += t.guncelle(tespit(), 3.5)
+        self.assertEqual([o["durum"] for o in olaylar], ["on_uyari", "alarm"])
+
 
 class Bolgeler(unittest.TestCase):
     # Kadrajın sol yarısını kaplayan poligon (normalize koordinat).
@@ -201,6 +253,98 @@ class KanitKlibi(unittest.TestCase):
             yol = klip_kaydet(SahteCfg(td), kareler, "depo", "fire", fps=5.0)
             self.assertTrue(yol, "klip yolu boş döndü")
             self.assertTrue((Path(td) / "evidence" / Path(yol).relative_to("evidence")).exists())
+
+
+class CanliZamanTabani(unittest.TestCase):
+    def test_rtsp_alarm_suresi_duvar_saatinden_hesaplanir(self):
+        """K16: RTSP nominal FPS'i yanlış olsa da gerçek süre alarmı yükseltir."""
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy yok — kare döngüsü ölçülemedi")
+        from src.config import Config
+        from src.fire import run_fire
+
+        class Cap:
+            def __init__(self):
+                self.i = 0
+
+            def read(self):
+                self.i += 1
+                return ((True, np.zeros((20, 20, 3), dtype="uint8"))
+                        if self.i <= 4 else (False, None))
+
+            def release(self):
+                pass
+
+        class Ded:
+            def tespit(self, _kare):
+                return [("duman", 2, 2, 12, 12, 0.9)]
+
+        class Store:
+            def __init__(self):
+                self.events = []
+
+            def add_fire_event(self, _camera, olay):
+                self.events.append(dict(olay))
+
+            def commit(self):
+                pass
+
+        cfg = Config({"fire": {"vid_stride": 1, "confirm_frames": 2,
+                                "alarm_seconds": 1.0, "clip_seconds": 1.0},
+                      "evidence": {"enabled": False}})
+        store = Store()
+        saat = iter((0.0, 1.0, 2.0, 3.0, 4.0, 5.0))
+        with patch("src.fire._dedektor_kur", return_value=Ded()), \
+             patch("src.fire._kaynak_ac", return_value=(Cap(), 20, 20, 1000.0)), \
+             patch("time.monotonic", side_effect=lambda: next(saat)):
+            sonuc = run_fire("rtsp://kamera", cfg, store=store, camera_id="depo")
+        self.assertEqual(len(sonuc.alarmlar), 1)
+        self.assertGreaterEqual(sonuc.alarmlar[0]["sure"], 1.0)
+
+    def test_run_fire_yerel_bus_sqlite_alarm_zinciri(self):
+        """K20: run_fire → BusStore → YerelBus → SQLite zinciri uçtan uca çalışır."""
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy yok — kare döngüsü ölçülemedi")
+        import tempfile
+
+        from src.bus import BusStore, YerelBus
+        from src.config import Config
+        from src.fire import run_fire
+
+        class Cap:
+            def __init__(self):
+                self.i = 0
+
+            def read(self):
+                self.i += 1
+                return ((True, np.zeros((20, 20, 3), dtype="uint8"))
+                        if self.i <= 4 else (False, None))
+
+            def release(self):
+                pass
+
+        class Ded:
+            def tespit(self, _kare):
+                return [("duman", 2, 2, 12, 12, 0.9)]
+
+        with tempfile.TemporaryDirectory() as td:
+            cfg = Config({"paths": {"db_path": f"{td}/fire.db"},
+                          "fire": {"vid_stride": 1, "confirm_frames": 2,
+                                   "alarm_seconds": 1.0, "clip_seconds": 1.0},
+                          "evidence": {"enabled": False}})
+            bus = YerelBus(cfg)
+            saat = iter((0.0, 1.0, 2.0, 3.0, 4.0, 5.0))
+            with patch("src.fire._dedektor_kur", return_value=Ded()), \
+                 patch("src.fire._kaynak_ac", return_value=(Cap(), 20, 20, 1000.0)), \
+                 patch("time.monotonic", side_effect=lambda: next(saat)):
+                run_fire("rtsp://kamera", cfg, store=BusStore(bus), camera_id="depo")
+            self.assertEqual(len(bus.store.recent_events(tur="fire")), 2)
+            self.assertEqual(len(bus.store.recent_alerts()), 1)
+            bus.close()
 
 
 if __name__ == "__main__":

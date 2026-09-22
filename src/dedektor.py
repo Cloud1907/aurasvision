@@ -24,6 +24,7 @@ Ayrıntı ve aday karşılaştırması: docs/yangin-modeli.md
 """
 from __future__ import annotations
 
+import importlib.util
 from typing import Any
 
 VARSAYILAN_MOTOR = "rfdetr"
@@ -38,6 +39,7 @@ LISANSLAR = {
 
 # Açık onay istemeyen, ticari kullanımda serbest lisanslar.
 SERBEST = {"Apache-2.0"}
+MOTOR_PAKETLERI = {"rfdetr": "rfdetr", "ultralytics": "ultralytics"}
 
 
 class LisansHatasi(RuntimeError):
@@ -63,6 +65,18 @@ def lisans_kapisi(motor: str, agpl_kabul: bool = False) -> str:
         f"ticari olarak temiz seçenek `fire.engine: {VARSAYILAN_MOTOR}` "
         "(Apache-2.0). Ayrıntı: docs/yangin-modeli.md"
     )
+
+
+def calisma_kapisi(motor: str, agpl_kabul: bool = False) -> str:
+    """Lisansın yanında seçili motorun çalışma-anı paketini de doğrular."""
+    lisans = lisans_kapisi(motor, agpl_kabul)
+    paket = MOTOR_PAKETLERI[motor]
+    if importlib.util.find_spec(paket) is None:
+        raise ImportError(
+            f"{paket} paketi kurulu değil; `{motor}` motoru çalıştırılamaz. "
+            f"Kurulum: pip install {paket}"
+        )
+    return lisans
 
 
 def normalize(tespitler: Any, adlar: dict) -> list[tuple]:

@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS cameras (
     url_sub     TEXT,                        -- analiz substream'i (varsa)
     http_headers TEXT,                       -- kameraya özgü HTTP başlıkları (bazı HLS sağlayıcıları Referer şart koşar)
     enabled     BOOLEAN NOT NULL DEFAULT true,
-    tasks       JSONB NOT NULL DEFAULT '{"count":true,"plate":false,"face":false}',
+    tasks       JSONB NOT NULL DEFAULT '{"count":true,"plate":false,"face":false,"fire":false,"record":true}',
     detect_fps  SMALLINT NOT NULL DEFAULT 5,
     retention_days SMALLINT NOT NULL DEFAULT 90,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS cameras (
 CREATE TABLE IF NOT EXISTS zones (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     camera_id   TEXT NOT NULL,
-    kind        TEXT NOT NULL CHECK (kind IN ('line','zone','intrusion')),
+    kind        TEXT NOT NULL CHECK (kind IN ('line','zone','intrusion','fire','firemask')),
     name        TEXT NOT NULL DEFAULT '',
     points      JSONB NOT NULL,              -- [[x,y],...] normalize 0-1
     classes     TEXT[] NOT NULL DEFAULT '{person}',
@@ -105,11 +105,25 @@ CREATE TABLE IF NOT EXISTS face_events (
     frame_idx   INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS fire_events (
+    time           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    camera_id      TEXT NOT NULL,
+    state          TEXT NOT NULL,               -- on_uyari | alarm
+    class          TEXT NOT NULL,               -- duman | alev
+    conf           REAL,
+    confirm_frames SMALLINT NOT NULL,
+    duration       REAL NOT NULL,               -- ön uyarıdan beri geçen süre
+    ts_seconds     REAL,
+    frame_idx      INTEGER,
+    snapshot       TEXT,                        -- yalnız alarmda
+    clip           TEXT                         -- yalnız alarmda
+);
+
 CREATE TABLE IF NOT EXISTS alerts (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     time        TIMESTAMPTZ NOT NULL DEFAULT now(),
     camera_id   TEXT,
-    kind        TEXT NOT NULL,               -- plate | face | intrusion
+    kind        TEXT NOT NULL,               -- plate | face | intrusion | fire_warning
     ref         TEXT NOT NULL,
     list_type   TEXT,
     label       TEXT,
@@ -134,7 +148,8 @@ CREATE TABLE IF NOT EXISTS camera_health (
     camera_id   TEXT NOT NULL,
     fps         REAL,
     dropped     BIGINT,
-    status      TEXT                         -- ok | no_signal | decode_err
+    status      TEXT,                        -- ok | degraded | error | idle
+    detail      TEXT                         -- görev bazlı running/restarting/parked
 );
 
 -- ── Timescale: hypertable + sıkıştırma + retention (varsa) ─────────
@@ -142,6 +157,7 @@ DO $$ BEGIN
   PERFORM create_hypertable('count_events','time',  if_not_exists => true, migrate_data => true);
   PERFORM create_hypertable('plate_events','time',  if_not_exists => true, migrate_data => true);
   PERFORM create_hypertable('face_events','time',   if_not_exists => true, migrate_data => true);
+  PERFORM create_hypertable('fire_events','time',   if_not_exists => true, migrate_data => true);
   PERFORM create_hypertable('camera_health','time', if_not_exists => true, migrate_data => true);
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'hypertable atlandi: %', SQLERRM; END $$;
 
@@ -149,14 +165,17 @@ DO $$ BEGIN
   ALTER TABLE count_events  SET (timescaledb.compress, timescaledb.compress_segmentby='camera_id');
   ALTER TABLE plate_events  SET (timescaledb.compress, timescaledb.compress_segmentby='camera_id');
   ALTER TABLE face_events   SET (timescaledb.compress, timescaledb.compress_segmentby='camera_id');
+  ALTER TABLE fire_events   SET (timescaledb.compress, timescaledb.compress_segmentby='camera_id');
   ALTER TABLE camera_health SET (timescaledb.compress, timescaledb.compress_segmentby='camera_id');
   PERFORM add_compression_policy('count_events',  INTERVAL '7 days', if_not_exists => true);
   PERFORM add_compression_policy('plate_events',  INTERVAL '7 days', if_not_exists => true);
   PERFORM add_compression_policy('face_events',   INTERVAL '7 days', if_not_exists => true);
+  PERFORM add_compression_policy('fire_events',   INTERVAL '7 days', if_not_exists => true);
   PERFORM add_compression_policy('camera_health', INTERVAL '2 days', if_not_exists => true);
   PERFORM add_retention_policy('count_events',  INTERVAL '90 days', if_not_exists => true);
   PERFORM add_retention_policy('plate_events',  INTERVAL '90 days', if_not_exists => true);
   PERFORM add_retention_policy('face_events',   INTERVAL '90 days', if_not_exists => true);
+  PERFORM add_retention_policy('fire_events',   INTERVAL '90 days', if_not_exists => true);
   PERFORM add_retention_policy('camera_health', INTERVAL '14 days', if_not_exists => true);
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'politikalar atlandi: %', SQLERRM; END $$;
 
