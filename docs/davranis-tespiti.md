@@ -33,9 +33,12 @@ işe yarayan yol poz + nesne birleşimidir:
 Ultralytics YOLO11n-pose (COCO-17 anahtar nokta, GPU'da ~20 ms/kare). Her kişi
 için baş ölçeği (kulaklar arası) hesaplanır, mesafeler buna bölünür:
 
-- **el kulakta**: bilek bir kulağa `kulak_oran × baş` yakın, omuz hizasının üstünde,
-  ve kulağa ağızdan daha yakın.
-- **el ağızda**: bilek tahmini ağız noktasına (burnun 0,5 baş altı) `agiz_oran × baş` yakın.
+- **telefon pozu**: bilek en yakın kulağın 0,5–2,0 baş ALTINDA, yatayda kulağa
+  `kulak_oran × baş` yakın, burun hizasından en az 0,3 baş dışarıda (çeneye dayanan
+  el sayılmaz), dirsek bileğin altında. Ölçüm: telefon kulaktayken bilek kulakta
+  değil, çene/boyun hizasındadır.
+- **el ağızda**: bilek tahmini ağız noktasına (burnun 0,5 baş altı) `agiz_oran × baş`
+  (1,4) yakın; telefon pozundaki el dokunuş sayılmaz.
 
 Zaman içinde:
 
