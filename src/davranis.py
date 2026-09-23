@@ -116,6 +116,7 @@ def ozellikler(kp, kc, kutu, esik: float = 0.3,
     omuz_y = sum(oy) / len(oy) if oy else None
     agiz_pt = (kp[BURUN][0], kp[BURUN][1] + 0.5 * bas) if burun_ok else None
     kulak = agiz = False
+    kol_dik = False     # kulaktaki elin önkolu dik mi (dirsek bilekten ≥ 1,0 baş aşağıda)
     for b, d in ((BILEK_SOL, DIRSEK_SOL), (BILEK_SAG, DIRSEK_SAG)):
         if kc[b] <= esik or b in ignore_wrists:
             continue
@@ -129,6 +130,10 @@ def ozellikler(kp, kc, kutu, esik: float = 0.3,
             yanda = not burun_ok or abs(w[0] - kp[BURUN][0]) >= 0.3 * bas
             if abs(dx) < kulak_oran and 0.5 <= dy <= 2.0 and yanda:
                 kulak = True
+                # Ölçüm 2026-09-23: konuşmada dirsek−bilek +1,6…+2,2 baş (önkol dik);
+                # başı eğik mesajlaşmada ≤ +0,8 (önkol yatay). Dirsek görünmüyorsa dik sayılır.
+                if kc[d] <= esik or kp[d][1] - w[1] >= 1.0 * bas:
+                    kol_dik = True
         if agiz_pt is not None and _uzak(w, agiz_pt) < agiz_oran * bas:
             agiz = True
     # Baş kutusu: doğrulayıcı dedektörlerin bakacağı bölge (burun merkezli)
@@ -138,7 +143,7 @@ def ozellikler(kp, kc, kutu, esik: float = 0.3,
         cx, cy = (kutu[0] + kutu[2]) / 2, kutu[1] + bas
     r = 1.6 * bas
     bas_kutu = (cx - r, cy - r, cx + r, cy + 1.6 * r)
-    return {"bas": bas, "kulak": kulak, "agiz": agiz, "bas_kutu": bas_kutu}
+    return {"bas": bas, "kulak": kulak, "agiz": agiz, "bas_kutu": bas_kutu, "kol_dik": kol_dik}
 
 
 def _iou(a, b) -> float:
@@ -167,7 +172,7 @@ class _Iz:
     """Bir kişinin izi: kutu, özellik geçmişi, davranış durumları."""
     __slots__ = ("id", "kutu", "son_ts", "gecmis", "durum", "baslangic", "son_alarm",
                  "dokunus", "agiz_giris", "dogrulama", "bas_kutu", "son_dogrulama_ts",
-                 "telefon_alt")
+                 "telefon_alt", "telefon_pay")
 
     def __init__(self, tid: int, kutu, ts: float) -> None:
         self.id = tid
@@ -183,6 +188,7 @@ class _Iz:
         self.bas_kutu = None
         self.son_dogrulama_ts = -1e9
         self.telefon_alt = "konusma"
+        self.telefon_pay = (0.0, 0.0, 0)
 
 
 @dataclass
@@ -288,6 +294,7 @@ class DavranisTakip:
             # Telefonun kulakta olması şart değil; kişinin elinde nesne olarak
             # doğrulanması gerekir. Masadaki/komşu kişideki telefon kabul edilmez.
             telefon_eller = set()
+            elde_asagi = False      # telefon kutusu elde ve BAŞ BÖLGESİNİN DIŞINDA (göğüs hizası)
             for tk in telefon_kutular or ():
                 if not _kesisir(tk, kutu):
                     continue
@@ -299,10 +306,22 @@ class DavranisTakip:
                     dy = max(tk[1] - y, 0, y - tk[3])
                     if (dx * dx + dy * dy) ** 0.5 <= oz["bas"] * 0.9:
                         telefon_eller.add(wrist)
+            if telefon_eller and kc[BURUN] > self.kp_esik:
+                # 2B pozdan "konuşma" ile "başı eğik mesajlaşma" ayrılmıyor (ölçüm 2026-09-23:
+                # bilekler aynı yerde). Ayrım telefon KUTUSUNUN yeri: yanak/kulak hizasında
+                # (burundan ≤ 0,9 baş) → konuşma; burnun ≥ 1,0 baş altında (göğüs) → elde.
+                for tk in telefon_kutular or ():
+                    if not _kesisir(tk, kutu):
+                        continue
+                    cx, cy = (tk[0] + tk[2]) / 2, (tk[1] + tk[3]) / 2
+                    dx, dy = (cx - kp[BURUN][0]) / oz["bas"], (cy - kp[BURUN][1]) / oz["bas"]
+                    if dy >= 1.0 and not (abs(dx) <= 1.0 and abs(dy) <= 0.9):
+                        elde_asagi = True
             elde_telefon = bool(telefon_eller) and self.telefon_kip in ("kullanim", "ikisi")
             kulakta = oz["kulak"] and self.telefon_kip in ("konusma", "ikisi")
-            # gecmis: (ts, telefon_pozu, agiz, kulakta)
-            iz.gecmis.append((ts, kulakta or elde_telefon, oz["agiz"], bool(oz["kulak"])))
+            # gecmis: (ts, telefon_pozu, agiz, kulakta, elde)
+            iz.gecmis.append((ts, kulakta or elde_telefon, oz["agiz"],
+                              bool(oz["kulak"] and oz["kol_dik"]), elde_asagi))
             ufuk = ts - max(self.telefon_sn * 2.5, self.sigara_pencere_sn)
             while iz.gecmis and iz.gecmis[0][0] < ufuk:
                 iz.gecmis.popleft()
@@ -342,10 +361,16 @@ class DavranisTakip:
         if len(pencere) < 3 or ts - pencere[0][0] < self.telefon_sn * 0.8:
             return False, 0.0
         oran = sum(1 for g in pencere if g[1]) / len(pencere)
-        # Alt tür: penceredeki poz karelerinin çoğunluğu kulaktaysa "konuşma", değilse "elde"
+        # Alt tür: telefon kutusu elde ve baş bölgesinin DIŞINDA (göğüs hizası) görülen
+        # kareler çoğunluktaysa "elde" — başı eğik mesajlaşan kişide bilek kulak kuralına
+        # da uyuyor (ölçüm 2026-09-23). Kutu baş bölgesindeyse (kulakta telefon) ya da
+        # kulak pozu çoğunluktaysa "konuşma".
         pozlu = [g for g in pencere if g[1]]
+        elde_pay = (sum(1 for g in pozlu if len(g) > 4 and g[4]) / len(pozlu)) if pozlu else 0.0
         kulak_pay = (sum(1 for g in pozlu if len(g) > 3 and g[3]) / len(pozlu)) if pozlu else 0.0
-        iz.telefon_alt = "konusma" if kulak_pay >= 0.5 else "elde"
+        # konuşma: kutu göğüste değil VE kulakta dik önkol çoğunlukta; aksi elde
+        iz.telefon_alt = "konusma" if (elde_pay < 0.5 and kulak_pay >= 0.5) else "elde"
+        iz.telefon_pay = (round(elde_pay, 2), round(kulak_pay, 2), len(pozlu))
         return oran >= self.telefon_oran, oran
 
     def _sigara_adayi(self, iz: _Iz, ts: float) -> tuple[bool, float]:
@@ -411,6 +436,7 @@ class DavranisTakip:
               kaynak: str, sure: float = 0.0) -> dict:
         return {"sinif": sinif, "durum": durum, "conf": round(float(skor), 2),
                 "alt_tur": iz.telefon_alt if sinif == "telefon" else "",
+                "alt_pay": iz.telefon_pay if sinif == "telefon" else (),
                 "kutu": tuple(float(v) for v in iz.kutu), "track_id": iz.id,
                 "dogrulama": kaynak, "sure": round(float(sure), 1),
                 "ts_seconds": round(ts, 2)}

@@ -73,6 +73,12 @@ elde telefon (mesajlaşma/bakma, COCO "cell phone" kutusu elin 0,9 baş yakını
 **elde telefon kullanımı**. Etiket (`alerts.label`, Test ekranı, webhook) ayrışır.
 `davranis.telefon_kip`: `ikisi` (varsayılan) · `konusma` · `kullanim`.
 
+Ayrım kuralı (ölçüm 2026-09-23, kamera-201 kaydı + Pexels klipleri): 2B pozda başı
+eğik mesajlaşan kişinin bileği kulakta konuşanla aynı yerdedir; ayıran işaret
+**önkolun dikliği** — konuşmada dirsek bilekten 1,6–2,2 baş aşağıda, mesajlaşmada
+≤ 0,8 baş. Telefon kutusu burnun ≥ 1,0 baş altındaysa (göğüs) "elde". Sonuç:
+mesajlaşan kadın → elde, kapı önü ve yürüyen adam → konuşma.
+
 Saha incelemesi (kamera-201, 6 alarm): 3 telefon alarmının 3'ü mesajlaşan aynı
 kadındı (1,5 dk'da 3 tekrar); sigara alarmları gerçekti (kırpmada ağızda sigara,
 dedektör 0,4–0,5). Tekrar alarmın nedeni iz kimliğinin kalabalıkta kopması →
