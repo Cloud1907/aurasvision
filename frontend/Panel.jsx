@@ -33,7 +33,7 @@ export default function Panel({ bridge }) {
     <CommandHeader status={status} health={health} bridge={bridge}/>
     <PanelMetrics cameras={cameras} status={status} alarms={alarms} events={events} archive={archive}/>
     <AnalyticsChart events={events} cameras={cameras} totals={totals} capabilities={capabilities}/>
-    <div className="command-workspace dashboard-layout"><div className="dashboard-main"><LiveCameraGrid cameras={cameras} bridge={bridge}/></div>
+    <div className="command-workspace dashboard-layout"><div className="dashboard-main"><LiveCameraGrid cameras={cameras} bridge={bridge} alarms={alarms}/></div>
       <aside className="command-sidebar" aria-label="Aktif alarm ve olay akışı"><PanelAlerts alarms={alarms} rows={rows} bridge={bridge} onSelect={setSelected}/><PanelActivity events={events} rows={rows} bridge={bridge}/></aside>
     </div>
     <div className="command-lower"><PanelCameras cameras={cameras} health={health} bridge={bridge}/><PanelShortcuts bridge={bridge}/><ArchiveSummary archive={archive} bridge={bridge}/></div>

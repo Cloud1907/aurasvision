@@ -431,3 +431,13 @@ html[data-theme=dark] .command-center{--chart-one:#3987e5;--chart-two:#d95926;--
 @media(max-width:1200px){.command-center .analytics-band .analytics-grid{grid-template-columns:1fr 1fr;}.command-center .analytics-band .analytics-plot{grid-column:1/-1;}}
 @media(max-width:700px){.command-center .analytics-band.is-loading{min-height:0;}.ts-axis{font-size:15px;}.ts-peak{font-size:17px;}.ts-svg{min-height:170px;}.command-center .analytics-band .analytics-grid{grid-template-columns:1fr;}.ring-wrap{grid-template-columns:96px 1fr;}.ring-svg{width:96px;height:96px;}.command-center .ops-kpi{min-height:84px;padding:11px 12px;}.command-center .ops-kpi .ops-metric-value{font-size:17px;}}
 @media(prefers-reduced-motion:reduce){.ts-area,.ts-line{animation:none!important;}}
+
+/* Karo katmanları: görev rozetleri + bekleyen alarm + çizgi/bölge (kapatılabilir) */
+.monitor-visual .zone-ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;}
+.monitor-badges{position:absolute;top:8px;left:8px;right:8px;z-index:3;display:flex;flex-wrap:wrap;gap:4px;pointer-events:none;}
+.monitor-task{padding:2px 7px;border-radius:999px;background:#0b0f16b8;color:#dbe4f3;font-size:10px;font-weight:650;letter-spacing:.02em;backdrop-filter:blur(4px);}
+.monitor-alarm{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:#ef4444;color:#fff;font-size:10px;font-weight:750;}
+.monitor-layers{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.monitor-layer{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border:1px solid var(--line);border-radius:999px;font-size:11px;color:var(--ink-3);cursor:pointer;user-select:none;}
+.monitor-layer.on{color:var(--ink);border-color:var(--accent);background:var(--accent-soft);}
+.monitor-layer input{margin:0;width:12px;height:12px;accent-color:var(--accent);}
