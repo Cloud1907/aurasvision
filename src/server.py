@@ -1979,13 +1979,13 @@ def _run_analysis(job_id: str, p: "RunPayload", arsiv_yolu: str = "") -> None:
                               "Sigara" if dav_siniflar == ("sigara",) else "Telefon/sigara")
                        + " çalışıyor")
             job["davranis_live"] = {"frames": 0, "on_uyari": 0, "alarm": 0, "olaylar": []}
-            from .davranis import ETIKETLER, run_davranis
+            from .davranis import olay_adi, run_davranis
             dl = job["davranis_live"]
 
             def _on_dav(o):
                 dl[o["durum"]] = dl.get(o["durum"], 0) + 1
                 dl["olaylar"].append({"durum": o["durum"], "sinif": o["sinif"],
-                                      "etiket": ETIKETLER.get(o["sinif"], o["sinif"]),
+                                      "etiket": olay_adi(o), "alt_tur": o.get("alt_tur", ""),
                                       "conf": o["conf"], "ts": o["ts_seconds"],
                                       "dogrulama": o.get("dogrulama", "poz"), "sure": o.get("sure", 0),
                                       "video_sn": round(akis.konum(source)[0], 1)

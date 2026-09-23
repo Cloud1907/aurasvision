@@ -346,6 +346,12 @@ davranis:
                         # klibinde baş 22 px, imgsz 960 ile yakalandı; 24 sınırı kaçırıyordu.
 
   # ── Telefonla konuşma ──
+  telefon_kip: ikisi         # ikisi   : tek "telefon" alarmı, iki tanım — kulakta poz "telefonla
+                             #           konuşma", elde telefon "elde telefon kullanımı" (karar 2026-09-23)
+                             # konusma : yalnız kulakta poz alarm olur
+                             # kullanim: yalnız elde telefon alarm olur
+  alarm_konum_iou: 0.2       # cooldown içinde aynı yerdeki (IoU ≥) aynı tür alarm bastırılır:
+                             # iz kimliği kalabalıkta kopunca aynı kişi 30 sn'de bir alarm üretiyordu.
   telefon_sn: 4.0       # el kulakta kesintisiz bu kadar sn → ön uyarı (kaşıma 1-2 sn sürer)
   telefon_oran: 0.7     # penceredeki karelerin bu oranında el kulakta olmalı (kısa kopmalar tolere)
   telefon_dogrulama: tercih   # tercih : COCO telefon kutusu başın yanındaysa HEMEN alarm,
