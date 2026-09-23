@@ -35,7 +35,7 @@ export default function WelcomeGate({ onEnter }) {
       <span className="welcome-drag-hint" aria-hidden="true"><i/>SÜRÜKLEYİN</span>
       <div className="welcome-brand"><span className="welcome-brand-mark"><Icon name="live" size={22}/></span><span>AURASVISION<small>GÖRÜNTÜ ANALİTİĞİ</small></span></div>
       <div className="welcome-hero"><span className="welcome-kicker"><i/> Akıllı operasyon merkezi</span>
-        <h1>Saatlerce ekran yok.<em>Görüntünün arkasını görün.</em></h1>
+        <h1><em>Görüntünün ötesini görün.</em></h1>
         <p>Kameraları sistem izler, anlamlı olanı ayıklar ve bir şey olduğunda sizi çağırır.</p></div>
     </div>
     <div className="welcome-auth"><div className="welcome-auth-card">
