@@ -51,6 +51,9 @@ OMUZ_SOL, OMUZ_SAG, DIRSEK_SOL, DIRSEK_SAG, BILEK_SOL, BILEK_SAG = 5, 6, 7, 8, 9
 
 SINIFLAR = ("telefon", "sigara")   # her biri AYRI görev anahtarı ve AYRI alarm türüdür
 ETIKETLER = {"telefon": "telefon kullanımı", "sigara": "sigara içme"}
+# Tek "telefon" alarmı, iki tanım (kullanıcı kararı 2026-09-23): kulakta → konuşma,
+# elde (mesajlaşma/bakma) → elde kullanım. alerts.kind aynı kalır, etiket ayrışır.
+TELEFON_ALT_TUR = {"konusma": "telefonla konuşma", "elde": "elde telefon kullanımı"}
 
 
 def aktif_siniflar(tasks: dict | None) -> tuple[str, ...]:
@@ -163,7 +166,8 @@ def _kesisir(kutu, alan, oran: float = 0.5) -> bool:
 class _Iz:
     """Bir kişinin izi: kutu, özellik geçmişi, davranış durumları."""
     __slots__ = ("id", "kutu", "son_ts", "gecmis", "durum", "baslangic", "son_alarm",
-                 "dokunus", "agiz_giris", "dogrulama", "bas_kutu", "son_dogrulama_ts")
+                 "dokunus", "agiz_giris", "dogrulama", "bas_kutu", "son_dogrulama_ts",
+                 "telefon_alt")
 
     def __init__(self, tid: int, kutu, ts: float) -> None:
         self.id = tid
@@ -178,6 +182,7 @@ class _Iz:
         self.dogrulama = {s: None for s in SINIFLAR}   # (ts, kaynak) son pozitif doğrulama
         self.bas_kutu = None
         self.son_dogrulama_ts = -1e9
+        self.telefon_alt = "konusma"
 
 
 @dataclass
@@ -206,8 +211,21 @@ class DavranisTakip:
                  kayip_sn: float = 2.0, iou_esle: float = 0.3,
                  min_bas_px: float = 24.0, kp_esik: float = 0.3,
                  kulak_oran: float = 0.8, agiz_oran: float = 1.4,
-                 siniflar=SINIFLAR, telefon_poz_kat: float = 3.0) -> None:
+                 siniflar=SINIFLAR, telefon_poz_kat: float = 3.0,
+                 telefon_kip: str = "ikisi", alarm_konum_iou: float = 0.2) -> None:
         self.siniflar = tuple(s for s in SINIFLAR if s in siniflar)
+        # konusma : yalnız kulakta telefon pozu (ilk istek: "telefonla konuşan insanlar")
+        # kullanim: elde telefon görülmesi de yeter (mesajlaşma dâhil)
+        # konusma : yalnız kulakta poz alarm olur
+        # kullanim: yalnız elde telefon (mesajlaşma) alarm olur
+        # ikisi   : her ikisi de alarm olur; etiket ayrışır (varsayılan)
+        self.telefon_kip = telefon_kip if telefon_kip in ("konusma", "kullanim", "ikisi") else "ikisi"
+        # Aynı kişi 30 sn'de bir yeniden alarm üretiyordu: iz kimliği kalabalıkta
+        # kopup yeniden açılınca iz-başı cooldown sıfırlanıyor (ölçüm 2026-09-23:
+        # mesajlaşan kadın 1,5 dk'da 3 alarm). Alarm KONUMU hatırlanır; cooldown
+        # içinde aynı yerdeki (IoU ≥ eşik) aynı türden alarm bastırılır.
+        self.alarm_konum_iou = float(alarm_konum_iou)
+        self._son_alarmlar: list[tuple[float, str, tuple]] = []
         self.telefon_sn = float(telefon_sn)
         self.telefon_poz_kat = float(telefon_poz_kat)
         self.telefon_oran = float(telefon_oran)
@@ -281,7 +299,10 @@ class DavranisTakip:
                     dy = max(tk[1] - y, 0, y - tk[3])
                     if (dx * dx + dy * dy) ** 0.5 <= oz["bas"] * 0.9:
                         telefon_eller.add(wrist)
-            iz.gecmis.append((ts, oz["kulak"] or bool(telefon_eller), oz["agiz"]))
+            elde_telefon = bool(telefon_eller) and self.telefon_kip in ("kullanim", "ikisi")
+            kulakta = oz["kulak"] and self.telefon_kip in ("konusma", "ikisi")
+            # gecmis: (ts, telefon_pozu, agiz, kulakta)
+            iz.gecmis.append((ts, kulakta or elde_telefon, oz["agiz"], bool(oz["kulak"])))
             ufuk = ts - max(self.telefon_sn * 2.5, self.sigara_pencere_sn)
             while iz.gecmis and iz.gecmis[0][0] < ufuk:
                 iz.gecmis.popleft()
@@ -321,6 +342,10 @@ class DavranisTakip:
         if len(pencere) < 3 or ts - pencere[0][0] < self.telefon_sn * 0.8:
             return False, 0.0
         oran = sum(1 for g in pencere if g[1]) / len(pencere)
+        # Alt tür: penceredeki poz karelerinin çoğunluğu kulaktaysa "konuşma", değilse "elde"
+        pozlu = [g for g in pencere if g[1]]
+        kulak_pay = (sum(1 for g in pozlu if len(g) > 3 and g[3]) / len(pozlu)) if pozlu else 0.0
+        iz.telefon_alt = "konusma" if kulak_pay >= 0.5 else "elde"
         return oran >= self.telefon_oran, oran
 
     def _sigara_adayi(self, iz: _Iz, ts: float) -> tuple[bool, float]:
@@ -362,18 +387,30 @@ class DavranisTakip:
                         # doğrulayıcı yoksa bir nefes daha (tekrar+1) ya da yarım pencere
                         n_dok = len(iz.dokunus) + (1 if iz.agiz_giris is not None else 0)
                         alarm = dogrulandi or n_dok >= self.sigara_tekrar + 1                             or sure >= self.sigara_pencere_sn * 0.5
+                if alarm and self._ayni_yerde_yakin_alarm(sinif, iz.kutu, ts):
+                    # Aynı kişi (iz kimliği değişmiş olsa da) cooldown içinde: sessiz kal
+                    iz.durum[sinif] = "alarm"
+                    iz.son_alarm[sinif] = ts
+                    continue
                 if alarm and ts - self.kamera_son_alarm[sinif] >= self.kamera_cooldown_sn:
                     iz.durum[sinif] = "alarm"
                     iz.son_alarm[sinif] = ts
                     self.kamera_son_alarm[sinif] = ts
+                    self._son_alarmlar.append((ts, sinif, tuple(iz.kutu)))
                     olaylar.append(self._olay(iz, sinif, "alarm", ts, max(skor, 0.9 if dogrulandi else skor),
                                               d[1] if dogrulandi else "poz",
                                               sure=sure))
         return olaylar
 
+    def _ayni_yerde_yakin_alarm(self, sinif: str, kutu, ts: float) -> bool:
+        self._son_alarmlar = [a for a in self._son_alarmlar if ts - a[0] < self.cooldown_sn]
+        return any(a[1] == sinif and _iou(a[2], kutu) >= self.alarm_konum_iou
+                   for a in self._son_alarmlar)
+
     def _olay(self, iz: _Iz, sinif: str, durum: str, ts: float, skor: float,
               kaynak: str, sure: float = 0.0) -> dict:
         return {"sinif": sinif, "durum": durum, "conf": round(float(skor), 2),
+                "alt_tur": iz.telefon_alt if sinif == "telefon" else "",
                 "kutu": tuple(float(v) for v in iz.kutu), "track_id": iz.id,
                 "dogrulama": kaynak, "sure": round(float(sure), 1),
                 "ts_seconds": round(ts, 2)}
@@ -470,6 +507,8 @@ def _takip_kur(cfg, siniflar=SINIFLAR) -> DavranisTakip:
     return DavranisTakip(
         siniflar=siniflar,
         telefon_poz_kat=g("telefon_poz_kat", 3.0),
+        telefon_kip=str(g("telefon_kip", "ikisi")),
+        alarm_konum_iou=g("alarm_konum_iou", 0.2),
         telefon_sn=g("telefon_sn", 4.0), telefon_oran=g("telefon_oran", 0.7),
         sigara_tekrar=g("sigara_tekrar", 2), sigara_pencere_sn=g("sigara_pencere_sn", 40.0),
         dokunus_min_sn=g("dokunus_min_sn", 0.3), dokunus_max_sn=g("dokunus_max_sn", 6.0),
@@ -489,8 +528,15 @@ def _ascii(s: str) -> str:
     return (s or "").translate(str.maketrans("çğıİöşüÇĞÖŞÜ", "cgiIosuCGOSU"))
 
 
+def olay_adi(o: dict) -> str:
+    """Panelde görünen ad: telefon için alt tür (konuşma / elde kullanım)."""
+    if o.get("sinif") == "telefon":
+        return TELEFON_ALT_TUR.get(o.get("alt_tur") or "", ETIKETLER["telefon"])
+    return ETIKETLER.get(o.get("sinif", ""), o.get("sinif", ""))
+
+
 def alarm_etiketi(o: dict) -> str:
-    return (f"{ETIKETLER.get(o['sinif'], o['sinif'])} · {o.get('sure', 0)} sn · "
+    return (f"{olay_adi(o)} · {o.get('sure', 0)} sn · "
             f"doğrulama: {o.get('dogrulama', 'poz')}")
 
 

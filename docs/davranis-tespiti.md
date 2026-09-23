@@ -66,6 +66,18 @@ Doğrulama kipi (`telefon_dogrulama` / `sigara_dogrulama`):
 | `zorunlu` | kutu görülmeden alarm yok, ön uyarı panelde kalır |
 | `kapali` | yalnız poz |
 
+## Telefon alarmının iki tanımı (2026-09-23)
+
+Tek alarm türü (`kind='telefon'`), iki tanım: kulakta poz → **telefonla konuşma**,
+elde telefon (mesajlaşma/bakma, COCO "cell phone" kutusu elin 0,9 baş yakınında) →
+**elde telefon kullanımı**. Etiket (`alerts.label`, Test ekranı, webhook) ayrışır.
+`davranis.telefon_kip`: `ikisi` (varsayılan) · `konusma` · `kullanim`.
+
+Saha incelemesi (kamera-201, 6 alarm): 3 telefon alarmının 3'ü mesajlaşan aynı
+kadındı (1,5 dk'da 3 tekrar); sigara alarmları gerçekti (kırpmada ağızda sigara,
+dedektör 0,4–0,5). Tekrar alarmın nedeni iz kimliğinin kalabalıkta kopması →
+`alarm_konum_iou`: cooldown içinde aynı yerdeki aynı tür alarm bastırılır.
+
 ## Kademeler ve çıktı
 
 `izle → on_uyari → alarm` (yangın hattıyla aynı). Ön uyarı yalnız log ve Test

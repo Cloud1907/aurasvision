@@ -70,7 +70,7 @@ def _takip(**kw):
 class TelefonTest(unittest.TestCase):
     def test_ayni_kiside_telefon_ve_sigara_bagimsizdir(self):
         from src.davranis import BILEK_SOL
-        t = _takip()
+        t = _takip(telefon_kip="kullanim")   # elde telefon: yalnız 'kullanim' kipinde alarm
         events = []
         for i in range(100):
             b, kp, kc = kisi(bilek=(345, 195))
@@ -80,9 +80,37 @@ class TelefonTest(unittest.TestCase):
         self.assertEqual({e['sinif'] for e in events if e['durum'] == 'alarm'}, {'telefon', 'sigara'})
 
     def test_onunde_elde_dogrulanan_telefon_alarm_uretir(self):
-        t = _takip()
+        t = _takip(telefon_kip="kullanim")
         ol = self._kos(t, 6, bilek=(335, 190), telefon=[(323, 169, 345, 197)])
         self.assertTrue(any(o['sinif'] == 'telefon' and o['durum'] == 'alarm' for o in ol))
+
+    def test_konusma_kipinde_elde_telefon_alarm_uretmez(self):
+        ol = self._kos(_takip(telefon_kip="konusma"), 12, bilek=(335, 190), telefon=[(323, 169, 345, 197)])
+        self.assertFalse(any(o['sinif'] == 'telefon' for o in ol))
+
+    def test_alt_tur_kulakta_konusma_elde_kullanim(self):
+        # Tek alarm türü (telefon), iki tanım: kulakta → konuşma, elde → elde kullanım
+        from src.davranis import alarm_etiketi
+        ol = self._kos(_takip(), 6, bilek=TELEFON, telefon=[(270, 90, 295, 120)])
+        al = [o for o in ol if o['sinif'] == 'telefon' and o['durum'] == 'alarm']
+        self.assertEqual(al[0]['alt_tur'], 'konusma')
+        self.assertIn('telefonla konuşma', alarm_etiketi(al[0]))
+        ol = self._kos(_takip(), 6, bilek=(335, 190), telefon=[(323, 169, 345, 197)])
+        al = [o for o in ol if o['sinif'] == 'telefon' and o['durum'] == 'alarm']
+        self.assertEqual(al[0]['alt_tur'], 'elde')
+        self.assertIn('elde telefon kullanımı', alarm_etiketi(al[0]))
+
+    def test_ayni_yerde_yeni_iz_cooldown_icinde_tekrar_alarm_uretmez(self):
+        # İz kimliği kopup yeniden açılsa da aynı konumdaki kişi 2. alarmı üretmez
+        t = _takip(kayip_sn=0.5)
+        ol = self._kos(t, 18.0)
+        self.assertEqual(sum(1 for o in ol if o['durum'] == 'alarm'), 1)
+        for i in range(8):                       # iz kaybolsun (2 sn görünmez)
+            t.guncelle([], 18.0 + i / 4)
+        ol2 = []
+        for i in range(80):                      # aynı yerde yeni iz, aynı poz
+            ol2 += t.guncelle([kisi(bilek=TELEFON)], 20.0 + i / 4)
+        self.assertEqual([o['durum'] for o in ol2 if o['sinif'] == 'telefon' and o['durum'] == 'alarm'], [])
 
     def test_masadaki_telefon_ve_bos_el_alarm_uretmez(self):
         for boxes in (None, [(240, 300, 265, 330)]):
