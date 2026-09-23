@@ -109,6 +109,10 @@ ama HEDEF SAHNE DEĞİLDİR: yüz kadrajı doldurunca `imgsz 960` poz modelini b
 
 - Birim: `tests/test_davranis.py` — 20 test.
 - Hız: 21 ms/kare poz (RTX 3050); dosya yolunda telefon doğrulaması dâhil ~30 kare/sn.
+- Sigara dedektörü (`models/sigara.pt`, Beehzod yolo11m, MIT) 2026-09-23'te kuruldu ve
+  `sigara_model` ile açıldı. Ölçüm (yalnız poz → dedektör tercih): sokak uzak alarm 21,7 → 1,3 sn;
+  balkon 8,9 → 7,4 sn; yakın plan klip alarm yok → 21,2 sn; telefon klibi ve mağaza negatifinde 0 tetik.
+  Ağırlık depoya girmez (`models/` yok sayılır); kurulum: Hugging Face `best.pt` → `models/sigara.pt`.
 - Açık borç: gerçek CCTV kaydında (tavan açısı, 2880 px ana akış) ölçüm yok.
   İlk hafta ön uyarı/alarm günlüğü toplanıp `telefon_sn`, `telefon_poz_kat`,
   `sigara_tekrar` buna göre ayarlanmalı. Sigara ağırlığı (`sigara_model`) kurulu değil.
