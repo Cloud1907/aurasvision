@@ -84,6 +84,26 @@ kadındı (1,5 dk'da 3 tekrar); sigara alarmları gerçekti (kırpmada ağızda 
 dedektör 0,4–0,5). Tekrar alarmın nedeni iz kimliğinin kalabalıkta kopması →
 `alarm_konum_iou`: cooldown içinde aynı yerdeki aynı tür alarm bastırılır.
 
+## Sigara: saha incelemesi ve sıkılaştırma (2026-09-23)
+
+Bugünkü 140 sigara alarmı: 109'u yalnız poz (örneklenen 8'i de sahte: kutuya uzanan,
+saç düzelten, yüze dokunan), 31'i dedektör onaylı (örneklenen 8'in 3'ü kulakta telefonla
+konuşan kişi — dedektör CCTV ölçeğinde telefonu sigara sanıyor, 0,7–0,85 güvenle).
+Doğrulananlar: ağızda sigara net görünen 2 gerçek vaka.
+
+Yeni kural (`sigara_dogrulama: zorunlu`):
+- Alarm için dedektörün **iki ayrı nefeste** sigara görmesi gerekir (`sigara_onay_tekrar`).
+- Süren tek temas dokunuş değildir; 1,5 sn'den kısa kesintiler aynı temastır
+  (`dokunus_bosluk_sn`) — poz titreşimi kulakta telefonu 4 "dokunuşa" bölüyordu.
+- Kulak pozu dışlanmaz: sigara içen de eli yanağında tutar; ayrım SÜRE ile.
+- Telefon kutusu görülen kişide 5 sn sigara teması sayılmaz (`telefon_bastirma_sn`).
+- Dokunuşlar kamera düzeyinde konumla tutulur (1 kutu yarıçapı): kalabalıkta iz kimliği
+  kopunca sayaç sıfırlanıyordu.
+
+Kayıt kıyası: gerçek sigara (kamera-201 15:43) → alarm; telefonla konuşan 3 kişi
+(kamera-207) → sigara alarmı yok; mesajlaşan kişi → yalnız telefon. Demo kliplerde uzak
+sokak ve balkon alarmı korundu; yakın plan stüdyo klibi (hedef sahne değil) kaybedildi.
+
 ## Kademeler ve çıktı
 
 `izle → on_uyari → alarm` (yangın hattıyla aynı). Ön uyarı yalnız log ve Test

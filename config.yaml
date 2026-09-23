@@ -365,9 +365,15 @@ davranis:
   sigara_tekrar: 2          # el ağza bu kadar kez gidip gelirse ön uyarı
   sigara_pencere_sn: 40     # ...bu pencere içinde (bir nefes ~20-40 sn'de bir)
   dokunus_min_sn: 0.3       # bir "dokunuş" en az bu kadar sürmeli (geçen el sayılmaz)
-  dokunus_max_sn: 6.0       # ...en fazla bu kadar (çene sıkma/düşünme pozu dokunuş değil)
-  sigara_dogrulama: tercih  # tercih/zorunlu/kapali (telefonla aynı anlam; "tercih"te kutu
-                            # yoksa pencerenin yarısı kadar sürerse alarm)
+  dokunus_max_sn: 6.0       # ...en fazla bu kadar (çene sıkma/düşünme pozu, kulakta telefon dokunuş değil)
+  dokunus_bosluk_sn: 1.5    # bundan kısa kesintiyle süren temas AYNI temastır (poz titreşimi temasları
+                            # parçalıyordu; kulakta telefon 0,3 sn aralıklı 4 "dokunuş" üretti)
+  sigara_dogrulama: zorunlu # zorunlu: dedektör onayı olmadan alarm YOK. Saha incelemesi
+                            # 2026-09-23: 140 alarmın 109'u yalnız pozdu ve örneklenen 8'i de
+                            # sahteydi (kutuya uzanan, saç düzelten, yüze dokunan). tercih/kapali
+                            # kipleri kalır ama önerilmez.
+  sigara_onay_tekrar: 2     # dedektörün sigara gördüğü AYRI dokunuş sayısı (aynı pencerede).
+                            # Tek kırpma onayı kulakta telefonu "sigara" yapıyordu (8 örnekte 3).
   sigara_model: models/sigara.pt   # isteğe bağlı sigara ağırlığı (ultralytics .pt), örn.
                             # models/sigara.pt ← huggingface.co/Beehzod/smoke_cigarette-detection2-yolo11m
                             # (MIT). Boş/yoksa hat yalnız pozla çalışır, hata vermez.

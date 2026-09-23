@@ -172,7 +172,8 @@ class _Iz:
     """Bir kişinin izi: kutu, özellik geçmişi, davranış durumları."""
     __slots__ = ("id", "kutu", "son_ts", "gecmis", "durum", "baslangic", "son_alarm",
                  "dokunus", "agiz_giris", "dogrulama", "bas_kutu", "son_dogrulama_ts",
-                 "telefon_alt", "telefon_pay")
+                 "telefon_alt", "telefon_pay", "temas_onay", "onayli_dokunus", "agiz_cikis",
+                 "son_telefon_ts")
 
     def __init__(self, tid: int, kutu, ts: float) -> None:
         self.id = tid
@@ -184,6 +185,10 @@ class _Iz:
         self.son_alarm = {s: -1e9 for s in SINIFLAR}
         self.dokunus: deque = deque()         # ağza gidiş anları (sigara)
         self.agiz_giris: float | None = None  # şu anki ağız temasının başlangıcı
+        self.temas_onay = False               # süren temasta dedektör sigara gördü mü
+        self.onayli_dokunus: deque = deque()  # dedektörün sigara gördüğü dokunuşların anları
+        self.agiz_cikis: float | None = None  # son temasın bittiği an (kısa boşluk → aynı temas)
+        self.son_telefon_ts = -1e9            # bu kişide en son telefon kutusu görülen an
         self.dogrulama = {s: None for s in SINIFLAR}   # (ts, kaynak) son pozitif doğrulama
         self.bas_kutu = None
         self.son_dogrulama_ts = -1e9
@@ -218,7 +223,14 @@ class DavranisTakip:
                  min_bas_px: float = 24.0, kp_esik: float = 0.3,
                  kulak_oran: float = 0.8, agiz_oran: float = 1.4,
                  siniflar=SINIFLAR, telefon_poz_kat: float = 3.0,
-                 telefon_kip: str = "ikisi", alarm_konum_iou: float = 0.2) -> None:
+                 telefon_kip: str = "ikisi", alarm_konum_iou: float = 0.2,
+                 sigara_onay_tekrar: int = 2, dokunus_bosluk_sn: float = 1.5,
+                 telefon_bastirma_sn: float = 5.0) -> None:
+        self.telefon_bastirma_sn = float(telefon_bastirma_sn)
+        self.sigara_onay_tekrar = int(sigara_onay_tekrar)
+        self.dokunus_bosluk_sn = float(dokunus_bosluk_sn)
+        self._mezar: list[tuple[float, _Iz]] = []   # yeni kaybolan izler (konumla devralınır)
+        self._temaslar: list[tuple[float, tuple, bool]] = []   # (ts, kutu, onaylı) biten dokunuşlar
         self.siniflar = tuple(s for s in SINIFLAR if s in siniflar)
         # konusma : yalnız kulakta telefon pozu (ilk istek: "telefonla konuşan insanlar")
         # kullanim: elde telefon görülmesi de yeter (mesajlaşma dâhil)
@@ -256,7 +268,8 @@ class DavranisTakip:
     # --- eşleme ---
     def _esle(self, kisiler, ts: float) -> list[tuple[_Iz, Any]]:
         for tid in [t for t, iz in self.izler.items() if ts - iz.son_ts > self.kayip_sn]:
-            del self.izler[tid]
+            self._mezar.append((self.izler[tid].son_ts, self.izler.pop(tid)))
+        self._mezar = [m for m in self._mezar if ts - m[0] < self.kayip_sn + 6.0]
         adaylar = sorted(((_iou(iz.kutu, k[0]), tid, i) for tid, iz in self.izler.items()
                           for i, k in enumerate(kisiler)), reverse=True)
         kullanilan_iz, kullanilan_kisi, ciftler = set(), set(), []
@@ -268,8 +281,21 @@ class DavranisTakip:
         for i, k in enumerate(kisiler):
             if i in kullanilan_kisi:
                 continue
-            iz = _Iz(self._sonraki_id, k[0], ts)
-            self._sonraki_id += 1
+            # Kalabalıkta iz kopup yeniden açılınca dokunuş/onay geçmişi sıfırlanıyordu
+            # (ölçüm 2026-09-23: gerçek sigara içen 3 ayrı iz kimliği aldı, alarm kaçtı).
+            # Aynı konumdaki (IoU ≥ 0,3) yeni kaybolmuş iz DEVRALINIR.
+            eski = None
+            for m in sorted(self._mezar, key=lambda m: -m[0]):
+                if _iou(m[1].kutu, k[0]) >= 0.3:
+                    eski = m; break
+            if eski is not None:
+                self._mezar.remove(eski)
+                iz = eski[1]
+                iz.kutu = k[0]; iz.son_ts = ts
+                iz.agiz_giris = None; iz.agiz_cikis = None; iz.temas_onay = False
+            else:
+                iz = _Iz(self._sonraki_id, k[0], ts)
+                self._sonraki_id += 1
             self.izler[iz.id] = iz
             ciftler.append((iz, k))
         return ciftler
@@ -332,29 +358,81 @@ class DavranisTakip:
             # Telefon pozundaki el ağız yarıçapına da girer: o karede dokunuş sayılmaz
             sig_oz = ozellikler(kp, kc, kutu, self.kp_esik, self.kulak_oran,
                                self.agiz_oran, ignore_wrists=telefon_eller)
-            self._sigara_dokunus(iz, sig_oz["agiz"] and not sig_oz["kulak"], ts, sigara_kontrol)
+            # Kulak pozu DIŞLANMAZ: sigara içen de eli yanağında tutar (ölçüm 2026-09-23,
+            # sokak klibi: nefeslerin çoğu kulak=True). Telefonla konuşmayı ayıran şey
+            # SÜREdir: telefon tek uzun temas (> dokunus_max_sn → dokunuş değil), sigara
+            # aralıklı kısa temaslar. Elde COCO telefon kutusu olan bilek yine dışlanır.
+            if telefon_eller or any(_kesisir(tk, iz.bas_kutu) for tk in telefon_kutular or ()):
+                iz.son_telefon_ts = ts
+            # Telefonu görülen kişide 5 sn boyunca sigara teması sayılmaz: sigara dedektörü
+            # CCTV ölçeğinde telefonu sigara sanıyor (ölçüm 2026-09-23, 8 örnekte 3).
+            telefonlu = ts - iz.son_telefon_ts <= self.telefon_bastirma_sn
+            self._sigara_dokunus(iz, sig_oz["agiz"] and not telefonlu, ts, sigara_kontrol)
             olaylar += self._degerlendir(iz, ts)
         return olaylar
 
     def _sigara_dokunus(self, iz: _Iz, agiz: bool, ts: float, kontrol) -> None:
+        """Ağız temaslarını sayar. Saha incelemesi 2026-09-23 (140 alarm): süren tek temas
+        (kulakta telefon, çeneye dayanan el) dokunuş sayılıp dedektör tek kırpmada
+        "sigara" deyince alarm oluyordu. Artık yalnız BİTMİŞ ve süresi uygun temas
+        dokunuştur; dedektör onayı dokunuş başına tutulur, alarm ≥2 AYRI onaylı
+        dokunuş ister (sigara_onay_tekrar)."""
         if agiz:
             if iz.agiz_giris is None:
                 iz.agiz_giris = ts
+                iz.temas_onay = False
             # temas sırasında en fazla 0,5 sn'de bir doğrulayıcıya sor
-            if kontrol is not None and ts - iz.son_dogrulama_ts >= 0.5:
+            if kontrol is not None and not iz.temas_onay and ts - iz.son_dogrulama_ts >= 0.5:
                 iz.son_dogrulama_ts = ts
                 try:
                     if kontrol(iz):
-                        iz.dogrulama["sigara"] = (ts, "sigara dedektörü")
+                        iz.temas_onay = True
                 except Exception:
                     pass
+            iz.agiz_cikis = None
         elif iz.agiz_giris is not None:
-            sure = ts - iz.agiz_giris
+            # Poz titreşimi temasları parçalıyor (ölçüm 2026-09-23: kulakta telefonla
+            # konuşan kişide 0,3 sn aralıklı 4 "dokunuş"). El gerçekten inmeden
+            # (dokunus_bosluk_sn) yeniden temas gelirse AYNI temas sayılır.
+            if iz.agiz_cikis is None:
+                iz.agiz_cikis = ts
+                return
+            if ts - iz.agiz_cikis < self.dokunus_bosluk_sn:
+                return
+            sure = iz.agiz_cikis - iz.agiz_giris
             iz.agiz_giris = None
+            iz.agiz_cikis = None
             if self.dokunus_min_sn <= sure <= self.dokunus_max_sn:
                 iz.dokunus.append(ts)
+                # Kamera düzeyi konum hafızası: kalabalıkta iz 40 sn boyunca kopuyor
+                # (ölçüm 2026-09-23: gerçek sigara içen 3 iz kimliği aldı, sayaç hep
+                # sıfırlandı). Dokunuşlar KONUMLA tutulur; aynı çevredeki (2 kutu
+                # genişliği) dokunuşlar aynı kişiye sayılır.
+                self._temaslar.append((ts, tuple(iz.kutu), bool(iz.temas_onay)))
+                if iz.temas_onay:
+                    iz.onayli_dokunus.append(ts)
+            iz.temas_onay = False
         while iz.dokunus and iz.dokunus[0] < ts - self.sigara_pencere_sn:
             iz.dokunus.popleft()
+        while iz.onayli_dokunus and iz.onayli_dokunus[0] < ts - self.sigara_pencere_sn:
+            iz.onayli_dokunus.popleft()
+        self._temaslar = [t for t in self._temaslar if ts - t[0] < self.sigara_pencere_sn]
+        if self._cevre_sayisi(iz.kutu, onayli=True) >= self.sigara_onay_tekrar:
+            iz.dogrulama["sigara"] = (ts, "sigara dedektörü")
+        else:
+            iz.dogrulama["sigara"] = None
+
+    def _cevre_sayisi(self, kutu, onayli: bool = False) -> int:
+        """Bu kutunun çevresinde (pencere içinde) biten dokunuş sayısı."""
+        cx, cy = (kutu[0] + kutu[2]) / 2, (kutu[1] + kutu[3]) / 2
+        r = 1.0 * max(kutu[2] - kutu[0], kutu[3] - kutu[1], 1.0)
+        n = 0
+        for ts, k, o in self._temaslar:
+            if onayli and not o:
+                continue
+            if _uzak(((k[0] + k[2]) / 2, (k[1] + k[3]) / 2), (cx, cy)) <= r:
+                n += 1
+        return n
 
     def _telefon_adayi(self, iz: _Iz, ts: float) -> tuple[bool, float]:
         pencere = [g for g in iz.gecmis if g[0] >= ts - self.telefon_sn]
@@ -374,7 +452,8 @@ class DavranisTakip:
         return oran >= self.telefon_oran, oran
 
     def _sigara_adayi(self, iz: _Iz, ts: float) -> tuple[bool, float]:
-        n = len(iz.dokunus) + (1 if iz.agiz_giris is not None else 0)
+        # Yalnız BİTMİŞ temaslar (süren temas kulakta telefon olabilir), konum çevresiyle
+        n = max(len(iz.dokunus), self._cevre_sayisi(iz.kutu))
         return n >= self.sigara_tekrar, min(1.0, n / max(1, self.sigara_tekrar))
 
     def _degerlendir(self, iz: _Iz, ts: float) -> list[dict]:
@@ -410,7 +489,7 @@ class DavranisTakip:
                         alarm = dogrulandi or sure >= self.telefon_sn * self.telefon_poz_kat
                     else:
                         # doğrulayıcı yoksa bir nefes daha (tekrar+1) ya da yarım pencere
-                        n_dok = len(iz.dokunus) + (1 if iz.agiz_giris is not None else 0)
+                        n_dok = len(iz.dokunus)   # yalnız bitmiş temaslar
                         alarm = dogrulandi or n_dok >= self.sigara_tekrar + 1                             or sure >= self.sigara_pencere_sn * 0.5
                 if alarm and self._ayni_yerde_yakin_alarm(sinif, iz.kutu, ts):
                     # Aynı kişi (iz kimliği değişmiş olsa da) cooldown içinde: sessiz kal
@@ -539,7 +618,10 @@ def _takip_kur(cfg, siniflar=SINIFLAR) -> DavranisTakip:
         sigara_tekrar=g("sigara_tekrar", 2), sigara_pencere_sn=g("sigara_pencere_sn", 40.0),
         dokunus_min_sn=g("dokunus_min_sn", 0.3), dokunus_max_sn=g("dokunus_max_sn", 6.0),
         telefon_dogrulama=str(g("telefon_dogrulama", "tercih")),
-        sigara_dogrulama=str(g("sigara_dogrulama", "tercih")),
+        sigara_dogrulama=str(g("sigara_dogrulama", "zorunlu")),
+        sigara_onay_tekrar=g("sigara_onay_tekrar", 2),
+        dokunus_bosluk_sn=g("dokunus_bosluk_sn", 1.5),
+        telefon_bastirma_sn=g("telefon_bastirma_sn", 5.0),
         dogrulama_taze_sn=g("dogrulama_taze_sn", 5.0),
         cooldown_sn=g("cooldown_seconds", 120.0),
         kamera_cooldown_sn=g("camera_cooldown_seconds", 30.0),
