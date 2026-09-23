@@ -128,6 +128,7 @@ class CameraRecorder(threading.Thread):
         cikis = None
         ovs = None
         seg_bas = 0.0        # segmentin ilk paket zamanı (kaynak saatinde)
+        son_dts = None       # tekdüze DTS bekçisi (segment başına sıfırlanır)
         yol: Path | None = None
         try:
             ivs = inp.streams.video[0]
@@ -151,9 +152,21 @@ class CameraRecorder(threading.Thread):
                     ovs = cikis.add_stream_from_template(ivs)
                     seg_bas = t
                     self.ilk_pts = pkt.pts
+                    son_dts = None
                 # Zaman damgalarını segment başına göre sıfırla (her dosya 0'dan başlar)
                 pkt.pts -= self.ilk_pts
                 pkt.dts -= self.ilk_pts
+                # Tekdüze DTS: kameradan (go2rtc üzerinden) aynı DTS'li ardışık paketler
+                # geliyor; mp4'e aynen yazılınca ffmpeg yalnız uyarıyor ama Chrome
+                # "PIPELINE_ERROR_DECODE: Failed to send video packet" ile oynatmayı
+                # DURDURUYORDU (ölçüm 2026-09-23, kamera-201 15-18-36.mp4 @29,8 sn).
+                # Bir tik (1/90000 sn) ileri almak görüntüyü değiştirmez, dosyayı
+                # standarda uygun kılar.
+                if son_dts is not None and pkt.dts <= son_dts:
+                    pkt.dts = son_dts + 1
+                if pkt.pts < pkt.dts:
+                    pkt.pts = pkt.dts
+                son_dts = pkt.dts
                 pkt.stream = ovs
                 cikis.mux(pkt)
         finally:
