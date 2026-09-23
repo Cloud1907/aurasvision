@@ -106,7 +106,7 @@ class BusStore:
         publish(self.r, "fire", camera_id, {k: v for k, v in dict(olay).items() if k != "kutu"}
                 | {"kutu": [round(float(x), 1) for x in olay.get("kutu", ())]})
 
-    def add_alert(self, kind, ref, list_type, label, camera_id, snapshot=None) -> None:
+    def add_alert(self, kind, ref, list_type, label, camera_id, snapshot=None, clip=None) -> None:
         # İhlal alanı alarmı worker'da doğar; DB yazımı ingestor'ın işi (ADR-0002)
         # snapshot: count.py ihlal anının kanıt karesini burada verir (kanit_kaydet).
         # Eksikti — imza uyuşmazlığı, ihlal alanı olan kamerada HER alarmda worker
@@ -118,7 +118,7 @@ class BusStore:
         # bir hataydı ve düzeltilmesi gerekiyordu.
         publish(self.r, "alert", camera_id,
                 {"kind": kind, "ref": ref, "list_type": list_type, "label": label,
-                 "snapshot": snapshot})
+                 "snapshot": snapshot, "clip": clip or ""})
 
     def commit(self) -> None:
         pass

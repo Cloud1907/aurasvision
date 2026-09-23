@@ -52,7 +52,7 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
         # zaten üretiliyordu ama buradan geçerken düşüyordu (bkz. bus.py:BusStore.add_alert)
         store.add_alert(p.get("kind", "intrusion"), p.get("ref", ""),
                         p.get("list_type", ""), p.get("label", ""), camera_id,
-                        snapshot=p.get("snapshot") or "")
+                        snapshot=p.get("snapshot") or "", clip=p.get("clip") or "")
         _web(cfg, {"tur": p.get("kind", "intrusion"), "ref": p.get("ref", ""),
                    "etiket": p.get("label", ""), "kamera": camera_id})
     elif type_ == "fire":
@@ -70,7 +70,8 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
             etiket = (f"{p.get('dogrulama', 0)} kare / {p.get('sure', 0)} sn"
                       f" · {FERAGAT}")
             store.add_alert("fire_warning", p.get("sinif", "duman"), "fire",
-                            etiket, camera_id, snapshot=p.get("snapshot", ""))
+                            etiket, camera_id, snapshot=p.get("snapshot", ""),
+                            clip=p.get("clip", ""))
             _web(cfg, {"tur": "fire_warning", "ref": p.get("sinif", "duman"),
                        "etiket": etiket, "kamera": camera_id,
                        "kanit": p.get("snapshot", ""), "klip": p.get("clip", "")})
@@ -82,7 +83,7 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
             etiket = alarm_etiketi(p)
             sinif = p.get("sinif", "davranis")
             store.add_alert(sinif, sinif, sinif, etiket,
-                            camera_id, snapshot=p.get("snapshot", ""))
+                            camera_id, snapshot=p.get("snapshot", ""), clip=p.get("clip", ""))
             _web(cfg, {"tur": sinif, "ref": sinif, "etiket": etiket,
                        "kamera": camera_id, "kanit": p.get("snapshot", ""),
                        "klip": p.get("clip", "")})

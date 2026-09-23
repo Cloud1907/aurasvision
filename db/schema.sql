@@ -129,7 +129,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     label       TEXT,
     acked_by    TEXT,
     acked_at    TIMESTAMPTZ,
-    snapshot    TEXT                         -- alarm anının kanıt karesi (evidence modülü)
+    snapshot    TEXT,                        -- alarm anının kanıt karesi (evidence modülü)
+    clip        TEXT                         -- analiz katmanlı kısa klip (davranış/yangın)
 );
 
 CREATE TABLE IF NOT EXISTS recordings (

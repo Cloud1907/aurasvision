@@ -44,11 +44,15 @@ test('V5: panel canlı kameraları, alarmları ve analizi tek ekranda birleştir
   expect((await analytics.boundingBox())!.y).toBeLessThan((await live.boundingBox())!.y);
 });
 
-test('V13: KPI gerçek kaynak kapsamını ve alarm sınırını dürüstçe gösterir', async ({ page }) => {
-  await page.route('**/api/alerts?*', route => route.fulfill({ json: Array.from({ length: 500 }, (_, id) => ({ id, kind: 'intrusion', camera_id: 'demo-2', time: eventTime, ref: 'Depo A' })) }));
+test('V13: KPI gerçek kaynak kapsamını ve alarm sayısını dürüstçe gösterir', async ({ page }) => {
+  // Kabul akışı kaldırıldı: metrik son 24 saatin alarm sayısı (eski kayıtlar sayılmaz)
+  const simdi = new Date().toISOString(), eski = new Date(Date.now() - 48 * 3600000).toISOString();
+  await page.route('**/api/alerts?*', route => route.fulfill({ json: [
+    ...Array.from({ length: 7 }, (_, id) => ({ id, kind: 'intrusion', camera_id: 'demo-2', time: simdi, ref: 'Depo A' })),
+    ...Array.from({ length: 3 }, (_, id) => ({ id: 100 + id, kind: 'intrusion', camera_id: 'demo-2', time: eski, ref: 'Depo A' }))] }));
   await page.goto('/');
-  await expect(page.getByText('İnceleme bekleyen')).toBeVisible();
-  await expect(page.getByLabel('Operasyon göstergeleri').getByText('500+')).toBeVisible();
+  await expect(page.getByText('Alarm · son 24 saat')).toBeVisible();
+  await expect(page.getByLabel('Operasyon göstergeleri').getByText('7', { exact: true })).toBeVisible();
   await expect(page.getByText('Son olay')).toBeVisible();
   await expect(page.getByText('Kayıt kapsamı')).toBeVisible();
   await expect(page.getByLabel('Operasyon göstergeleri').getByText(/18[/.]09/)).toBeVisible();
@@ -177,10 +181,10 @@ test('V5: WebGL olmadığında statik arka plan ve temel kontroller korunur', as
   await expect(page.getByRole('button', { name: /Sınırlı alana giriş/ })).toBeVisible();
 });
 
-test('V5: olay inceleme kanıtı öne alır, kabul ikincil kalır', async ({ page }) => {
+test('V5: olay inceleme kanıtı öne alır, kabul düğmesi yoktur', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Sınırlı alana giriş/ }).click();
   await expect(page.getByRole('button', { name: 'Olay anına git' })).toHaveClass(/pri/);
-  await expect(page.getByRole('button', { name: 'Gördüm, kabul et' })).not.toHaveClass(/pri/);
-  await expect(page.getByRole('dialog')).toContainText('Önce olay anını inceleyin');
+  await expect(page.getByRole('dialog').getByRole('button', { name: /kabul/i })).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toContainText('Alarm bir kayıttır');
 });

@@ -18,10 +18,11 @@ export default function PanelMetrics({ cameras, status, alarms, events, archive 
   const workerValue = status.error || !status.data ? '—' : worker ? (worker.ok ? 'Çalışıyor' : 'İncelenmeli') : (issue ? 'İncelenmeli' : 'Doğrulanamadı');
   const workerHint = status.error ? 'Durum alınamadı' : worker ? (worker.detay || (worker.ok ? 'Analiz hattı sağlıklı' : 'Analiz hattı incelenmeli')) : (issue ? `${issue.ad} incelenmeli` : 'Analiz worker durumu bulunamadı');
 
-  const pending = alarms.data?.length;
-  const pendingValue = alarms.error || pending === undefined ? '—' : pending >= 500 ? '500+' : pending.toLocaleString('tr-TR');
-  const pendingHint = alarms.error ? 'Güncellenemedi' : pending === undefined ? 'Alarm kuyruğu yükleniyor'
-    : pending >= 500 ? 'Liste sınırına ulaşıldı' : 'Kabul edilmemiş alarmlar';
+  // Kabul/onay akışı kaldırıldı: metrik son 24 saatin alarm sayısıdır
+  const esik = Date.now() - 24 * 3600000;
+  const pending = alarms.data ? alarms.data.filter(a => (window.AurasRuntime.parseTime(a.time)?.getTime() || 0) >= esik).length : undefined;
+  const pendingValue = alarms.error || pending === undefined ? '—' : pending.toLocaleString('tr-TR');
+  const pendingHint = alarms.error ? 'Güncellenemedi' : pending === undefined ? 'Alarm listesi yükleniyor' : 'Son 24 saatte üretilen alarm';
   const latest = events.data?.[0];
   const latestDate = window.AurasRuntime.parseTime(latest?.time);
   const latestValue = events.error || !events.data ? '—' : latest
@@ -55,7 +56,7 @@ export default function PanelMetrics({ cameras, status, alarms, events, archive 
 
   return <div className="ops-metrics" aria-label="Operasyon göstergeleri">
     <Metric icon="camera" label="Analiz hattı" value={workerValue} hint={workerHint} tone={worker?.ok === false ? 'warning' : ''}/>
-    <Metric icon="alert" label="İnceleme bekleyen" value={pendingValue} hint={pendingHint} tone={pending > 0 ? 'warning' : ''}/>
+    <Metric icon="alert" label="Alarm · son 24 saat" value={pendingValue} hint={pendingHint} tone={pending > 0 ? 'warning' : ''}/>
     <Metric icon="clock" label="Son olay" value={latestValue} hint={latestHint}/>
     <Metric icon="disk" label="Kayıt kapsamı" value={recordValue} hint={recordHint}/>
   </div>;

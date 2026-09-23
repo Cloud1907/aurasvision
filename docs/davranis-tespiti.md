@@ -100,7 +100,17 @@ Yeni kural (`sigara_dogrulama: zorunlu`):
 - Dokunuşlar kamera düzeyinde konumla tutulur (1 kutu yarıçapı): kalabalıkta iz kimliği
   kopunca sayaç sıfırlanıyordu.
 
-Kayıt kıyası: gerçek sigara (kamera-201 15:43) → alarm; telefonla konuşan 3 kişi
+- Kopan izin dokunuşları yalnız ≤ 6 sn önce kaybolmuş ve aynı yerdeki izden sayılır;
+  iz DEVRALMA yok — konumla devralma sigara içenin geçmişini yanından geçen kişiye
+  aktarıp alarmı yanlış kişiye çizmişti (klip kontrolüyle görüldü).
+
+Kayıt kıyası (son hal): telefonla konuşan 3 kişi ve mesajlaşan kişi → sigara alarmı YOK;
+uzak sokak ve balkon demo klipleri → alarm. Kalabalık koridorda YÜRÜYEN sigara içen
+(kamera-201 15:43) kaçıyor: nefesler 15–30 sn arayla, iz bu sürede kopuyor. Bilinçli
+tercih: sahte alarm yerine kaçırma. Kanıt klibi artık analiz katmanlı (kişi kutusu +
+izle/ön uyarı/ALARM) ve alarmda `clip` olarak saklanır.
+
+Eski kıyas: gerçek sigara (kamera-201 15:43) → alarm; telefonla konuşan 3 kişi
 (kamera-207) → sigara alarmı yok; mesajlaşan kişi → yalnız telefon. Demo kliplerde uzak
 sokak ve balkon alarmı korundu; yakın plan stüdyo klibi (hedef sahne değil) kaybedildi.
 

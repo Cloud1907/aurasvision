@@ -315,16 +315,17 @@ class BaseStore(AnalyticsMixin):
 
     # --- Uyarılar ---
     def add_alert(self, kind: str, ref: str, list_type: str, label: str, camera_id: str,
-                  snapshot: str = "") -> None:
-        self._x("INSERT INTO alerts (kind, ref, list_type, label, camera_id, snapshot)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (kind, ref, list_type, label, camera_id, snapshot or None))
+                  snapshot: str = "", clip: str = "") -> None:
+        # clip: alarm anının analiz katmanlı kısa klibi (davranış/yangın) — kanıtta oynatılır
+        self._x("INSERT INTO alerts (kind, ref, list_type, label, camera_id, snapshot, clip)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (kind, ref, list_type, label, camera_id, snapshot or None, clip or None))
         self.commit()
 
     def recent_alerts(self, limit: int = 20, pending_only: bool = False) -> list[dict[str, Any]]:
         kosul = " WHERE acked_at IS NULL" if pending_only else ""
         return self._all("SELECT id, kind, ref, list_type, label, camera_id, time,"
-                         " acked_by, acked_at, snapshot FROM alerts"
+                         " acked_by, acked_at, snapshot, clip FROM alerts"
                          f"{kosul} ORDER BY time DESC LIMIT ?", (limit,))
 
     def alert_feed(self, after_id: int | None, limit: int = 100) -> dict[str, Any]:
@@ -468,7 +469,7 @@ CREATE TABLE IF NOT EXISTS face_events (
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL DEFAULT (datetime('now')),
     camera_id TEXT, kind TEXT NOT NULL, ref TEXT NOT NULL, list_type TEXT, label TEXT,
-    acked_by TEXT, acked_at TEXT, snapshot TEXT);
+    acked_by TEXT, acked_at TEXT, snapshot TEXT, clip TEXT);
 CREATE TABLE IF NOT EXISTS kullanicilar (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ad TEXT NOT NULL UNIQUE,
     parola_hash TEXT NOT NULL, rol TEXT NOT NULL DEFAULT 'izleyici',
@@ -497,7 +498,8 @@ class SqliteStore(BaseStore):
                                   ("cameras", "http_headers", "TEXT"),
                                   ("plate_events", "snapshot", "TEXT"),
                                   ("alerts", "snapshot", "TEXT"),
-                                  ("camera_health", "detail", "TEXT")):
+                                  ("camera_health", "detail", "TEXT"),
+                                  ("alerts", "clip", "TEXT")):
             try:   # hafif migration: eski DB'lerde eksik sütunları ekle
                 self.conn.execute(f"ALTER TABLE {tablo} ADD COLUMN {sutun} {tip}")
             except sqlite3.OperationalError:
@@ -631,7 +633,7 @@ class PgStore(BaseStore):
             # Hafif migration: kurulu DB'lerde sonradan eklenen sütunlar
             for tablo, sutun in (("plate_events", "snapshot"), ("alerts", "snapshot"),
                                  ("cameras", "http_headers"),
-                                 ("camera_health", "detail")):
+                                 ("camera_health", "detail"), ("alerts", "clip")):
                 self.conn.execute(
                     f"ALTER TABLE {tablo} ADD COLUMN IF NOT EXISTS {sutun} TEXT")
             ensure_pg_fire(self.conn)

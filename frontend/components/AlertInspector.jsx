@@ -3,30 +3,24 @@ import Icon from './Icon';
 
 export default function AlertInspector({ alert, cameraName, bridge, onClose, onAccepted }) {
   const dialog = useRef(null);
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [error] = useState('');
   const alive = useRef(true);
   useEffect(() => {
     const previous = document.activeElement;
     dialog.current.showModal();
     return () => { alive.current = false; previous?.focus(); };
   }, []);
-  const accept = async () => {
-    setBusy(true); setError('');
-    try {
-      // Mutation yaşam döngüsü ekranın GET iptalinden bağımsızdır.
-      await bridge.api(`/alerts/${alert.id}/ack`, { method: 'POST' });
-      if (alive.current) onAccepted();
-    } catch (e) { if (alive.current) { setError(e.message); setBusy(false); } }
-  };
   return <dialog className="ops-inspector" ref={dialog} onCancel={onClose} aria-labelledby="inspection-title">
     <header><span className="ops-eyebrow">OLAY İNCELEME</span><button className="ops-icon-button" aria-label="İncelemeyi kapat" onClick={onClose}><Icon name="close"/></button></header>
     <div className="ops-inspector-body"><span className="ops-event-icon warning"><Icon name="alert" size={24}/></span><h2 id="inspection-title">{alert.ref || 'Yeni uyarı'}</h2><p>{alert.label}</p>
-      <dl><div><dt>Kamera</dt><dd>{cameraName}</dd></div><div><dt>Olay zamanı</dt><dd>{window.AurasRuntime.parseTime(alert.time)?.toLocaleString('tr-TR') || 'Belirtilmedi'}</dd></div><div><dt>Durum</dt><dd>Operatör incelemesi bekliyor</dd></div></dl>
+      <dl><div><dt>Kamera</dt><dd>{cameraName}</dd></div><div><dt>Olay zamanı</dt><dd>{window.AurasRuntime.parseTime(alert.time)?.toLocaleString('tr-TR') || 'Belirtilmedi'}</dd></div></dl>
+      {alert.clip && <video className="ops-evidence" src={bridge.media(alert.clip)} controls autoPlay muted loop playsInline aria-label="Analiz klibi"/>}
+      {alert.clip && <p className="ops-hint">Analiz klibi: kişi kutusu ve aşama (izle → ön uyarı → ALARM).</p>}
       <EvidenceImage path={alert.snapshot} bridge={bridge}/>
       {alert.kind === 'fire_warning' && <p className="ops-error">Sertifikalı yangın alarmının yerine geçmez.</p>}
       {error && <p className="ops-error" role="alert">{error}</p>}
     </div>
-    <footer><button className="btn pri" onClick={() => bridge.record(alert.camera_id, alert.time)}><Icon name="play" size={16}/> Olay anına git</button><button className="btn" disabled={busy} onClick={accept}>{busy ? 'Kaydediliyor…' : 'Gördüm, kabul et'}</button><p>Önce olay anını inceleyin. Kabul, uyarıyı gördüğünüzü kaydeder; sorunun çözüldüğü anlamına gelmez.</p></footer>
+    <footer><button className="btn pri" onClick={() => bridge.record(alert.camera_id, alert.time)}><Icon name="play" size={16}/> Olay anına git</button><button className="btn" onClick={onClose}>Kapat</button><p>Alarm bir kayıttır; olay anını kayıttan izleyin.</p></footer>
   </dialog>;
 }
 
