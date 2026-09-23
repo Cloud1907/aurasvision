@@ -246,6 +246,22 @@ _KISI_TAZE = 5.0
 _TELEFON_CLASS = 67    # COCO "cell phone" — davranış kademesinin telefon doğrulaması
 
 
+_ANALIZ_GOREVLERI = ("count", "plate", "face", "fire", "telefon", "sigara")
+
+
+def _analiz_acik(tasks) -> bool:
+    """Bu kamera için çözücü açmaya değer mi: en az bir analiz görevi açık olmalı.
+
+    Kayıt ayrı süreçtir (recorder). Görevi kapalı kamera (ör. Test ekranı için
+    eklenen dosya-kaynaklı deneme kameraları) çözülürse NVDEC boşa dolar —
+    ölçüm 2026-09-23: 8 görevsiz test kamerası NVDEC'i %99'a çıkardı, tarayıcıdaki
+    canlı görüntü çözücü bulamayıp sapıttı. go2rtc dosya döngüsü de tüketici
+    olmayınca durur.
+    """
+    t = tasks or {}
+    return any(t.get(g) for g in _ANALIZ_GOREVLERI)
+
+
 def _davranis_acik(tasks) -> bool:
     """Telefon veya sigara görevi açık mı (ikisi tek poz hattında koşar)."""
     t = tasks or {}
@@ -611,7 +627,8 @@ def run_akis_worker(cams: list[dict], cfg, bus,
     def refresh_db() -> None:
         s = open_store(cfg)
         try:
-            fresh = {c["id"]: c for c in merged_cameras(cfg, s) if c.get("enabled", True)}
+            fresh = {c["id"]: c for c in merged_cameras(cfg, s)
+                     if c.get("enabled", True) and _analiz_acik(c.get("tasks"))}
             if secim is not None:
                 fresh = {k: v for k, v in fresh.items() if k in secim}
             for cid, c in fresh.items():
@@ -628,7 +645,7 @@ def run_akis_worker(cams: list[dict], cfg, bus,
                     decoders[cid].stop_flag = True
                     _ac(c)
             for cid in [x for x in state if x not in fresh]:
-                print(f"{_ON} kamera silinmiş: {cid} — çözücü kapatılıyor", flush=True)
+                print(f"{_ON} kamera silinmiş ya da analiz görevi kalmadı: {cid} — çözücü kapatılıyor", flush=True)
                 decoders.pop(cid).stop_flag = True
                 state.pop(cid, None)
             for cid, st in state.items():
@@ -639,7 +656,10 @@ def run_akis_worker(cams: list[dict], cfg, bus,
         finally:
             s.close()
 
-    for i, c in enumerate(cams):
+    atlanan = [c["id"] for c in cams if not _analiz_acik(c.get("tasks"))]
+    if atlanan:
+        print(f"{_ON} analiz görevi kapalı, çözücü açılmadı: {', '.join(atlanan)}", flush=True)
+    for i, c in enumerate(c for c in cams if _analiz_acik(c.get("tasks"))):
         _ac(c)
         if i % 8 == 7:
             time.sleep(1.0)

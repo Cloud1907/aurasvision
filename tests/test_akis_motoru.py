@@ -227,3 +227,18 @@ class DonanimTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnalizAcikTest(unittest.TestCase):
+    """Görevi kapalı kameraya çözücü açılmaz — 8 test kamerası NVDEC'i %99 doldurmuştu."""
+
+    def test_gorevsiz_kamera_cozulmez(self):
+        from src.akis_motoru import _analiz_acik
+        self.assertFalse(_analiz_acik({"record": True}))
+        self.assertFalse(_analiz_acik(None))
+        self.assertFalse(_analiz_acik({"count": False, "plate": False}))
+
+    def test_herhangi_bir_analiz_gorevi_yeter(self):
+        from src.akis_motoru import _analiz_acik
+        for g in ("count", "plate", "face", "fire", "telefon", "sigara"):
+            self.assertTrue(_analiz_acik({g: True}), g)
