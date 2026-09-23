@@ -229,8 +229,8 @@ class DavranisTakip:
         self.telefon_bastirma_sn = float(telefon_bastirma_sn)
         self.sigara_onay_tekrar = int(sigara_onay_tekrar)
         self.dokunus_bosluk_sn = float(dokunus_bosluk_sn)
-        self._mezar: list[tuple[float, _Iz]] = []   # yeni kaybolan izler (konumla devralınır)
-        self._temaslar: list[tuple[float, tuple, bool]] = []   # (ts, kutu, onaylı) biten dokunuşlar
+        self._olum: dict[int, float] = {}            # iz id → kaybolma anı (konum hafızası için)
+        self._temaslar: list[tuple[float, tuple, bool, int]] = []   # (ts, kutu, onaylı, iz id) biten dokunuşlar
         self.siniflar = tuple(s for s in SINIFLAR if s in siniflar)
         # konusma : yalnız kulakta telefon pozu (ilk istek: "telefonla konuşan insanlar")
         # kullanim: elde telefon görülmesi de yeter (mesajlaşma dâhil)
@@ -268,8 +268,7 @@ class DavranisTakip:
     # --- eşleme ---
     def _esle(self, kisiler, ts: float) -> list[tuple[_Iz, Any]]:
         for tid in [t for t, iz in self.izler.items() if ts - iz.son_ts > self.kayip_sn]:
-            self._mezar.append((self.izler[tid].son_ts, self.izler.pop(tid)))
-        self._mezar = [m for m in self._mezar if ts - m[0] < self.kayip_sn + 6.0]
+            self._olum[tid] = self.izler.pop(tid).son_ts
         adaylar = sorted(((_iou(iz.kutu, k[0]), tid, i) for tid, iz in self.izler.items()
                           for i, k in enumerate(kisiler)), reverse=True)
         kullanilan_iz, kullanilan_kisi, ciftler = set(), set(), []
@@ -281,21 +280,11 @@ class DavranisTakip:
         for i, k in enumerate(kisiler):
             if i in kullanilan_kisi:
                 continue
-            # Kalabalıkta iz kopup yeniden açılınca dokunuş/onay geçmişi sıfırlanıyordu
-            # (ölçüm 2026-09-23: gerçek sigara içen 3 ayrı iz kimliği aldı, alarm kaçtı).
-            # Aynı konumdaki (IoU ≥ 0,3) yeni kaybolmuş iz DEVRALINIR.
-            eski = None
-            for m in sorted(self._mezar, key=lambda m: -m[0]):
-                if _iou(m[1].kutu, k[0]) >= 0.3:
-                    eski = m; break
-            if eski is not None:
-                self._mezar.remove(eski)
-                iz = eski[1]
-                iz.kutu = k[0]; iz.son_ts = ts
-                iz.agiz_giris = None; iz.agiz_cikis = None; iz.temas_onay = False
-            else:
-                iz = _Iz(self._sonraki_id, k[0], ts)
-                self._sonraki_id += 1
+            # İz DEVRALMA YOK: konumla devralma sigara içenin geçmişini yanından geçen
+            # kişiye aktardı (klip kontrolü 2026-09-23). Kopan izin dokunuşları konum
+            # hafızasından (_cevre_sayisi, ≤ 6 sn önce kaybolmuş iz) sayılır.
+            iz = _Iz(self._sonraki_id, k[0], ts)
+            self._sonraki_id += 1
             self.izler[iz.id] = iz
             ciftler.append((iz, k))
         return ciftler
@@ -408,7 +397,7 @@ class DavranisTakip:
                 # (ölçüm 2026-09-23: gerçek sigara içen 3 iz kimliği aldı, sayaç hep
                 # sıfırlandı). Dokunuşlar KONUMLA tutulur; aynı çevredeki (2 kutu
                 # genişliği) dokunuşlar aynı kişiye sayılır.
-                self._temaslar.append((ts, tuple(iz.kutu), bool(iz.temas_onay)))
+                self._temaslar.append((ts, tuple(iz.kutu), bool(iz.temas_onay), iz.id))
                 if iz.temas_onay:
                     iz.onayli_dokunus.append(ts)
             iz.temas_onay = False
@@ -417,20 +406,33 @@ class DavranisTakip:
         while iz.onayli_dokunus and iz.onayli_dokunus[0] < ts - self.sigara_pencere_sn:
             iz.onayli_dokunus.popleft()
         self._temaslar = [t for t in self._temaslar if ts - t[0] < self.sigara_pencere_sn]
-        if self._cevre_sayisi(iz.kutu, onayli=True) >= self.sigara_onay_tekrar:
+        if self._cevre_sayisi(iz, onayli=True) >= self.sigara_onay_tekrar:
             iz.dogrulama["sigara"] = (ts, "sigara dedektörü")
         else:
             iz.dogrulama["sigara"] = None
 
-    def _cevre_sayisi(self, kutu, onayli: bool = False) -> int:
-        """Bu kutunun çevresinde (pencere içinde) biten dokunuş sayısı."""
+    def _cevre_sayisi(self, iz: _Iz, onayli: bool = False) -> int:
+        """Bu izin kendi dokunuşları + çevresindeki KAYBOLMUŞ izlerin dokunuşları.
+
+        Hâlâ takipte olan BAŞKA bir izin temasları sayılmaz: yan yana yürüyen iki
+        kişide alarm yanlış kişiye yazılıyordu (ölçüm 2026-09-23, klip kontrolü).
+        Konum devralma yalnız iz kopması içindir.
+        """
+        kutu = iz.kutu
         cx, cy = (kutu[0] + kutu[2]) / 2, (kutu[1] + kutu[3]) / 2
         r = 1.0 * max(kutu[2] - kutu[0], kutu[3] - kutu[1], 1.0)
         n = 0
-        for ts, k, o in self._temaslar:
+        dogum = iz.gecmis[0][0] if iz.gecmis else iz.son_ts
+        for ts, k, o, sahip in self._temaslar:
             if onayli and not o:
                 continue
-            if _uzak(((k[0] + k[2]) / 2, (k[1] + k[3]) / 2), (cx, cy)) <= r:
+            if sahip == iz.id:
+                n += 1
+                continue
+            if sahip in self.izler:
+                continue        # canlı başka kişi
+            # kopan iz: bu iz doğmadan en fazla 6 sn önce kaybolmuş ve aynı yerde olmalı
+            if dogum - self._olum.get(sahip, -1e9) <= 6.0                     and _uzak(((k[0] + k[2]) / 2, (k[1] + k[3]) / 2), (cx, cy)) <= r:
                 n += 1
         return n
 
@@ -453,7 +455,7 @@ class DavranisTakip:
 
     def _sigara_adayi(self, iz: _Iz, ts: float) -> tuple[bool, float]:
         # Yalnız BİTMİŞ temaslar (süren temas kulakta telefon olabilir), konum çevresiyle
-        n = max(len(iz.dokunus), self._cevre_sayisi(iz.kutu))
+        n = max(len(iz.dokunus), self._cevre_sayisi(iz))
         return n >= self.sigara_tekrar, min(1.0, n / max(1, self.sigara_tekrar))
 
     def _degerlendir(self, iz: _Iz, ts: float) -> list[dict]:
@@ -672,6 +674,9 @@ class DavranisHatti:
         self.efektif_fps = max(1.0, float(efektif_fps))
         self.halka: deque = deque(maxlen=max(2, int(cfg.get("davranis.clip_seconds", 5.0)
                                                     * self.efektif_fps)))
+        # Kare başına çizim bilgisi (etiket, kutu) — klip ANALİZ KATMANIYLA yazılır:
+        # operatör kanıtta "izle → ön uyarı → alarm" ilerleyişini görsün (istek 2026-09-23)
+        self.halka_ciz: deque = deque(maxlen=self.halka.maxlen)
         self.sonuc = DavranisResult(fps=efektif_fps)
         self.store = store
         self.on_event = on_event
@@ -681,8 +686,14 @@ class DavranisHatti:
         if self.sigara is None:
             return None
 
+        min_bas = float(self.cfg.get("davranis.sigara_min_bas_px", 24))
+
         def kontrol(iz) -> bool:
+            # Küçük başta (< sigara_min_bas_px) dedektör halüsinasyon görüyor
+            # (ölçüm 2026-09-23: 25 px başta telefon 0,8 güvenle "sigara")
             x1, y1, x2, y2 = iz.bas_kutu
+            if (x2 - x1) / 3.2 < min_bas:      # bas_kutu genişliği = 3,2 × baş
+                return False
             x1, y1 = max(0, int(x1)), max(0, int(y1))
             x2, y2 = min(self.w, int(x2)), min(self.h, int(y2))
             if x2 - x1 < 8 or y2 - y1 < 8:
@@ -727,7 +738,45 @@ class DavranisHatti:
             if iz.son_ts != ts:
                 continue
             out.append((et.get(iz.id, "kisi"), *iz.kutu, 1.0))
+        self.halka_ciz.append(list(out))
         return out
+
+    def _klip_kareleri(self, o: dict) -> list:
+        """Halka tamponunu analiz katmanıyla döker: kişi kutuları + o karedeki aşama.
+
+        Aşama etiketi hattın o andaki durumudur ('kisi' → izle, 'x?' → ön uyarı,
+        'x' → alarm); son kare alarmın kendisidir. Alarm kutusuyla örtüşen kişi
+        vurgulanır ki kalabalıkta hangi kişiye ait olduğu belli olsun.
+        """
+        import cv2
+        kareler = list(self.halka)
+        cizler = list(self.halka_ciz)
+        cizler = [[]] * (len(kareler) - len(cizler)) + cizler[-len(kareler):]
+        hedef = tuple(o["kutu"])
+        cikti = []
+        n = len(kareler)
+        for i, (kare, ciz) in enumerate(zip(kareler, cizler)):
+            img = _ciz(kare, ciz)
+            k = max(1.0, img.shape[1] / 1280)
+            # alarm kişisi: en yüksek IoU'lu kutu, kalın kırmızı + aşama metni
+            asama = "izle"
+            en = None; en_iou = 0.2
+            for et, x1, y1, x2, y2, _c in ciz:
+                s_ = _iou((x1, y1, x2, y2), hedef)
+                if s_ > en_iou:
+                    en, en_iou = (et, x1, y1, x2, y2), s_
+            if en is not None:
+                et = en[0]
+                asama = "ALARM" if (i == n - 1 or et == o["sinif"]) else \
+                        ("on uyari" if et.endswith("?") else "izle")
+                renk = (40, 40, 255) if asama == "ALARM" else ((0, 200, 255) if asama == "on uyari" else (200, 200, 200))
+                cv2.rectangle(img, (int(en[1]), int(en[2])), (int(en[3]), int(en[4])), renk, max(2, round(3 * k)))
+                cv2.putText(img, f"{_ascii(o['sinif'])}: {asama}", (int(en[1]), max(16, int(en[2]) - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7 * k, renk, max(2, round(2 * k)))
+            cv2.putText(img, f"{_ascii(alarm_etiketi(o))}  kare {i + 1}/{n}", (10, int(28 * k)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6 * k, (255, 255, 255), max(1, round(2 * k)))
+            cikti.append(img)
+        return cikti
 
     def _yay(self, o: dict, kare) -> None:
         if o["durum"] == "on_uyari":
@@ -741,14 +790,14 @@ class DavranisHatti:
         # klasöründe ve webhook'ta AYRI görünür (evidence.telefon / evidence.sigara).
         o["snapshot"] = kanit_kaydet(self.cfg, kare, self.camera_id, o["sinif"],
                                      box=o["kutu"], etiket=_ascii(alarm_etiketi(o)))
-        o["clip"] = klip_kaydet(self.cfg, list(self.halka), self.camera_id, o["sinif"],
+        o["clip"] = klip_kaydet(self.cfg, self._klip_kareleri(o), self.camera_id, o["sinif"],
                                 fps=self.efektif_fps)
         self.sonuc.alarmlar.append(o)
         if self.on_alert is not None:
             self.on_alert(o)
         if self.store is not None:
             self.store.add_alert(o["sinif"], o["sinif"], o["sinif"], alarm_etiketi(o),
-                                 self.camera_id, snapshot=o["snapshot"])
+                                 self.camera_id, snapshot=o["snapshot"], clip=o.get("clip", ""))
 
 
 def _ciz(kare, tespitler) -> Any:

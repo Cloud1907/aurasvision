@@ -529,7 +529,7 @@ def _yay(cfg, olay: dict, sonuc: FireResult, kare, halka, camera_id: str,
         # üstünde bunu olay.py yazar — burada da yazmak çift alarm üretiyordu.
         store.add_alert("fire_warning", olay["sinif"], "fire",
                         f"{olay['dogrulama']} kare / {olay['sure']} sn · {FERAGAT}",
-                        camera_id, snapshot=olay["snapshot"])
+                        camera_id, snapshot=olay["snapshot"], clip=olay.get("clip", ""))
 
 
 def _bus_mu(store) -> bool:

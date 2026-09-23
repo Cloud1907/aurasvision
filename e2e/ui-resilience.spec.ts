@@ -22,21 +22,11 @@ test('K1: aynı ekranda ters filtre yanıtı son seçimi değiştirmez', async (
   await expect(page.getByText('ESKİ FİLTRE', { exact: false })).toHaveCount(0);
 });
 
-test('K5: kabul isteği navigasyonla iptal olmaz ve eski ekranı açmaz', async ({ page }) => {
-  let finished = false;
-  const failed: string[] = [];
-  page.on('requestfailed', r => { if (r.url().endsWith('/ack')) failed.push(r.url()); });
-  await page.route('**/api/alerts/*/ack', async route => {
-    await new Promise(r => setTimeout(r, 650));
-    await route.fulfill({ json: { ok: true } }); finished = true;
-  });
+test('K5: inceleme penceresinden olay anına gidiş kayıt ekranını açar', async ({ page }) => {
+  // Kabul isteği kaldırıldı; pencere yalnız kayda gönderir ve kapanır
   await page.goto('/');
   await page.getByRole('button', { name: /Sınırlı alana giriş/ }).click();
-  await page.getByRole('button', { name: 'Gördüm, kabul et', exact: true }).click();
   await page.getByRole('button', { name: 'Olay anına git', exact: true }).click();
-  await expect(page.locator('#recvid')).toBeVisible();
-  await expect.poll(() => finished).toBe(true);
-  expect(failed).toEqual([]);
   await expect(page.locator('#recvid')).toBeVisible();
   await expect(page.locator('dialog')).toHaveCount(0);
 });
@@ -44,7 +34,7 @@ test('K5: kabul isteği navigasyonla iptal olmaz ve eski ekranı açmaz', async 
 test('K2: başarısız alarm yenilemesi eski sıfırı güncel göstermez', async ({ page }) => {
   await page.route('**/api/alerts?*', route => route.fulfill({ json: [] }));
   await page.goto('/');
-  const metric = page.locator('.ops-metric').filter({ hasText: 'İnceleme bekleyen' });
+  const metric = page.locator('.ops-metric').filter({ hasText: 'Alarm · son 24 saat' });
   await expect(metric.locator('.ops-metric-value')).toHaveText('0');
   await page.route('**/api/alerts?*', route => route.fulfill({ status: 503, json: { detail: 'Bağlantı kesildi' } }));
   await page.getByRole('button', { name: 'Alarmları yenile' }).click();

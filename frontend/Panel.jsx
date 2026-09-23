@@ -18,7 +18,7 @@ export default function Panel({ bridge }) {
   const motion = useMotionAllowed();
   const cameras = useResource(bridge, '/cameras', 30000);
   const health = useResource(bridge, '/health', 10000);
-  const alarms = useResource(bridge, '/alerts?limit=500&pending=true', 10000);
+  const alarms = useResource(bridge, '/alerts?limit=200', 10000);   // kabul akışı yok: son alarmlar
   const status = useResource(bridge, '/status', 15000);
   // Grafik en fazla 12 dilim, akış 5 satır ister: 500 satırı 15 sn'de bir çekip serileştirmek israftı.
   const events = useResource(bridge, '/events?limit=200', 15000);
@@ -38,6 +38,6 @@ export default function Panel({ bridge }) {
     </div>
     <div className="command-lower"><PanelCameras cameras={cameras} health={health} bridge={bridge}/><PanelShortcuts bridge={bridge}/><ArchiveSummary archive={archive} bridge={bridge}/></div>
     <div className="ops-bottom"><span><span className="ops-mark"/> AURASVISION <span className="ops-caption">/ Görüntü analitiği</span></span><button className="ops-link" onClick={refresh}><Icon name="refresh" size={14}/> Verileri yenile</button></div>
-    {selected && <AlertInspector alert={selected} cameraName={cameraName(rows, selected.camera_id)} bridge={bridge} onClose={() => setSelected(null)} onAccepted={() => { setSelected(null); alarms.retry(); bridge.refreshBadge(); }}/>}
+    {selected && <AlertInspector alert={selected} cameraName={cameraName(rows, selected.camera_id)} bridge={bridge} onClose={() => setSelected(null)} onAccepted={() => setSelected(null)}/>}
   </div>;
 }
