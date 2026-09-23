@@ -863,7 +863,9 @@ function loadPlayer(){
         const tile=this.closest(".tile");
         if(tile){tile.dataset.state="wait";const badge=tile.querySelector(".live b");if(badge)badge.textContent="BAĞLANIYOR";}
         const quality=this.closest(".camview")?.querySelector(".stream-quality");
-        if(quality)quality.textContent="uyumlu akış";
+        if(quality)quality.textContent="alt akış · çözücü yetmedi";
+        const kbtn=this.closest(".camview")?.querySelector("#cv-kalite");
+        if(kbtn)kbtn.textContent="Tam çözünürlük";
         this.src=`/api/stream?src=${encodeURIComponent(fallback)}${tokq()}`;
         // src setter açık soketi değiştirmez; yeniden bağlantıyı tetikle.
         if(this.ws)this.ws.close();
@@ -911,6 +913,22 @@ function mountStreams(){
 }
 /* Tek kamera görünümü: duvar substream gösterir, burada TAM çözünürlük açılır.
    Aynı karo/rozet mantığı kullanılır (mountStreams + watchTiles bu düğümü de görür). */
+/* Tek kamera görünümü VARSAYILAN olarak alt akıştan açılır. Ölçüm 2026-09-23: 2880 px
+   ana akışta tarayıcı karelerin %65'ini düşürdü ve ~35 sn sonra MEDIA_ERR_DECODE ile
+   akışı sıfırladı ("bir süre sonra video sapıtıyor"). Analiz motoru NVDEC'i %99
+   doldururken tarayıcının donanım çözücüsüne yer kalmıyor. Tam çözünürlük plaka
+   okumak isteyen operatör için düğmeyle açılır; çözücü yetmezse alt akışa geri döner. */
+function camKalite(id,btn){
+  const el=document.querySelector(".camview auras-stream");if(!el)return;
+  const q=document.querySelector(".camview .stream-quality");
+  const tam=el.dataset.src===id;
+  if(tam){el.dataset.fallbackSrc="";el.dataset.src=id+"-sub";if(q)q.textContent="alt akış · akıcı";btn.textContent="Tam çözünürlük";}
+  else{el.dataset.fallbackSrc=id+"-sub";el.dataset.src=id;if(q)q.textContent="tam çözünürlük";btn.textContent="Alt akış";}
+  el._ct=0;el._seen=false;el._stall=0;
+  const tile=el.closest(".tile");if(tile){tile.dataset.state="wait";const b=tile.querySelector(".live b");if(b)b.textContent="BAĞLANIYOR";}
+  el.src=`/api/stream?src=${encodeURIComponent(el.dataset.src)}${tokq()}`;
+  if(el.ws)el.ws.close();
+}
 function openCam(id,ad){
   const m=document.createElement("div");m.className="mask";
   m.style.padding="0";   // ekranı komple kaplayan görünüm maskenin kenar boşluğuna sığmaz
@@ -920,13 +938,14 @@ function openCam(id,ad){
   const gorevChip=(k,l)=>`<span class="chip" style="background:${t[k]?'var(--ok-soft)':'var(--hover)'};color:${t[k]?'var(--ok)':'var(--ink-3)'};">${l} ${t[k]?'açık':'kapalı'}</span>`;
   m.innerHTML=`<div class="camview full">
     <div class="camview-head"><b>${esc(ad)}</b>
-      <span style="display:flex;gap:10px;align-items:center;"><span class="mut-s stream-quality">tam çözünürlük</span>
+      <span style="display:flex;gap:10px;align-items:center;"><span class="mut-s stream-quality">${cam.url_sub?'alt akış · akıcı':'tam çözünürlük'}</span>
+      ${cam.url_sub?`<button class="btn sm" id="cv-kalite" title="2880 px ana akışı aç — tarayıcı çözücüsü yetmezse alt akışa geri döner" onclick="camKalite('${esc(id)}',this)">Tam çözünürlük</button>`:''}
       <button class="btn sm" id="cv-analiz" data-toggle-label="1" title="Plaka/yüz için: ~3 fps'lik anlık kare önizlemesi"
               onclick="toggleAnaliz('${esc(id)}',this)">Analiz</button>
       <button class="btn sm ico" id="cv-x" title="kapat">${svg('x',15)}</button></span></div>
     <div class="camview-body">
       <div class="tile" data-state="wait">
-        <div class="skel"></div><auras-stream data-src="${esc(id)}" data-fallback-src="${cam.url_sub?esc(id+'-sub'):''}"></auras-stream>
+        <div class="skel"></div><auras-stream data-src="${cam.url_sub?esc(id+'-sub'):esc(id)}"></auras-stream>
         <img class="analiz-frame" data-cam="${esc(id)}" style="display:none;" alt="analiz görünümü"/>
         <div class="ov-wrap"><canvas class="det-canvas"></canvas></div>
         <span class="nosig">${svg('cams',17)} Sinyal yok</span>
