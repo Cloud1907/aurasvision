@@ -503,7 +503,10 @@ async function cikis(){
     return;
   }
   // Kurulum erişim anahtarı (vai-token) kişiye değil kuruluma aittir; çıkışta silinmez.
-  location.reload();
+  // Çıkış GÖRÜNÜR olmalı: kullanıcı tanımlı değilken (yalnız anahtar kipi) çerez silinip
+  // sayfa yenilenince panel aynen geri geliyordu — "çıkış olmuyor". Giriş kapısına dönülür.
+  try{sessionStorage.removeItem(WELCOME_KEY);}catch(e){}
+  location.replace(location.pathname+"?welcome=1");
 }
 async function api(p,o={}){
   o.headers=Object.assign({},o.headers||{},TOKEN?{Authorization:'Bearer '+TOKEN}:{});

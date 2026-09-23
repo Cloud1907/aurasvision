@@ -95,8 +95,11 @@ async def _auth(request: Request, call_next):
     request.state.kullanici = None
     if not (p.startswith("/api") or p.startswith("/media")):
         return await call_next(request)
-    if p in ("/api/giris", "/api/health"):
-        return await call_next(request)   # giriş kapısı ve canlılık her zaman açık
+    if p in ("/api/giris", "/api/cikis", "/api/health"):
+        # Giriş kapısı, ÇIKIŞ ve canlılık her zaman açık. Çıkış anahtarsız gelince 401
+        # dönüyordu → arayüz "Oturum kapatılamadı" diyordu; oturum kapatmak için
+        # kimlik gerekmez, olmayan çerezi silmek zararsızdır.
+        return await call_next(request)
     tok = request.headers.get("authorization", "")
     tok = tok[7:] if tok.lower().startswith("bearer ") else request.query_params.get("token", "")
     if API_TOKEN and tok and secrets.compare_digest(tok, API_TOKEN):
