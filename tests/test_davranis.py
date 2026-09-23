@@ -68,16 +68,36 @@ def _takip(**kw):
 
 
 class TelefonTest(unittest.TestCase):
-    def test_ayni_kiside_telefon_ve_sigara_bagimsizdir(self):
+    def test_telefonu_gorulen_kiside_sigara_bastirilir(self):
+        """Saha kararı 2026-09-23: sigara dedektörü CCTV ölçeğinde telefonu sigara sanıyor
+        (8 örnekte 3 kulakta telefon). Telefon kutusu görülen kişide 5 sn sigara teması
+        sayılmaz — telefon tutarken içilen sigara bilinçli olarak kaçırılır."""
         from src.davranis import BILEK_SOL
-        t = _takip(telefon_kip="kullanim")   # elde telefon: yalnız 'kullanim' kipinde alarm
+        t = _takip(telefon_kip="kullanim")
         events = []
         for i in range(100):
             b, kp, kc = kisi(bilek=(345, 195))
             kp[BILEK_SOL] = AGIZ if i % 32 < 4 else (300, 400)
             kc[BILEK_SOL] = .9
-            events += t.guncelle([(b, kp, kc)], i/4, [(335, 177, 355, 200)])
-        self.assertEqual({e['sinif'] for e in events if e['durum'] == 'alarm'}, {'telefon', 'sigara'})
+            events += t.guncelle([(b, kp, kc)], i/4, [(335, 177, 355, 200)], sigara_kontrol=lambda iz: True)
+        self.assertEqual({e['sinif'] for e in events if e['durum'] == 'alarm'}, {'telefon'})
+
+    def test_sigara_iki_ayri_onayli_nefes_ister_uzun_temas_sayilmaz(self):
+        """Kulakta telefon = tek uzun temas → dokunuş değil; sigara = aralıklı kısa nefesler."""
+        t = _takip(sigara_dogrulama="zorunlu")
+        ol, ts = [], 0.0
+        for i in range(40):                      # 10 sn kesintisiz temas (telefon)
+            ol += t.guncelle([kisi(bilek=AGIZ)], ts, sigara_kontrol=lambda iz: True); ts += 0.25
+        for i in range(12):
+            ol += t.guncelle([kisi(bilek=(300, 400))], ts, sigara_kontrol=lambda iz: True); ts += 0.25
+        self.assertFalse(any(o['sinif'] == 'sigara' for o in ol))
+        ol = []
+        for k in range(2):                       # iki ayrı nefes, aralarında 8 sn
+            for i in range(6):
+                ol += t.guncelle([kisi(bilek=AGIZ)], ts, sigara_kontrol=lambda iz: True); ts += 0.25
+            for i in range(32):
+                ol += t.guncelle([kisi(bilek=(300, 400))], ts, sigara_kontrol=lambda iz: True); ts += 0.25
+        self.assertTrue(any(o['sinif'] == 'sigara' and o['durum'] == 'alarm' for o in ol))
 
     def test_onunde_elde_dogrulanan_telefon_alarm_uretir(self):
         t = _takip(telefon_kip="kullanim")
