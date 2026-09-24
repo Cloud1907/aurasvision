@@ -753,12 +753,14 @@ class DavranisHatti:
             return None
 
         min_bas = float(self.cfg.get("davranis.sigara_min_bas_px", 24))
+        max_oran = float(self.cfg.get("davranis.sigara_max_kutu_bas", 1.0))
 
         def kontrol(iz) -> bool:
             # Küçük başta (< sigara_min_bas_px) dedektör halüsinasyon görüyor
             # (ölçüm 2026-09-23: 25 px başta telefon 0,8 güvenle "sigara")
             x1, y1, x2, y2 = iz.bas_kutu
-            if (x2 - x1) / 3.2 < min_bas:      # bas_kutu genişliği = 3,2 × baş
+            bas = (x2 - x1) / 3.2              # bas_kutu genişliği = 3,2 × baş
+            if bas < min_bas:
                 return False
             x1, y1 = max(0, int(x1)), max(0, int(y1))
             x2, y2 = min(self.w, int(x2)), min(self.h, int(y2))
@@ -766,6 +768,13 @@ class DavranisHatti:
                 return False
             kutu = self.sigara(bgr[y1:y2, x1:x2])
             if not kutu:
+                return False
+            # BOYUT KAPISI: sigara başın bir kesridir (≈8 cm / 16–20 cm ≈ 0,4–0,6 baş).
+            # Kutu baştan büyükse dedektör yüzü/gövdeyi işaretlemiştir. Ölçüm
+            # 2026-09-24 (kamera-207, 10-20-17.mp4, 12 tespit): kutu/baş oranı
+            # 1,40–2,33 — HEPSİ sahte, tek gerçek sigara yok. Kanıt karesine kutuyu
+            # çizmeye başlayınca görünür oldu.
+            if max_oran > 0 and max(kutu[2] - kutu[0], kutu[3] - kutu[1]) > bas * max_oran:
                 return False
             # Kırpma koordinatı → tam kare: kanıt karesine bu kutu çizilir.
             # (Kutu döndürmeyen bir dedektör verilmişse yalnız "gördü" bilgisi kalır.)

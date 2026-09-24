@@ -377,6 +377,33 @@ class HatTest(unittest.TestCase):
         self.assertEqual(a["kare"], a["kareler"][-1]["kare"])
         self.assertEqual(a["kareler"][-1]["asama"], "alarm")
 
+    def test_bastan_buyuk_sigara_kutusu_sayilmaz(self):
+        """Dedektör kutusu baştan büyükse yüzü işaretlemiştir — sigara sayılmaz.
+
+        Ölçüm 2026-09-24 (kamera-207, 10-20-17.mp4, 12 tespit): kutu/baş oranı
+        1,40–2,33, hepsi sahte. Sigara başın kesridir (≈0,4–0,6 baş).
+        """
+        class Cfg(dict):
+            def get(self, k, d=None):
+                return dict.get(self, k, d)
+        kare = np.zeros((400, 400, 3), dtype=np.uint8)
+        k, kp, kc = kisi(bas=40.0, cx=200.0, cy=120.0)
+
+        class Iz:
+            bas_kutu = (200 - 64, 120 - 40, 200 + 64, 120 + 126)   # genişlik 128 = 3,2 × 40
+            dogrulama_kutu = {"sigara": None}
+            son_ts = 1.0
+
+        def hat(kutu_kenar):
+            cfg = Cfg({"davranis.sigara_min_bas_px": 10})
+            return DavranisHatti(cfg, 400, 400, "t", 4.0, poz=lambda b: [],
+                                 sigara=lambda b: (5.0, 5.0, 5.0 + kutu_kenar, 5.0 + kutu_kenar))
+
+        # 20 px kutu = 0,5 baş → sigara sayılır
+        self.assertTrue(hat(20)._sigara_kontrol(kare)(Iz()))
+        # 60 px kutu = 1,5 baş → yüz/gövde, sayılmaz
+        self.assertFalse(hat(60)._sigara_kontrol(kare)(Iz()))
+
     def test_klip_gercek_tempoyla_yazilir(self):
         """Klip hedef fps ile değil ÖLÇÜLEN fps ile yazılır.
 
