@@ -47,6 +47,23 @@ def kayit_kok(cfg) -> Path:
     return _ROOT / cfg.get("paths.output_dir", "output") / cfg.get("record.dir", "rec")
 
 
+def _kesim_gerek(acik: bool, anahtar: bool, t: float, seg_bas: float,
+                 simdi_m: float, seg_duvar: float, dur: int) -> bool:
+    """Bu pakette yeni segment açılmalı mı.
+
+    Süre iki saatten de ölçülür. Yalnız AKIŞ saatine bakmak yetmiyor: paket kaybı
+    yaşayan kamerada (kamera-210) akış saati yeniden bağlanmada geri gidiyor ve
+    kesim bir daha hiç gelmiyordu — 2026-09-24'te tek segmente 10 dakika / 271 MB
+    yazıldı, o kamera arşivde ve zaman çizelgesinde kayboldu. Duvar saati
+    (dur × 1,5) ikinci sığınaktır.
+    """
+    if not acik:
+        return True
+    if not anahtar:            # kesim yalnız anahtar karede — segment başı çözülebilsin
+        return False
+    return t - seg_bas >= dur or simdi_m - seg_duvar >= dur * 1.5
+
+
 def _kaynak(cam: dict, cfg) -> tuple[str, str]:
     """(akış adresi, hangi akış) — go2rtc RTSP üzerinden (kaynak tipleri orada normalize).
 
@@ -137,6 +154,7 @@ class CameraRecorder(threading.Thread):
         cikis = None
         ovs = None
         seg_bas = 0.0        # segmentin ilk paket zamanı (kaynak saatinde)
+        seg_duvar = 0.0      # ...ve duvar saatinde (akış saati geri giderse tek sığınak)
         son_dts = None       # tekdüze DTS bekçisi (segment başına sıfırlanır)
         yol: Path | None = None
         try:
@@ -148,7 +166,18 @@ class CameraRecorder(threading.Thread):
                 if pkt.dts is None or pkt.pts is None or pkt.size == 0:
                     continue
                 t = float(pkt.pts * tb)
-                yeni_gerek = cikis is None or (pkt.is_keyframe and t - seg_bas >= self.dur)
+                simdi_m = time.monotonic()
+                # Paket kaybı yaşayan kamerada (kamera-210: günde 1397 i/o timeout)
+                # akış saati yeniden bağlanmada GERİ gidebiliyor. Kesim yalnız akış
+                # saatine bakarsa bir daha hiç gelmez: 2026-09-24'te kamera-210 tek
+                # segmente 10 dakika / 271 MB yazdı, o kamera arşivde kayboldu.
+                if cikis is not None and t < seg_bas:
+                    seg_bas = t
+                if cikis is not None and simdi_m - seg_duvar > self.dur * 5:
+                    # Anahtar kare gelmiyor: dosya sınırsız büyüyor. Kopar, yeniden bağlan.
+                    raise RuntimeError(f"{self.dur * 5:.0f} sn'dir anahtar kare yok")
+                yeni_gerek = _kesim_gerek(cikis is not None, pkt.is_keyframe, t, seg_bas,
+                                          simdi_m, seg_duvar, self.dur)
                 if yeni_gerek:
                     if cikis is not None:
                         cikis.close()
@@ -160,6 +189,7 @@ class CameraRecorder(threading.Thread):
                     cikis = av.open(str(yol), "w", format="mp4")
                     ovs = cikis.add_stream_from_template(ivs)
                     seg_bas = t
+                    seg_duvar = simdi_m
                     self.ilk_pts = pkt.pts
                     son_dts = None
                 # Zaman damgalarını segment başına göre sıfırla (her dosya 0'dan başlar)
