@@ -1013,3 +1013,24 @@ class TestPtzBaglanti:
         from src.ptz import baglanti_bilgisi
         assert baglanti_bilgisi({"source": "data/videos/x.mp4"}) is None
         assert baglanti_bilgisi({"source": "https://cdn.example.com/hls/live.m3u8"}) is None
+
+
+class TestArsivKoku:
+    """record.root arşivi AYRI diske alır (2026-09-24: sistem diskinde 60 GB kota
+    yalnız ~5 saatlik arşiv tutuyordu, operatör dünü açamadı)."""
+
+    def test_root_yoksa_output_altinda(self):
+        from src.recorder import kayit_kok
+        kok = kayit_kok(Config({"paths": {"output_dir": "output"}, "record": {"dir": "rec"}}))
+        assert kok.parts[-2:] == ("output", "rec")
+        assert kok.is_absolute()
+
+    def test_root_verilince_o_diske_yazar(self):
+        from src.recorder import kayit_kok
+        kok = kayit_kok(Config({"record": {"root": "D:/Arsiv", "dir": "rec"}}))
+        assert kok == Path("D:/Arsiv/rec")
+
+    def test_bos_root_yok_sayilir(self):
+        from src.recorder import kayit_kok
+        kok = kayit_kok(Config({"record": {"root": "  ", "dir": "rec"}}))
+        assert kok.parts[-2:] == ("output", "rec")

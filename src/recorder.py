@@ -35,6 +35,15 @@ _KAPANDI = 5.0     # sn — dosya bu süredir büyümüyorsa segment kapanmış 
 
 
 def kayit_kok(cfg) -> Path:
+    """Arşivin kök klasörü. record.root verilmişse (ayrı/büyük disk) oraya yazılır.
+
+    Neden ayrı kök: 7/24 kayıt tüketimi 6 kamerada saatte ~11 GB. Sistem diskiyle
+    aynı diskte kota ~5 saatlik arşiv demekti (2026-09-24: operatör dünün kaydını
+    açamadı, çünkü kota en eskiyi silmişti). Ayrı diskte kota günlere çıkar.
+    """
+    kok = str(cfg.get("record.root", "") or "").strip()
+    if kok:
+        return Path(kok).expanduser() / cfg.get("record.dir", "rec")
     return _ROOT / cfg.get("paths.output_dir", "output") / cfg.get("record.dir", "rec")
 
 
@@ -245,7 +254,9 @@ def temizlik(cfg, cams: list[dict]) -> None:
             if silinen:
                 print(f"[rec] {silinen} eski heartbeat satırı silindi", flush=True)
         if gun > 0:
-            sinir = datetime.now(timezone.utc) - timedelta(days=gun)
+            # Segment zamanları YEREL saat + ofisle ("+03:00") saklanıyor; kesim
+            # noktasını UTC verince karşılaştırma 3 saat kayıyordu. Yerele çevir.
+            sinir = (datetime.now(timezone.utc) - timedelta(days=gun)).astimezone()
             for r in store.recordings_before(sinir):
                 _sil(kok, r, store)
         if kota_gb > 0:

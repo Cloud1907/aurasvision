@@ -37,8 +37,9 @@ def disa_aktar(cfg, camera: str, segmentler: list[dict], isteyen: str = "operat�
     if not segmentler:
         raise ValueError("Bu aralıkta kayıt yok")
 
+    from .recorder import kayit_kok as _kayit_kok
     cikti_kok = _ROOT / cfg.get("paths.output_dir", "output")
-    kayit_kok = cikti_kok / cfg.get("record.dir", "rec")
+    kayit_kok = _kayit_kok(cfg)   # record.root ayrı diski gösterebilir
     klasor = cikti_kok / "exports"
     klasor.mkdir(parents=True, exist_ok=True)
     damga = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")

@@ -315,17 +315,19 @@ class BaseStore(AnalyticsMixin):
 
     # --- Uyarılar ---
     def add_alert(self, kind: str, ref: str, list_type: str, label: str, camera_id: str,
-                  snapshot: str = "", clip: str = "") -> None:
+                  snapshot: str = "", clip: str = "", detay: str = "") -> None:
         # clip: alarm anının analiz katmanlı kısa klibi (davranış/yangın) — kanıtta oynatılır
-        self._x("INSERT INTO alerts (kind, ref, list_type, label, camera_id, snapshot, clip)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (kind, ref, list_type, label, camera_id, snapshot or None, clip or None))
+        # detay: analiz özeti JSON'u (hangi anda izle/ön uyarı/alarm, doğrulama, ölçümler)
+        self._x("INSERT INTO alerts (kind, ref, list_type, label, camera_id, snapshot, clip, detay)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (kind, ref, list_type, label, camera_id, snapshot or None, clip or None,
+                 detay or None))
         self.commit()
 
     def recent_alerts(self, limit: int = 20, pending_only: bool = False) -> list[dict[str, Any]]:
         kosul = " WHERE acked_at IS NULL" if pending_only else ""
         return self._all("SELECT id, kind, ref, list_type, label, camera_id, time,"
-                         " acked_by, acked_at, snapshot, clip FROM alerts"
+                         " acked_by, acked_at, snapshot, clip, detay FROM alerts"
                          f"{kosul} ORDER BY time DESC LIMIT ?", (limit,))
 
     def alert_feed(self, after_id: int | None, limit: int = 100) -> dict[str, Any]:
@@ -469,7 +471,7 @@ CREATE TABLE IF NOT EXISTS face_events (
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL DEFAULT (datetime('now')),
     camera_id TEXT, kind TEXT NOT NULL, ref TEXT NOT NULL, list_type TEXT, label TEXT,
-    acked_by TEXT, acked_at TEXT, snapshot TEXT, clip TEXT);
+    acked_by TEXT, acked_at TEXT, snapshot TEXT, clip TEXT, detay TEXT);
 CREATE TABLE IF NOT EXISTS kullanicilar (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ad TEXT NOT NULL UNIQUE,
     parola_hash TEXT NOT NULL, rol TEXT NOT NULL DEFAULT 'izleyici',
@@ -499,7 +501,8 @@ class SqliteStore(BaseStore):
                                   ("plate_events", "snapshot", "TEXT"),
                                   ("alerts", "snapshot", "TEXT"),
                                   ("camera_health", "detail", "TEXT"),
-                                  ("alerts", "clip", "TEXT")):
+                                  ("alerts", "clip", "TEXT"),
+                                  ("alerts", "detay", "TEXT")):
             try:   # hafif migration: eski DB'lerde eksik sütunları ekle
                 self.conn.execute(f"ALTER TABLE {tablo} ADD COLUMN {sutun} {tip}")
             except sqlite3.OperationalError:
@@ -578,24 +581,27 @@ class SqliteStore(BaseStore):
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
                  TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
-                 NULL AS snapshot, zone, direction, NULL AS conf, NULL AS state, NULL AS clip
+                 NULL AS snapshot, zone, direction, NULL AS conf, NULL AS state, NULL AS clip,
+                 NULL AS detay
             FROM count_events
           UNION ALL
           SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot,
-                 NULL AS zone, NULL AS direction, conf, NULL, NULL
+                 NULL AS zone, NULL AS direction, conf, NULL, NULL, NULL
             FROM plate_events
           UNION ALL
           SELECT time, 'face', camera_id,
                  COALESCE(gender,'?')||' ~'||COALESCE(age,0), ts_seconds, frame_idx, NULL,
-                 NULL AS zone, NULL AS direction, NULL AS conf, NULL, NULL
+                 NULL AS zone, NULL AS direction, NULL AS conf, NULL, NULL, NULL
             FROM face_events
           UNION ALL
           SELECT time, 'fire', camera_id, class||' · '||state, ts_seconds, frame_idx,
-                 snapshot, NULL AS zone, NULL AS direction, conf, state, clip
+                 snapshot, NULL AS zone, NULL AS direction, conf, state, clip, NULL
             FROM fire_events
           UNION ALL
+          -- Telefon/sigara/ihlal alarmları: klip ve analiz özeti DE taşınır, olay
+          -- akışındaki satır kanıtı (klip + aşama çizgisi) tek tıkla açabilsin.
           SELECT time, kind, camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
-                 NULL, NULL, snapshot, NULL, NULL, NULL, NULL, NULL
+                 NULL, NULL, snapshot, NULL, NULL, NULL, NULL, clip, detay
             FROM alerts WHERE kind IN ('intrusion','telefon','sigara')
         ) ev
         """
@@ -633,7 +639,8 @@ class PgStore(BaseStore):
             # Hafif migration: kurulu DB'lerde sonradan eklenen sütunlar
             for tablo, sutun in (("plate_events", "snapshot"), ("alerts", "snapshot"),
                                  ("cameras", "http_headers"),
-                                 ("camera_health", "detail"), ("alerts", "clip")):
+                                 ("camera_health", "detail"), ("alerts", "clip"),
+                                 ("alerts", "detay")):
                 self.conn.execute(
                     f"ALTER TABLE {tablo} ADD COLUMN IF NOT EXISTS {sutun} TEXT")
             ensure_pg_fire(self.conn)
@@ -773,24 +780,26 @@ class PgStore(BaseStore):
         SELECT * FROM (
           SELECT time, 'count' AS type, camera_id,
                  TRIM(COALESCE(zone,'')||' '||direction) AS detail, ts_seconds, frame_idx,
-                 NULL AS snapshot, zone, direction, NULL::real AS conf, NULL::text AS state, NULL::text AS clip
+                 NULL AS snapshot, zone, direction, NULL::real AS conf, NULL::text AS state,
+                 NULL::text AS clip, NULL::text AS detay
             FROM count_events
           UNION ALL
           SELECT time, 'plate', camera_id, plate, ts_seconds, frame_idx, snapshot,
-                 NULL AS zone, NULL AS direction, conf, NULL, NULL
+                 NULL AS zone, NULL AS direction, conf, NULL, NULL, NULL
             FROM plate_events
           UNION ALL
           SELECT time, 'face', camera_id,
                  COALESCE(gender, chr(63))||' ~'||COALESCE(age::text,'0'), ts_seconds, frame_idx,
-                 NULL, NULL AS zone, NULL AS direction, NULL::real AS conf, NULL, NULL
+                 NULL, NULL AS zone, NULL AS direction, NULL::real AS conf, NULL, NULL, NULL
             FROM face_events
           UNION ALL
           SELECT time, 'fire', camera_id, class||' · '||state, ts_seconds, frame_idx,
-                 snapshot, NULL AS zone, NULL AS direction, conf, state, clip
+                 snapshot, NULL AS zone, NULL AS direction, conf, state, clip, NULL
             FROM fire_events
           UNION ALL
+          -- Telefon/sigara/ihlal alarmları: klip ve analiz özeti DE taşınır (bkz. SQLite)
           SELECT time, kind, camera_id, TRIM(COALESCE(ref,'')||' '||COALESCE(label,'')),
-                 NULL, NULL, snapshot, NULL, NULL, NULL, NULL, NULL
+                 NULL, NULL, snapshot, NULL, NULL, NULL, NULL, clip, detay
             FROM alerts WHERE kind IN ('intrusion','telefon','sigara')
         ) ev
         """

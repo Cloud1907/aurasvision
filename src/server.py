@@ -828,6 +828,10 @@ def api_recordings_stats():
             r["bytes"] = int(r.get("bytes") or 0)
         return {"cameras": rows, "total_bytes": s.recordings_size(),
                 "keep_days": int(cfg.get("record.keep_days", 15)),
+                # Kota, arşivin GERÇEK derinliğini gün sayısından daha çok belirler:
+                # 6 kamera ana akıştan saatte ~11 GB tüketiyor. UI boş bir günde
+                # bunu operatöre söyler ("neden dün yok" sorusunun cevabı).
+                "quota_gb": float(cfg.get("record.max_size_gb", 0) or 0),
                 "enabled": bool(cfg.get("record.enabled", True))}
     finally:
         s.close()
@@ -1051,7 +1055,8 @@ def api_status():
     def _disk():
         """Arşiv diski — dolarsa kayıt DA analiz DE sessizce durur."""
         import shutil
-        kok = ROOT / cfg.get("paths.output_dir", "output") / cfg.get("record.dir", "rec")
+        from .recorder import kayit_kok
+        kok = kayit_kok(cfg)
         d = shutil.disk_usage(kok if kok.exists() else ROOT)
         bos_gb = d.free / (1024 ** 3)
         detay = f"boş {bos_gb:.0f} GB / toplam {d.total / (1024 ** 3):.0f} GB"
@@ -2419,6 +2424,15 @@ if WEB_DIR.exists():
 
 _OUT = ROOT / (cfg.get("paths.output_dir", "output"))
 _OUT.mkdir(parents=True, exist_ok=True)
+# Arşiv ayrı diskte olabilir (record.root). /media/<record.dir> ONDAN sunulur;
+# junction/symlink yolu StaticFiles'ın realpath denetimine takılıyordu, bu yüzden
+# ayrı bağlama noktası. /media'dan ÖNCE bağlanır (daha uzun yol önce eşleşsin).
+from .recorder import kayit_kok as _kayit_kok   # noqa: E402
+_REC = _kayit_kok(cfg)
+if _REC.resolve() != (_OUT / cfg.get("record.dir", "rec")).resolve():
+    _REC.mkdir(parents=True, exist_ok=True)
+    app.mount(f"/media/{cfg.get('record.dir', 'rec')}",
+              StaticFiles(directory=_REC), name="media-rec")
 app.mount("/media", StaticFiles(directory=_OUT), name="media")
 
 

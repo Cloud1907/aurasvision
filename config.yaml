@@ -117,8 +117,16 @@ record:
   # 100 kamera × 30 gün → ana akıştan ~114 TB, substream'den ~16 TB.
   # Kalite düşer; tek kamera görünümü ve analiz ana akışı kullanmaya devam eder.
   use_substream: false
+  # Arşiv kökü. Boş → output/rec (sistem diski). Ayrı/büyük disk verilebilir:
+  # 2026-09-24'te operatör dünün kaydını açamadı — 60 GB kota 6 kameralık ana akış
+  # tüketiminde (saatte ~11,3 GB) yalnız ~5 saatlik arşiv tutuyordu. Arşiv D:'ye alındı.
+  root: "D:/AurasVision"
   keep_days: 15
-  max_size_gb: 60          # 2026-09-22: 100 GB kota + 18,7 GB arşiv dışa aktarımı diski SIFIRA
+  max_size_gb: 1200        # D: 1862 GB (tamamı boştu). 1200 GB ≈ 4,4 gün (saatte ~11,3 GB,
+                         # 6 kamera, ana akış). ~660 GB boş bırakılır: arşiv diski dolarsa
+                         # kayıt DA analiz DE durur, bu yüzden pay şart. 15 günlük arşiv
+                         # isteniyorsa use_substream: true gerekir (~7 kat küçülür, kalite
+                         # düşer). GEÇMİŞ NOT — 2026-09-22: 100 GB kota + 18,7 GB arşiv dışa aktarımı diski SIFIRA
                          # indirdi (SQLite yazamaz, testler 'disk full'). Plaka ölçüm penceresi
                          # bitti; 60 GB'a dönüldü. Kalıcı çözüm kaydı D:'ye (1,9 TB) taşımak.
                          # Bu makinede 238 GB'lik tek disk var ve sistem de aynı diskte:

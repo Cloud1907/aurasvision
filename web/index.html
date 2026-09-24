@@ -250,7 +250,9 @@
   .kanit{width:104px;height:59px;object-fit:cover;border-radius:8px;border:1px solid var(--line-2);flex-shrink:0;cursor:zoom-in;background:#0c131f;transition:transform var(--t),border-color var(--t);}
   .kanit:hover{border-color:var(--accent);}
   .kanitbox{max-width:min(1100px,94vw);max-height:80vh;border-radius:var(--r-lg);box-shadow:var(--shadow-lg);display:block;}
-  .kanitwrap{max-width:min(1100px,94vw);}.kanitwrap a{cursor:pointer;text-decoration:underline;}
+  /* Analiz paneli eklenince pencere uzayabilir — taşarsa kaydırılır, kesilmez */
+  .kanitwrap{max-width:min(1100px,94vw);max-height:92vh;overflow:auto;}
+  .kanitwrap a{cursor:pointer;text-decoration:underline;}
   .kanitwrap [hidden]{display:none!important;}   /* .kanitbox{display:block} hidden'ı eziyordu */
   /* Kamera bazlı olay özeti — "hangi kamerada ne oluyor" tek bakışta */
   .camsum{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-bottom:20px;}
@@ -849,10 +851,18 @@ function loadPlayer(){
         // currentTime ile canlı uca ATLAMA YOK: bu setter SourceBuffer güncelleme
         // döngüsünün içinde çağrılıyor, orada seek yapmak MSE tamponunu boşaltıp
         // akışı kalıcı olarak dondurdu (ölçüldü). Büyük fark en çok 1.25x ile kapatılır.
+        // Ölçüm 2026-09-24 (bin/ffprobe.exe, kamera-201 substream): anahtar kare aralığı
+        // 4,0 sn. MSE akışı ilk anahtar kareyle açtığı için tampon BAŞLARKEN bir GOP kadar
+        // dolu geliyor (gap≈4 sn). 1.25 tavanı + 0.15 kazançla 1 sn hedefine inmek
+        // (4-1)/0.25 = 12 sn sürüyordu: her karo açılışında 12 saniye gözle görülür
+        // hızlandırılmış video. 1.5 tavan + 0.25 kazançla aynı fazlalık 6 sn'de erir;
+        // oran hedefe yaklaştıkça orantılı düştüğü için duvar yerleştikten sonra sakin kalır.
+        // HEDEF 1 sn'nin ALTINA İNDİRİLMEDİ: 4 sn'lik GOP'ta tampon boşalırsa oynatıcı bir
+        // sonraki anahtar kareye kadar (~4 sn) kara kalır — kazançtan büyük bedel.
         const HEDEF=1.0,d=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,"playbackRate");
         Object.defineProperty(v,"playbackRate",{configurable:true,
           get(){return d.get.call(this);},
-          set(gap){d.set.call(this,Math.max(0.9,Math.min(1.25,1+(gap-HEDEF)*0.15)));}});
+          set(gap){d.set.call(this,Math.max(0.9,Math.min(1.5,1+(gap-HEDEF)*0.25)));}});
       }
       fallbackStream(){
         // Çözme hatası veya sessiz takılmada alt akışı yalnız bir kez dene.
@@ -1448,8 +1458,8 @@ const SCREENS={
     await initEditor(camId,ctx);
   },
   async rapor(ctx){
-    const st=window._rp||(window._rp={bas:new Date(Date.now()-6*864e5).toISOString().slice(0,10),
-                                      bit:new Date().toISOString().slice(0,10),kamera:""});
+    const st=window._rp||(window._rp={bas:_yerelGun(Date.now()-6*864e5),
+                                      bit:_yerelGun(),kamera:""});
     const adOf=id=>(CAMS.find(c=>c.id===id)||{}).name||id;
     // Yerel gün → UTC aralık (kayıtlar ekranındaki gün kayması dersi)
     const q=`start=${encodeURIComponent(new Date(st.bas+"T00:00:00").toISOString())}`+
@@ -1578,7 +1588,9 @@ const SCREENS={
   },
   async rec(ctx){
     const camId=window._rc||CAMS[0]?.id;window._rc=camId;
-    const gun=window._rg||new Date().toISOString().slice(0,10);window._rg=gun;
+    // Gün YEREL tarihtir: toISOString UTC verir ve 00:00–03:00 arasında DÜNÜ açıyordu
+    // (o günde kayıt yoksa ekran boş geliyor, "kayda git çalışmıyor" olarak görünüyordu).
+    const gun=window._rg||_yerelGun();window._rg=gun;
     REC={segler:[],gun,cam:camId};
     $("#tact").innerHTML=`<button class="btn" onclick="disaAktar()">${svg('bolt',15)} Kanıt olarak dışa aktar</button>`;
     $("#content").innerHTML=`
@@ -1587,7 +1599,9 @@ const SCREENS={
         <input type="date" value="${gun}" onchange="window._rg=this.value;SCREENS.rec()"/>
         <span class="mut-s" id="rstat">yükleniyor…</span></div>
       <div class="card pad">
-        <video id="recvid" playsinline muted style="width:100%;max-height:56vh;background:#000;border-radius:var(--r-lg);display:block;"></video>
+        <div id="recwrap" style="position:relative;width:100%;aspect-ratio:16/9;max-height:56vh;background:#000;border-radius:var(--r-lg);overflow:hidden;">
+          <video id="recvid" playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;"></video>
+          <video id="recvid2" playsinline muted preload="auto" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;opacity:0;pointer-events:none;"></video></div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">
           <div class="seg">
             <button title="60 sn geri (Shift+←)" onclick="recAtla(-60)">−60</button>
@@ -1645,7 +1659,9 @@ const SCREENS={
     }).catch(()=>{if(!ctx.current())return;const el=$("#camsum");if(el)el.innerHTML='<div class="mut-s">Özet alınamadı.</div>';});
     const alarmKarti=a=>`<div class="alertcard" data-alert="${a.id}">
       ${a.snapshot?`<img class="kanit" src="/media/${esc(a.snapshot)}${tokq().replace('&','?')}" alt="kanıt"
-           title="${a.clip?'Kanıt karesi + analiz klibi':'Kanıt görüntüsü'} — büyütmek için tıklayın" onclick="kanitAc('${esc(a.snapshot)}','${esc(a.clip||'')}')"/>`
+           title="${a.clip?'Kanıt karesi + analiz klibi':'Kanıt görüntüsü'} — büyütmek için tıklayın"
+           data-y="${esc(a.snapshot)}" data-k="${esc(a.clip||'')}" data-d="${esc(a.detay||'')}" data-t="${esc(a.time||'')}"
+           onclick="kanitAc(this.dataset.y,this.dataset.k,this.dataset.d,this.dataset.t)"/>`
         :`<span class="av" style="background:var(--danger-soft);color:var(--danger);flex-shrink:0;">${a.kind==='intrusion'?'⚠':'!'}</span>`}
       <div style="flex:1;min-width:0;">
         <div style="font-weight:700;">${alarmBasligi(a)}</div>
@@ -1679,7 +1695,7 @@ const SCREENS={
       ${bekleyen.length?`<div class="card" style="border-color:var(--danger);margin-bottom:18px;overflow:hidden;">
         <div style="padding:13px 16px;border-bottom:1px solid var(--line);color:var(--danger);font-weight:700;display:flex;align-items:center;gap:9px;">
           ${svg('events',17)} Son alarmlar <span class="chip" style="background:var(--danger-soft);color:var(--danger);">${bekleyen.length}</span>
-          <span class="mut-s" style="margin-left:auto;font-weight:400;">Kabul edilen uyarı listeden düşer</span></div>
+          <span class="mut-s" style="margin-left:auto;font-weight:400;">Kanıt karesine tıklayın: klip ve analiz özeti açılır</span></div>
         ${bekleyen.map(alarmKarti).join("")}</div>`
        :`<div class="card pad" style="margin-bottom:18px;display:flex;align-items:center;gap:12px;">
           <span class="av" style="background:var(--ok-soft);color:var(--ok);">✓</span>
@@ -1694,7 +1710,9 @@ const SCREENS={
       <div class="section-head"><b>Olay akışı</b><span class="mut-s" role="status">${filtered?'Filtrelenmiş sonuçlar · ':''}${ev.length?`${f.offset+1}–${f.offset+ev.length} gösteriliyor`:'0 sonuç'}</span></div>
       <div class="card">${ev.length?ev.map(e=>{const m=meta[e.type]||["live","var(--hover)","var(--ink-2)",esc(e.type)];return `<div class="row">
         ${e.snapshot?`<img class="kanit" src="/media/${esc(e.snapshot)}${tokq().replace('&','?')}" alt="kanıt"
-             title="Kanıt görüntüsü — büyütmek için tıklayın" onclick="kanitAc('${esc(e.snapshot)}')"/>`
+             title="${e.clip?'Kanıt karesi + analiz klibi ve analiz özeti':'Kanıt görüntüsü'} — büyütmek için tıklayın"
+             data-y="${esc(e.snapshot)}" data-k="${esc(e.clip||'')}" data-d="${esc(e.detay||'')}" data-t="${esc(e.time||'')}"
+             onclick="kanitAc(this.dataset.y,this.dataset.k,this.dataset.d,this.dataset.t)"/>`
           :`<span class="av" style="background:${m[1]};color:${m[2]};">${svg(m[0],17)}</span>`}
         <div style="flex:1;min-width:0;"><div style="font-weight:700;">${m[3]}${e.camera_id?' · <span class="mut-s">'+esc(adOf(e.camera_id))+'</span>':''}</div>
           <div class="mono mut-s">${esc(e.detail)}${e.plaka_tur==="yabanci"
@@ -2207,6 +2225,91 @@ function gecenSure(t){
    da bakım yükü. Segmentlerimiz düz mp4 olduğu için sıradaki dosyayı <video>'ya
    yüklemek yeterli — seek = doğru segmenti bul + içinde offset'e git. */
 let REC={segler:[],gun:"",cam:""};
+/* Boş gün açıklaması: arşiv bu kamerada nereden başlıyor, neden daha eskisi yok.
+   Arşiv derinliğini gün sayısı değil DİSK KOTASI belirliyor; operatör dün için
+   boş ekran görünce "kayıt çalışmıyor" sanıyordu (2026-09-24). */
+async function recArsivSiniri(cam,ctx){
+  const st=$("#rstat");if(!st)return;
+  try{
+    const r=await ctx.get("/recordings/stats");
+    if(!ctx.current()||REC.cam!==cam)return;
+    const c=(r.cameras||[]).find(x=>x.camera_id===cam);
+    if(!c||!c.oldest){st.innerHTML=`<span role="status">Bu kamera için arşivde hiç kayıt yok.</span>`;return;}
+    const enEski=AurasRuntime.parseTime(c.oldest),gun=_yerelGun(enEski?.getTime());
+    const gb=(r.total_bytes||0)/1073741824;
+    st.innerHTML=`<span role="status">Bu gün için kayıt yok — arşiv ${esc(enEski?.toLocaleString("tr-TR")||c.oldest)} tarihinden başlıyor.</span>`+
+      (gun!==REC.gun?` <button class="btn sm" onclick="window._rg='${esc(gun)}';SCREENS.rec()">En eski güne git</button>`:"")+
+      ` <span class="mut-s">Arşiv ${gb.toFixed(0)} GB / ${(r.quota_gb||0).toFixed(0)} GB kota · kota dolunca en eski segment silinir.</span>`;
+  }catch(e){/* özet alınamazsa düz metin kalır */}
+}
+/* Yerel takvim günü (YYYY-MM-DD). toISOString UTC'ye çevirir ve +03:00'te gece
+   yarısı ile 03:00 arasında bir GÜN GERİ tarih üretir. */
+function _yerelGun(ms){
+  const d=ms==null?new Date():new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+/* İKİ OYNATICI: biri ekranda, biri SIRADAKİ segmenti arka planda açık tutar.
+   Tek <video> ile her segment sonunda src atanıyor, tarayıcı çözücüyü baştan
+   kuruyordu — 60 saniyede bir gözle görülen donma. Arşiv aynı makinenin diskinden
+   sunulduğu için bu boşluk indirme değil ÇÖZÜCÜ KURULUM maliyetidir; yedek oynatıcı
+   bu maliyeti geçişten önce ödediği için geçiş yalnız görünürlük takasına iner.
+   fMP4'e geçmek GEREKMEDİ: arşiv formatı (düz mp4 remux, recorder.py) aynı kaldı. */
+function recV(){return REC.v||$("#recvid");}
+function recBek(){return REC.v2||$("#recvid2");}
+function recTakas(){
+  const eski=recV(),yeni=recBek();
+  if(!eski||!yeni)return false;
+  REC.v=yeni;REC.v2=eski;
+  yeni.style.opacity="1";eski.style.opacity="0";
+  eski.pause();
+  REC._bekSeg=null;
+  return true;
+}
+function recOnYukle(){
+  // Sıradaki segmenti yedek oynatıcıda AÇ (oynatma yok, yalnız çözücü kurulumu).
+  // Zaman çizelgesinde sürüklenirken "sıradaki" her harekette değişir; 500 ms
+  // beklemek sürükleme boyunca onlarca gereksiz dosya açılmasını önler.
+  clearTimeout(REC._onTimer);
+  REC._onTimer=setTimeout(()=>{
+    const bek=recBek();
+    if(!bek||!REC.aktif)return;
+    const i=REC.segler.indexOf(REC.aktif);
+    const s=(i>=0&&i+1<REC.segler.length)?REC.segler[i+1]:null;
+    if(!s||REC._bekSeg===s)return;
+    REC._bekSeg=s;
+    bek.pause();
+    bek._yuklu=s.path;
+    bek.src=`/media/rec/${s.path}${tokq().replace("&","?")}`;
+  },500);
+}
+function recBagla(v){
+  // Olaylar İKİ oynatıcıya da bağlanır ama yalnız ekrandaki için işler —
+  // yedek oynatıcı arka planda yüklenirken imleci/saati oynatmasın.
+  v.onended=()=>{if(v===recV())recSonraki();};
+  // Çözme hatasında oynatma DURMASIN: eski segmentlerde tekrarlı DTS var (kaydedici
+  // 2026-09-23'te düzeltildi); Chrome MEDIA_ERR_DECODE verip duruyordu — kullanıcı
+  // "bir süre sonra görüntü kesiliyor" görüyordu. 1 sn ileri sarıp devam edilir;
+  // aynı segmentte 3. hatada sonraki segmente geçilir.
+  v.onerror=()=>{
+    if(v!==recV()||!REC.aktif||!v.error)return;
+    REC._hata=(REC._hataSeg===REC.aktif?(REC._hata||0):0)+1;REC._hataSeg=REC.aktif;
+    const bas=_recSaniye(REC.aktif.start_time),sure=+REC.aktif.duration||0;
+    const hedef=bas+Math.min(sure-0.5,v.currentTime+1);
+    if(REC._hata>=3||v.currentTime+1>=sure-0.5){REC._hata=0;recSonraki();return;}
+    const yeni=`/media/rec/${REC.aktif.path}${tokq().replace("&","?")}`;
+    const off=hedef-bas;
+    v.src=yeni;v._yuklu=REC.aktif.path;v.currentTime=off;v.playbackRate=REC.hiz||1;v.play().catch(()=>{});
+    REC.imlec=hedef;recCiz();
+  };
+  // İmleç oynatmayı takip eder — nerede olduğunu bant üstünde GÖR
+  v.ontimeupdate=()=>{
+    if(v!==recV()||!REC.aktif)return;
+    REC.imlec=_recSaniye(REC.aktif.start_time)+v.currentTime;
+    $("#rsaat").textContent=recSaatYaz(REC.imlec);
+    const p=$("#rpp");if(p)p.textContent=v.paused?"▶":"❚❚";
+    if(!REC._cizZamani||Date.now()-REC._cizZamani>400){REC._cizZamani=Date.now();recCiz();}
+  };
+}
 async function recYukle(cam,gun,ctx){
   // Gün sınırları YEREL saatte kurulup UTC'ye çevrilir: kayıtlar UTC saklanıyor,
   // operatör yerel saatle düşünüyor. Naif tarih göndermek gün kaymasına yol açıyordu.
@@ -2218,9 +2321,12 @@ async function recYukle(cam,gun,ctx){
   REC.gun=gun;REC.cam=cam;
   const st=$("#rstat");
   const toplam=REC.segler.reduce((n,r)=>n+(+r.duration||0),0);
-  if(st)st.textContent=REC.segler.length
-    ? `${REC.segler.length} segment · ${(toplam/60).toFixed(1)} dakika kayıt`
-    : "Bu gün için kayıt yok";
+  if(st){
+    if(REC.segler.length)st.textContent=`${REC.segler.length} segment · ${(toplam/60).toFixed(1)} dakika kayıt`;
+    // Boş gün SESSİZ kalmasın: operatör "kayıt açılmıyor" sanıyordu. Arşivin gerçekten
+    // nereden başladığını söyle ve o güne gitmeyi teklif et (istek 2026-09-24).
+    else{st.textContent="Bu gün için kayıt yok";recArsivSiniri(cam,ctx);}
+  }
   recCiz();
   const cv=$("#rtl");
   if(cv){
@@ -2237,33 +2343,8 @@ async function recYukle(cam,gun,ctx){
       if(basili){REC.imlec=t;recCiz();$("#rsaat").textContent=recSaatYaz(t);}};
     cv.onpointerup=e=>{basili=false;recOynat(ans(e));};
   }
-  const v=$("#recvid");
-  if(v){
-    v.onended=()=>recSonraki();
-    // Çözme hatasında oynatma DURMASIN: eski segmentlerde tekrarlı DTS var (kaydedici
-    // 2026-09-23'te düzeltildi); Chrome MEDIA_ERR_DECODE verip duruyordu — kullanıcı
-    // "bir süre sonra görüntü kesiliyor" görüyordu. 1 sn ileri sarıp devam edilir;
-    // aynı segmentte 3. hatada sonraki segmente geçilir.
-    v.onerror=()=>{
-      if(!REC.aktif||!v.error)return;
-      REC._hata=(REC._hataSeg===REC.aktif?(REC._hata||0):0)+1;REC._hataSeg=REC.aktif;
-      const bas=_recSaniye(REC.aktif.start_time),sure=+REC.aktif.duration||0;
-      const hedef=bas+Math.min(sure-0.5,v.currentTime+1);
-      if(REC._hata>=3||v.currentTime+1>=sure-0.5){REC._hata=0;recSonraki();return;}
-      const yeni=`/media/rec/${REC.aktif.path}${tokq().replace("&","?")}`;
-      const off=hedef-bas;
-      v.src=yeni;v.currentTime=off;v.playbackRate=REC.hiz||1;v.play().catch(()=>{});
-      REC.imlec=hedef;recCiz();
-    };
-    // İmleç oynatmayı takip eder — nerede olduğunu bant üstünde GÖR
-    v.ontimeupdate=()=>{
-      if(!REC.aktif)return;
-      REC.imlec=_recSaniye(REC.aktif.start_time)+v.currentTime;
-      $("#rsaat").textContent=recSaatYaz(REC.imlec);
-      const p=$("#rpp");if(p)p.textContent=v.paused?"▶":"❚❚";
-      if(!REC._cizZamani||Date.now()-REC._cizZamani>400){REC._cizZamani=Date.now();recCiz();}
-    };
-  }
+  REC.v=$("#recvid");REC.v2=$("#recvid2");REC._bekSeg=null;clearTimeout(REC._onTimer);
+  [REC.v,REC.v2].forEach(vv=>{if(vv){vv._yuklu=null;vv.style.opacity=(vv===REC.v)?"1":"0";recBagla(vv);}});
   // Klavye: ←/→ 10 sn, Shift ile 60 sn, Boşluk oynat/duraklat (yalnız bu ekranda)
   document.onkeydown=e=>{
     if(active!=="rec"||e.target.closest("input,select,textarea,button,a,[contenteditable=true]"))return;
@@ -2271,7 +2352,7 @@ async function recYukle(cam,gun,ctx){
     else if(e.key==="ArrowRight"){e.preventDefault();recAtla(e.shiftKey?60:10);}
     else if(e.key===" "){e.preventDefault();recDurdurBaslat();}
   };
-  ctx.cleanup(()=>{document.onkeydown=null;v?.pause();});
+  ctx.cleanup(()=>{document.onkeydown=null;clearTimeout(REC._onTimer);REC.v?.pause();REC.v2?.pause();});
   if(window._rseek!=null){const t=window._rseek;window._rseek=null;recOlayAni(t);}
   else if(REC.segler.length)recOynat(_recSaniye(REC.segler[0].start_time));
 }
@@ -2289,13 +2370,13 @@ function recAtla(delta){
   recOynat(Math.max(0,Math.min(86400,REC.imlec+delta)),delta<0?"geri":"ileri");
 }
 function recDurdurBaslat(){
-  const v=$("#recvid");if(!v)return;
+  const v=recV();if(!v)return;
   if(v.paused)v.play().catch(()=>{});else v.pause();
   const p=$("#rpp");if(p)p.textContent=v.paused?"▶":"❚❚";
 }
 function recHiz(h,btn){
   REC.hiz=h;
-  const v=$("#recvid");if(v)v.playbackRate=h;
+  const v=recV();if(v)v.playbackRate=h;
   document.querySelectorAll("#rhiz button").forEach(b=>b.classList.toggle("on",b===btn));
 }
 async function aramaYap(){
@@ -2376,11 +2457,19 @@ function recBul(saniye,yon){
 }
 function recOynat(saniye,yon){
   const bul=recBul(saniye,yon);
-  const v=$("#recvid");if(!v)return;
   if(!bul){toast("O anda kayıt yok","warn");return;}
+  // İstenen segment yedek oynatıcıda zaten açıldıysa takas et: çözücü kurulu,
+  // görüntü anında gelir. readyState>=2 = ilk kare çözülmüş (HAVE_CURRENT_DATA).
+  const bek=recBek();
+  if(bek&&REC._bekSeg===bul.r&&bek.readyState>=2)recTakas();
+  const v=recV();if(!v)return;
   REC.aktif=bul.r;REC.imlec=_recSaniye(bul.r.start_time)+bul.offset;
   const yeni=`/media/rec/${bul.r.path}${tokq().replace("&","?")}`;
-  if(!v.src.endsWith(bul.r.path.split("?")[0])){v.src=yeni;}
+  // AYNI segment içinde atlarken dosyayı YENİDEN AÇMA. Eski denetim src'yi yol ile
+  // karşılaştırıyordu; token'lı kurulumda src `...?token=` ile bittiği için bu
+  // karşılaştırma HER ZAMAN başarısızdı ve ±10 sn atlamak bile 60 sn'lik segmenti
+  // baştan yüklüyordu. Yüklü yol artık öğenin üstünde tutulur.
+  if(v._yuklu!==bul.r.path){v.src=yeni;v._yuklu=bul.r.path;}
   v.currentTime=bul.offset;
   v.playbackRate=REC.hiz||1;   // hız seçimi segment geçişinde sıfırlanmasın
   // Kayıtta ses yok; video "muted" ki tarayıcı ekran geçişinden SONRA gelen play()'i
@@ -2390,6 +2479,7 @@ function recOynat(saniye,yon){
     .catch(e=>{const p=$("#rpp");if(p)p.textContent="▶";toast("Oynatma tarayıcı tarafından engellendi — ▶ düğmesine basın ("+(e&&e.name||"")+")","warn",6000);});
   const p=$("#rpp");if(p)p.textContent="❚❚";
   recCiz();
+  recOnYukle();
 }
 function recSonraki(){
   if(!REC.aktif)return;
@@ -2440,14 +2530,49 @@ async function mobilQR(){
 /* Kanıt görüntüsünü tam boy aç — operatör okumayı gözle doğrulayabilsin */
 /* Kanıt penceresi: kare + (varsa) ANALİZ KATMANLI klip — kişi kutusu ve
    "izle → ön uyarı → alarm" ilerleyişi kayıtta görünür (istek 2026-09-23). */
-function kanitAc(yol,klip){
+/* Alarmın analiz özeti (alerts.detay JSON'u): NE yakalandı, hangi anda ön uyarı,
+   hangi anda alarma döndü. Test ekranındaki satırlarla aynı dili kullanır
+   (operatör isteği 2026-09-24: "test ekranı gibi olsun").
+
+   Aşama zamanları alarm anına göre GERİYE saniyedir; mutlak saat burada
+   hesaplanır — böylece kayıt ekranındaki saatle birebir karşılaştırılabilir. */
+const _ANALIZ_AD={izle:"İzlemeye alındı",on_uyari:"ÖN UYARI",alarm:"ALARM"};
+const _ANALIZ_RENK={izle:["var(--hover)","var(--ink-2)","·"],
+  on_uyari:["var(--warn-soft)","var(--warn)","?"],alarm:["var(--danger-soft)","var(--danger)","!"]};
+const _ANALIZ_SINIF={telefon:"telefon kullanımı",sigara:"sigara içme"};
+function analizHtml(detay,zaman){
+  let a=null;
+  try{a=typeof detay==="string"?JSON.parse(detay||"null"):detay;}catch(e){a=null;}
+  if(!a||!Array.isArray(a.asamalar)||!a.asamalar.length)return "";
+  const t0=AurasRuntime.parseTime(zaman)?.getTime();
+  const saat=sn=>t0?new Date(t0-(+sn||0)*1000).toLocaleTimeString("tr-TR"):`alarmdan ${+sn||0} sn önce`;
+  const satirlar=a.asamalar.map(s=>{const c=_ANALIZ_RENK[s.durum]||_ANALIZ_RENK.izle;
+    return `<div class="row"><span class="av" style="background:${c[0]};color:${c[1]};">${c[2]}</span>
+      <div style="flex:1;min-width:0;"><div style="font-weight:700;">${esc(_ANALIZ_AD[s.durum]||s.durum)}</div>
+        <div class="mut-s">${esc(s.not||"")}</div></div>
+      <span class="mono mut-s" style="flex-shrink:0;">${esc(saat(s.once_sn))}</span></div>`;}).join("");
+  const olcum=[];
+  if(a.olcum?.alt_tur)olcum.push(`tanım: ${a.olcum.alt_tur}`);
+  if(a.olcum?.dokunus!=null)olcum.push(`${a.olcum.dokunus} ağız teması · ${a.olcum.onayli_dokunus||0} tanesi sigara olarak doğrulandı`);
+  return `<div class="card" style="margin-top:12px;text-align:left;">
+    <div style="padding:11px 15px;border-bottom:1px solid var(--line);font-weight:700;display:flex;gap:8px;align-items:center;">
+      ${svg('events',16)} Analiz · ${esc(_ANALIZ_SINIF[a.sinif]||a.sinif||"olay")}
+      <span class="chip" style="margin-left:auto;background:var(--accent-soft);color:var(--accent);">güven %${Math.round((a.guven||0)*100)}</span></div>
+    ${satirlar}
+    <div class="mut-s" style="padding:10px 15px;border-top:1px solid var(--line);">
+      doğrulama: ${esc(a.dogrulama==="poz"?"yalnız poz (doğrulayıcı kutu yok)":(a.dogrulama||"—"))}
+      · ön uyarıdan alarma ${a.sure_sn||0} sn · kişi ${a.izlendi_sn||0} sn izlendi · iz #${esc(a.iz??"—")}
+      ${olcum.length?" · "+esc(olcum.join(" · ")):""}</div></div>`;
+}
+function kanitAc(yol,klip,detay,zaman){
   const m=document.createElement("div");m.className="mask";
   const q=tokq().replace('&','?');
+  const analiz=analizHtml(detay,zaman);
   m.innerHTML=`<div class="kanitwrap" onclick="event.stopPropagation()">
     ${klip?`<video class="kanitbox" src="/media/${esc(klip)}${q}" controls autoplay muted loop playsinline></video>
             <div class="mut-s" style="text-align:center;margin-top:6px;">Analiz klibi: kutular ve aşama (izle → ön uyarı → ALARM) · <a onclick="const i=this.closest('.kanitwrap').querySelector('.kanitalt');i.hidden=!i.hidden;this.textContent=i.hidden?'kanıt karesi':'klibe dön'">kanıt karesi</a></div>
             <img class="kanitbox kanitalt" hidden src="/media/${esc(yol)}${q}" alt="kanıt görüntüsü"/>`
-          :`<img class="kanitbox" src="/media/${esc(yol)}${q}" alt="kanıt görüntüsü"/>`}</div>`;
+          :`<img class="kanitbox" src="/media/${esc(yol)}${q}" alt="kanıt görüntüsü"/>`}${analiz}</div>`;
   document.body.appendChild(m);
   const kapat=()=>{m.remove();document.removeEventListener("keydown",onkey);};
   const onkey=e=>{if(e.key==="Escape")kapat();};

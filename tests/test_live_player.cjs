@@ -9,16 +9,21 @@ async function player(fallback = 'camera-sub') {
   class Media {
     constructor() { this.listeners = {}; this.error = {code: 3}; }
     addEventListener(name, fn) { this.listeners[name] = fn; }
-    get playbackRate() { return 1; }
-    set playbackRate(value) {}
+    get playbackRate() { return this._rate === undefined ? 1 : this._rate; }
+    set playbackRate(value) { this._rate = value; }
   }
   const label = {textContent: 'tam çözünürlük'};
+  const kbtn = {textContent: 'Alt akış'};
   const badge = {textContent: 'CANLI'};
   const tile = {dataset: {state: 'live'}, querySelector: () => badge};
   class VideoRTC {
     constructor() { this.dataset = {src: 'camera', fallbackSrc: fallback}; }
     oninit() { this.video = new Media(); }
-    closest(selector) { return selector === '.tile' ? tile : {querySelector: () => label}; }
+    // .camview içinde iki AYRI öğe okunur: kalite etiketi ve tam-çözünürlük düğmesi.
+    closest(selector) {
+      if (selector === '.tile') return tile;
+      return {querySelector: q => (q === '#cv-kalite' ? kbtn : label)};
+    }
     set src(value) { this.nextSource = value; }
   }
   let Player;
@@ -29,7 +34,7 @@ async function player(fallback = 'camera-sub') {
     .replace('import("/vendor/video-rtc.js")', 'Promise.resolve({VideoRTC})');
   await vm.runInContext(source + '\nloadPlayer();', context);
   const el = new Player(); el.oninit();
-  return {el, label, badge, tile};
+  return {el, label, kbtn, badge, tile};
 }
 
 test('decode failure switches enlarged camera to its fallback once', async () => {
@@ -37,7 +42,7 @@ test('decode failure switches enlarged camera to its fallback once', async () =>
   el.video.listeners.error?.();
   assert.equal(el.nextSource, '/api/stream?src=camera-sub&token=test');
   assert.equal(el.dataset.src, 'camera-sub');
-  assert.equal(label.textContent, 'uyumlu akış');
+  assert.equal(label.textContent, 'alt akış · çözücü yetmedi');
   assert.equal(tile.dataset.state, 'wait');
   el.nextSource = null;
   el.video.listeners.error();
@@ -65,6 +70,112 @@ test('network errors keep the original source for normal reconnection', async ()
   el.video.listeners.error?.();
   assert.equal(el.nextSource, undefined);
   assert.equal(el.dataset.fallbackSrc, 'camera-sub');
+});
+
+// Ölçüm 2026-09-24: substream anahtar kare aralığı 4,0 sn → akış açılırken tampon
+// bir GOP kadar dolu geliyor. Yetişme tavanı o fazlalığı MAKUL sürede eritmeli,
+// ama hedefe yakınken duvarı hızlandırmamalı.
+test('a full keyframe interval behind live, catch-up uses the ceiling', async () => {
+  const {el} = await player();
+  el.video.playbackRate = 4;
+  assert.equal(el.video.playbackRate, 1.5);
+});
+
+test('near the latency target playback stays calm', async () => {
+  const {el} = await player();
+  el.video.playbackRate = 1.2;
+  assert.ok(el.video.playbackRate <= 1.05,
+    'hedefin hemen üstünde gözle görülür hızlanma olmamalı');
+  el.video.playbackRate = 1.0;
+  assert.equal(el.video.playbackRate, 1);
+});
+
+test('an empty buffer never stops playback completely', async () => {
+  const {el} = await player();
+  el.video.playbackRate = 0;
+  assert.equal(el.video.playbackRate, 0.9, 'ağır çekim tabanı korunmalı');
+});
+
+/* ---- kayıt arşivi oynatıcısı ---- */
+function arsiv(segler) {
+  const mkVideo = id => {
+    const o = {id, _yuklu: null, readyState: 0, style: {}, currentTime: 0,
+      playbackRate: 1, paused: false, srcSets: 0, _src: null, error: null,
+      pause() { this.paused = true; }, play() { return Promise.resolve(); }};
+    Object.defineProperty(o, 'src', {
+      get() { return this._src; },
+      set(v) { this._src = v; this.srcSets++; }});
+    return o;
+  };
+  const v1 = mkVideo('v1'), v2 = mkVideo('v2');
+  const rpp = {textContent: ''}, rsaat = {textContent: ''};
+  const nodes = {'#recvid': v1, '#recvid2': v2, '#rpp': rpp, '#rsaat': rsaat};
+  let timer = null;
+  const context = vm.createContext({
+    $: sel => nodes[sel] || null, toast: () => {}, tokq: () => '&token=test',
+    setTimeout: fn => { timer = fn; return 1; }, clearTimeout: () => {}, Date, console});
+  const bas = html.indexOf('let REC={segler');
+  const src = html.slice(bas, html.indexOf('async function aramaYap'))
+    + html.slice(html.indexOf('function recIndir(){'), html.indexOf('async function disaAktar'));
+  // `let REC` sözcüksel bağdır, context üstünden görünmez → erişimci ile dışarı ver.
+  vm.runInContext(src + '\nglobalThis.__t={get REC(){return REC;}};', context);
+  context.__t.REC.segler = segler;
+  context.__t.REC.v = v1; context.__t.REC.v2 = v2;
+  return {context, v1, v2, REC: context.__t.REC, tick: () => timer && timer()};
+}
+
+const seg = (saat, path) => ({path, start_time: `2026-09-24 ${saat}`, duration: 60});
+const saniye = s => {
+  const [h, m, sn] = s.split(':').map(Number);
+  return h * 3600 + m * 60 + sn;
+};
+
+test('seeking inside the playing segment does not reload the file', () => {
+  const s1 = seg('10:00:00', 'kamera-201/1.mp4');
+  const {context, v1} = arsiv([s1]);
+  context.recOynat(saniye('10:00:05'));
+  assert.equal(v1.srcSets, 1, 'segment bir kez açılır');
+  assert.equal(v1._yuklu, s1.path);
+  context.recOynat(saniye('10:00:25'));
+  assert.equal(v1.srcSets, 1, 'aynı segment içinde atlamak dosyayı yeniden açmamalı');
+  assert.equal(v1.currentTime, 25);
+});
+
+test('the next segment is opened on the standby player, not the visible one', () => {
+  const s1 = seg('10:00:00', 'kamera-201/1.mp4'), s2 = seg('10:01:00', 'kamera-201/2.mp4');
+  const {context, v1, v2, REC, tick} = arsiv([s1, s2]);
+  context.recOynat(saniye('10:00:05'));
+  tick();
+  assert.equal(v2._src, '/media/rec/kamera-201/2.mp4?token=test');
+  assert.equal(REC._bekSeg, s2);
+  assert.equal(v1._yuklu, s1.path, 'ekrandaki oynatıcıya dokunulmamalı');
+  assert.equal(v2.paused, true, 'yedek oynatıcı sesli/görüntülü oynamamalı');
+});
+
+test('a prepared next segment is shown by swapping, without reloading it', () => {
+  const s1 = seg('10:00:00', 'kamera-201/1.mp4'), s2 = seg('10:01:00', 'kamera-201/2.mp4');
+  const {context, v1, v2, REC, tick} = arsiv([s1, s2]);
+  context.recOynat(saniye('10:00:05'));
+  tick();
+  const yuklemeler = v2.srcSets;
+  v2.readyState = 2;                      // ilk kare çözüldü
+  context.recSonraki();
+  assert.equal(REC.v, v2, 'yedek oynatıcı ekrana alınmalı');
+  assert.equal(v2.srcSets, yuklemeler, 'hazır segment yeniden yüklenmemeli');
+  assert.equal(v2.style.opacity, '1');
+  assert.equal(v1.style.opacity, '0');
+  assert.equal(REC.aktif, s2);
+});
+
+test('an unprepared next segment still plays through the normal path', () => {
+  const s1 = seg('10:00:00', 'kamera-201/1.mp4'), s2 = seg('10:01:00', 'kamera-201/2.mp4');
+  const {context, v1, v2, REC} = arsiv([s1, s2]);
+  context.recOynat(saniye('10:00:05'));
+  context.recSonraki();                   // ön yükleme hiç koşmadı (tick yok)
+  assert.equal(REC.v, v1, 'hazır olmayan yedeğe takas edilmemeli');
+  assert.equal(v1._yuklu, s2.path);
+  assert.equal(v1.srcSets, 2);
+  assert.equal(v2.srcSets, 0);
 });
 
 test('failed decoder cannot be marked live by an advancing clock', () => {
