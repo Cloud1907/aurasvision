@@ -389,6 +389,10 @@ davranis:
                             # klibinde alarm 21,7 sn → 1,3 sn; negatif kliplerde hâlâ 0 tetik.
   sigara_conf: 0.35
   sigara_min_bas_px: 24     # bundan küçük başta dedektöre sorulmaz (küçük kırpmada halüsinasyon)
+  sigara_max_kutu_bas: 1.0  # dedektör kutusu baş genişliğinin bu katından BÜYÜKSE sayılmaz.
+                            # Sigara başın kesridir (~8 cm / 16-20 cm ≈ 0,4-0,6 baş); daha
+                            # büyük kutu yüzün/gövdenin kendisidir. Ölçüm 2026-09-24
+                            # (kamera-207, 12 tespit): oran 1,40-2,33, hepsi sahte. 0 = kapalı.
   sigara_imgsz: 320         # baş kırpması küçük; 320 yeter
 
   # ── Ortak ──
