@@ -205,7 +205,14 @@ def kaydet(cfg, frame, camera_id: str, tur: str, box=None, etiket: str = "",
             kx2, ky2 = min(w, kx2), min(h, ky2)
             if kx2 > kx1 and ky2 > ky1:
                 kirp = img[ky1:ky2, kx1:kx2].copy()
-                oran = min(4.0, (w * 0.45) / max(1, kx2 - kx1))
+                # Büyütme oranı HEM genişliğe HEM yüksekliğe sığmalı. Yalnız genişliğe
+                # bakınca ayakta duran kişinin (dar ve uzun kutu) büyütmesi kareden
+                # taşıyor ve aşağıdaki "sığıyor mu" kontrolünde sessizce atlanıyordu:
+                # 2880×1616 saha karesinde kişi kutusu 216×559 → 4× büyütme 864×2236,
+                # kareye sığmıyor, kırpma HİÇ basılmıyordu (ölçüm 2026-09-24, #751).
+                # En çok ihtiyaç duyulan yerde (uzaktaki küçük kişi) kayboluyordu.
+                oran = min(4.0, (w * 0.45) / max(1, kx2 - kx1),
+                           (h * 0.85) / max(1, ky2 - ky1))
                 if oran > 1.05:
                     kirp = cv2.resize(kirp, None, fx=oran, fy=oran,
                                       interpolation=cv2.INTER_CUBIC)
