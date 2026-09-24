@@ -251,6 +251,7 @@
   .kanit:hover{border-color:var(--accent);}
   .kanitbox{max-width:min(1100px,94vw);max-height:80vh;border-radius:var(--r-lg);box-shadow:var(--shadow-lg);display:block;}
   .kanitwrap{max-width:min(1100px,94vw);}.kanitwrap a{cursor:pointer;text-decoration:underline;}
+  .kanitwrap [hidden]{display:none!important;}   /* .kanitbox{display:block} hidden'ı eziyordu */
   /* Kamera bazlı olay özeti — "hangi kamerada ne oluyor" tek bakışta */
   .camsum{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-bottom:20px;}
   .camsum .k{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:13px 15px;cursor:pointer;transition:all var(--t);box-shadow:var(--shadow);}
@@ -1586,7 +1587,7 @@ const SCREENS={
         <input type="date" value="${gun}" onchange="window._rg=this.value;SCREENS.rec()"/>
         <span class="mut-s" id="rstat">yükleniyor…</span></div>
       <div class="card pad">
-        <video id="recvid" playsinline style="width:100%;max-height:56vh;background:#000;border-radius:var(--r-lg);display:block;"></video>
+        <video id="recvid" playsinline muted style="width:100%;max-height:56vh;background:#000;border-radius:var(--r-lg);display:block;"></video>
         <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">
           <div class="seg">
             <button title="60 sn geri (Shift+←)" onclick="recAtla(-60)">−60</button>
@@ -2382,7 +2383,11 @@ function recOynat(saniye,yon){
   if(!v.src.endsWith(bul.r.path.split("?")[0])){v.src=yeni;}
   v.currentTime=bul.offset;
   v.playbackRate=REC.hiz||1;   // hız seçimi segment geçişinde sıfırlanmasın
-  v.play().catch(()=>{});
+  // Kayıtta ses yok; video "muted" ki tarayıcı ekran geçişinden SONRA gelen play()'i
+  // (kullanıcı hareketi penceresi kapanmış olur) otomatik oynatma kuralına takmasın.
+  // Yine de reddedilirse sessiz kalma: durumu ▶ yap ve söyle ("kayda git çalışmıyor").
+  v.play().then(()=>{const p=$("#rpp");if(p)p.textContent="❚❚";})
+    .catch(e=>{const p=$("#rpp");if(p)p.textContent="▶";toast("Oynatma tarayıcı tarafından engellendi — ▶ düğmesine basın ("+(e&&e.name||"")+")","warn",6000);});
   const p=$("#rpp");if(p)p.textContent="❚❚";
   recCiz();
 }
@@ -2440,7 +2445,7 @@ function kanitAc(yol,klip){
   const q=tokq().replace('&','?');
   m.innerHTML=`<div class="kanitwrap" onclick="event.stopPropagation()">
     ${klip?`<video class="kanitbox" src="/media/${esc(klip)}${q}" controls autoplay muted loop playsinline></video>
-            <div class="mut-s" style="text-align:center;margin-top:6px;">Analiz klibi: kutular ve aşama (izle → ön uyarı → ALARM) · <a onclick="this.closest('.kanitwrap').querySelector('.kanitalt').hidden^=1">kanıt karesi</a></div>
+            <div class="mut-s" style="text-align:center;margin-top:6px;">Analiz klibi: kutular ve aşama (izle → ön uyarı → ALARM) · <a onclick="const i=this.closest('.kanitwrap').querySelector('.kanitalt');i.hidden=!i.hidden;this.textContent=i.hidden?'kanıt karesi':'klibe dön'">kanıt karesi</a></div>
             <img class="kanitbox kanitalt" hidden src="/media/${esc(yol)}${q}" alt="kanıt görüntüsü"/>`
           :`<img class="kanitbox" src="/media/${esc(yol)}${q}" alt="kanıt görüntüsü"/>`}</div>`;
   document.body.appendChild(m);
