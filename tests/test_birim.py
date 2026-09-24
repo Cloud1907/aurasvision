@@ -1034,3 +1034,27 @@ class TestArsivKoku:
         from src.recorder import kayit_kok
         kok = kayit_kok(Config({"record": {"root": "  ", "dir": "rec"}}))
         assert kok.parts[-2:] == ("output", "rec")
+
+
+class TestSegmentKesimi:
+    """Segment kesimi iki saatten de ölçülür (2026-09-24, kamera-210: akış saati
+    geri gitti, tek dosyaya 10 dakika / 271 MB yazıldı)."""
+
+    def test_dosya_yoksa_hemen_acilir(self):
+        from src.recorder import _kesim_gerek
+        assert _kesim_gerek(False, False, 0.0, 0.0, 100.0, 0.0, 60) is True
+
+    def test_anahtar_kare_disinda_kesilmez(self):
+        from src.recorder import _kesim_gerek
+        assert _kesim_gerek(True, False, 999.0, 0.0, 999.0, 0.0, 60) is False
+
+    def test_akis_saati_dolunca_kesilir(self):
+        from src.recorder import _kesim_gerek
+        assert _kesim_gerek(True, True, 61.0, 0.0, 10.0, 0.0, 60) is True
+        assert _kesim_gerek(True, True, 30.0, 0.0, 10.0, 0.0, 60) is False
+
+    def test_akis_saati_donmuyorsa_duvar_saati_keser(self):
+        from src.recorder import _kesim_gerek
+        # akış saati hiç ilerlemedi (t == seg_bas) ama 90 sn geçti → kes
+        assert _kesim_gerek(True, True, 5.0, 5.0, 90.0, 0.0, 60) is True
+        assert _kesim_gerek(True, True, 5.0, 5.0, 80.0, 0.0, 60) is False
