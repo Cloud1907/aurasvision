@@ -134,11 +134,48 @@ def temizle(cfg) -> int:
     return silinen
 
 
-def kaydet(cfg, frame, camera_id: str, tur: str, box=None, etiket: str = "") -> str:
+def _kose(w: int, h: int, kw: int, kh: int, kacin) -> tuple[int, int]:
+    """Büyütülmüş kırpma için, `kacin` dikdörtgeniyle en az örtüşen köşe.
+
+    Kırpma sol üste sabitlenince konunun kendisini kapatabiliyordu (yakalanan
+    telefon kutusu kırpmanın altında kaldı, ölçüm 2026-09-24).
+    """
+    bx1, by1, bx2, by2 = kacin
+
+    def ortusme(oy_ox):
+        ox, oy = oy_ox
+        return (max(0, min(ox + kw, bx2) - max(ox, bx1))
+                * max(0, min(oy + kh, by2) - max(oy, by1)))
+    return min(((0, 0), (w - kw, 0), (0, h - kh), (w - kw, h - kh)), key=ortusme)
+
+
+def _vurgu_ciz(img, kutu, etiket: str) -> None:
+    """Yakalanan nesneyi kırmızı kutu + etiketle çizer (tam kare koordinatı)."""
+    import cv2
+    x1, y1, x2, y2 = (int(round(v)) for v in kutu)
+    if x2 <= x1 or y2 <= y1:
+        return
+    # Küçük nesnede ince kutu kaybolur: en az 18 px'lik bir çerçeve çiz
+    if x2 - x1 < 18 or y2 - y1 < 18:
+        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        x1, y1, x2, y2 = cx - 9, cy - 9, cx + 9, cy + 9
+    cv2.rectangle(img, (x1, y1), (x2, y2), (40, 40, 255), 2)
+    if etiket:
+        cv2.putText(img, etiket, (x1, max(12, y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (40, 40, 255), 2)
+
+
+def kaydet(cfg, frame, camera_id: str, tur: str, box=None, etiket: str = "",
+           vurgular=None) -> str:
     """Kanıt karesi yazar, /media'ya göreli yolu döndürür (kapalıysa boş string).
 
     box verilirse (x1,y1,x2,y2) o bölge hem çerçevelenir hem sol üste BÜYÜTÜLMÜŞ
     olarak yapıştırılır: tek dosyada hem bağlam hem okunur plaka olur.
+
+    vurgular: [(kutu, etiket)] — analizin YAKALADIĞI nesne (sigara/telefon kutusu).
+    Hem tam karede hem büyütülmüş kırpmada kırmızı çizilir. Operatör isteği
+    2026-09-24: "analizi çizsin, hangisini yakaladığını göstersin" — kişi kutusu
+    tek başına "neden alarm verdi" sorusunu cevaplamıyordu.
     """
     if not etkin(cfg, tur) or frame is None:
         return ""
@@ -148,21 +185,37 @@ def kaydet(cfg, frame, camera_id: str, tur: str, box=None, etiket: str = "") -> 
         temizle(cfg)
         img = frame.copy()
         h, w = img.shape[:2]
+        # 1) Çizimler ÖNCE tam kareye: kişi kutusu (sarı) + yakalanan nesne (kırmızı)
         if box is not None:
             x1, y1, x2, y2 = (max(0, int(v)) for v in box)
             x2, y2 = min(w, x2), min(h, y2)
             if x2 > x1 and y2 > y1:
-                kirp = frame[y1:y2, x1:x2]
                 cv2.rectangle(img, (x1, y1), (x2, y2), (0, 220, 255), 3)
-                # Kırpmayı okunur boya büyüt (en fazla kadrajın yarısı)
-                oran = min(4.0, (w * 0.45) / max(1, x2 - x1))
+        for vk, vet in (vurgular or ()):
+            _vurgu_ciz(img, vk, vet)
+        # 2) Büyütülmüş kırpma ÇİZİMLİ kareden alınır: nesne kutusu büyütmede de
+        #    görünür, ayrı ölçek hesabı gerekmez. Kırpma, kişiyi VE yakalanan nesneyi
+        #    birlikte kapsar — nesne kişi kutusunun dışına taşabiliyor (elde telefon).
+        if box is not None:
+            kx1, ky1, kx2, ky2 = (max(0, int(v)) for v in box)
+            for vk, _ in (vurgular or ()):
+                kx1, ky1 = min(kx1, int(vk[0]) - 6), min(ky1, int(vk[1]) - 6)
+                kx2, ky2 = max(kx2, int(vk[2]) + 6), max(ky2, int(vk[3]) + 6)
+            kx1, ky1 = max(0, kx1), max(0, ky1)
+            kx2, ky2 = min(w, kx2), min(h, ky2)
+            if kx2 > kx1 and ky2 > ky1:
+                kirp = img[ky1:ky2, kx1:kx2].copy()
+                oran = min(4.0, (w * 0.45) / max(1, kx2 - kx1))
                 if oran > 1.05:
                     kirp = cv2.resize(kirp, None, fx=oran, fy=oran,
                                       interpolation=cv2.INTER_CUBIC)
                 kh, kw = kirp.shape[:2]
-                if kh < h and kw < w:      # sol üste yapıştır + çerçevele
-                    img[0:kh, 0:kw] = kirp
-                    cv2.rectangle(img, (0, 0), (kw, kh), (0, 220, 255), 2)
+                if kh < h and kw < w:
+                    # Kırpma, konuyu ÖRTMEYEN köşeye yapıştırılır: sol üste sabitken
+                    # büyütme kişinin kendisini kapatıyordu (ölçüm 2026-09-24).
+                    ox, oy = _kose(w, h, kw, kh, (kx1, ky1, kx2, ky2))
+                    img[oy:oy + kh, ox:ox + kw] = kirp
+                    cv2.rectangle(img, (ox, oy), (ox + kw, oy + kh), (0, 220, 255), 2)
         if etiket:
             cv2.rectangle(img, (0, h - 34), (w, h), (24, 20, 16), -1)
             cv2.putText(img, etiket[:120], (10, h - 11),

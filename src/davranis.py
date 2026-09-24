@@ -176,7 +176,7 @@ class _Iz:
     __slots__ = ("id", "kutu", "son_ts", "gecmis", "durum", "baslangic", "son_alarm",
                  "dokunus", "agiz_giris", "dogrulama", "bas_kutu", "son_dogrulama_ts",
                  "telefon_alt", "telefon_pay", "temas_onay", "onayli_dokunus", "agiz_cikis",
-                 "son_telefon_ts", "dogdu")
+                 "son_telefon_ts", "dogdu", "dogrulama_kutu")
 
     def __init__(self, tid: int, kutu, ts: float) -> None:
         self.id = tid
@@ -194,6 +194,10 @@ class _Iz:
         self.agiz_cikis: float | None = None  # son temasın bittiği an (kısa boşluk → aynı temas)
         self.son_telefon_ts = -1e9            # bu kişide en son telefon kutusu görülen an
         self.dogrulama = {s: None for s in SINIFLAR}   # (ts, kaynak) son pozitif doğrulama
+        # (ts, kutu) — doğrulayıcının GÖRDÜĞÜ nesnenin tam kare koordinatı. Kanıt
+        # karesine ve klibe çizilir: operatör "neyi yakaladı" sorusunu görüntüden
+        # cevaplayabilsin (istek 2026-09-24).
+        self.dogrulama_kutu = {s: None for s in SINIFLAR}
         self.bas_kutu = None
         self.son_dogrulama_ts = -1e9
         self.telefon_alt = "konusma"
@@ -348,6 +352,12 @@ class DavranisTakip:
             if telefon_kutular:
                 if telefon_eller or any(_kesisir(tk, iz.bas_kutu) for tk in telefon_kutular):
                     iz.dogrulama["telefon"] = (ts, "telefon kutusu")
+                    # Kanıta çizilecek kutu: önce başla kesişen (kulakta telefon),
+                    # yoksa kişiyle kesişen ilk kutu (elde telefon).
+                    esl = ([tk for tk in telefon_kutular if _kesisir(tk, iz.bas_kutu)]
+                           or [tk for tk in telefon_kutular if _kesisir(tk, kutu)])
+                    if esl:
+                        iz.dogrulama_kutu["telefon"] = (ts, tuple(float(v) for v in esl[0]))
             # Telefon pozundaki el ağız yarıçapına da girer: o karede dokunuş sayılmaz
             sig_oz = ozellikler(kp, kc, kutu, self.kp_esik, self.kulak_oran,
                                self.agiz_oran, ignore_wrists=telefon_eller)
@@ -523,6 +533,11 @@ class DavranisTakip:
                 "alt_tur": iz.telefon_alt if sinif == "telefon" else "",
                 "alt_pay": iz.telefon_pay if sinif == "telefon" else (),
                 "kutu": tuple(float(v) for v in iz.kutu), "track_id": iz.id,
+                # Doğrulayıcının gördüğü nesne kutusu (tam kare) — kanıta çizilir
+                "dogrulama_kutu": (iz.dogrulama_kutu[sinif][1]
+                                   if iz.dogrulama_kutu[sinif] is not None
+                                   and ts - iz.dogrulama_kutu[sinif][0] <= self.dogrulama_taze_sn
+                                   else None),
                 "dogrulama": kaynak, "sure": round(float(sure), 1),
                 "ts_seconds": round(ts, 2),
                 "analiz": self._analiz(iz, sinif, durum, ts, kaynak, sure, skor)}
@@ -600,7 +615,12 @@ def _poz_kur(cfg):
 
 
 def _sigara_kur(cfg):
-    """İsteğe bağlı sigara dedektörü: (bgr_kirpma) → bool. Ağırlık yoksa None (hat çalışır)."""
+    """İsteğe bağlı sigara dedektörü: (bgr_kirpma) → en iyi kutu ya da None.
+
+    Eskiden yalnız bool dönüyordu; kanıt karesinde "neyi yakaladı" gösterilemiyordu
+    (istek 2026-09-24). Kutu kırpma koordinatındadır, çağıran tam kareye taşır.
+    Dönen değer yine doğruluk testine uygundur (kutu varsa doğru, yoksa None).
+    """
     yol = cfg.get("davranis.sigara_model", "") or ""
     if not yol:
         return None
@@ -619,9 +639,14 @@ def _sigara_kur(cfg):
 
     def kontrol(bgr):
         if bgr is None or bgr.size == 0:
-            return False
+            return None
         r = model.predict(bgr, imgsz=imgsz, conf=esik, device=device, verbose=False)[0]
-        return r.boxes is not None and len(r.boxes) > 0
+        if r.boxes is None or len(r.boxes) == 0:
+            return None
+        xy = r.boxes.xyxy.cpu().numpy()
+        gv = r.boxes.conf.cpu().numpy() if r.boxes.conf is not None else None
+        i = int(gv.argmax()) if gv is not None and len(gv) else 0
+        return tuple(float(v) for v in xy[i])
     return kontrol
 
 
@@ -739,7 +764,17 @@ class DavranisHatti:
             x2, y2 = min(self.w, int(x2)), min(self.h, int(y2))
             if x2 - x1 < 8 or y2 - y1 < 8:
                 return False
-            return bool(self.sigara(bgr[y1:y2, x1:x2]))
+            kutu = self.sigara(bgr[y1:y2, x1:x2])
+            if not kutu:
+                return False
+            # Kırpma koordinatı → tam kare: kanıt karesine bu kutu çizilir.
+            # (Kutu döndürmeyen bir dedektör verilmişse yalnız "gördü" bilgisi kalır.)
+            try:
+                a, b, c, d = (float(v) for v in kutu)
+                iz.dogrulama_kutu["sigara"] = (iz.son_ts, (a + x1, b + y1, c + x1, d + y1))
+            except (TypeError, ValueError):
+                pass
+            return True
         return kontrol
 
     def kare(self, bgr, ts: float, frame_idx: int, telefon_kutular=None) -> list[tuple]:
@@ -823,8 +858,20 @@ class DavranisHatti:
                         ("on uyari" if et.endswith("?") else "izle")
                 renk = (40, 40, 255) if asama == "ALARM" else ((0, 200, 255) if asama == "on uyari" else (200, 200, 200))
                 cv2.rectangle(img, (int(kutu[0]), int(kutu[1])), (int(kutu[2]), int(kutu[3])), renk, max(2, round(3 * k)))
-                cv2.putText(img, f"{_ascii(o['sinif'])}: {asama}", (int(kutu[0]), max(16, int(kutu[1]) - 8)),
+                # Aşama metni kutunun İÇİNE yazılır: üstte _ciz'in kendi etiketiyle
+                # üst üste biniyordu (klip kontrolünde görüldü).
+                cv2.putText(img, f"{_ascii(o['sinif'])}: {asama}",
+                            (int(kutu[0]) + 6, int(kutu[1]) + int(24 * k)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7 * k, renk, max(2, round(2 * k)))
+            # Yakalanan nesne (sigara/telefon kutusu) son karelerde kırmızı çizilir:
+            # klipte de "neyi yakaladı" görünsün. Kutu alarm anına aittir, bu yüzden
+            # yalnız doğrulamanın tazeliği kadar geriye çizilir (son 3 kare).
+            if o.get("dogrulama_kutu") and i >= n - 3:
+                vk = o["dogrulama_kutu"]
+                cv2.rectangle(img, (int(vk[0]), int(vk[1])), (int(vk[2]), int(vk[3])),
+                              (40, 40, 255), max(2, round(2 * k)))
+                cv2.putText(img, _ascii(o["sinif"]), (int(vk[0]), max(12, int(vk[1]) - 6)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6 * k, (40, 40, 255), max(2, round(2 * k)))
             # Bant: kare numarası ve akış saniyesi kanıttaki kare dökümüyle AYNI
             # değerlerdir — operatör klipteki anı listede bulabilsin.
             cv2.putText(img, f"{_ascii(alarm_etiketi(o))}  kare {meta[0]} ({i + 1}/{n})"
@@ -870,8 +917,10 @@ class DavranisHatti:
             analiz["kareler"] = self._kare_izi(o)
         # Kanıt türü ve uyarı türü = sınıf: "telefon" ve "sigara" panelde, kanıt
         # klasöründe ve webhook'ta AYRI görünür (evidence.telefon / evidence.sigara).
+        vurgu = o.get("dogrulama_kutu")
         o["snapshot"] = kanit_kaydet(self.cfg, kare, self.camera_id, o["sinif"],
-                                     box=o["kutu"], etiket=_ascii(alarm_etiketi(o)))
+                                     box=o["kutu"], etiket=_ascii(alarm_etiketi(o)),
+                                     vurgular=[(vurgu, _ascii(o["sinif"]))] if vurgu else None)
         o["clip"] = klip_kaydet(self.cfg, self._klip_kareleri(o), self.camera_id, o["sinif"],
                                 fps=self.efektif_fps)
         self.sonuc.alarmlar.append(o)
