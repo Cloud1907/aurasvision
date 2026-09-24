@@ -54,6 +54,9 @@ ETIKETLER = {"telefon": "telefon kullanımı", "sigara": "sigara içme"}
 # Tek "telefon" alarmı, iki tanım (kullanıcı kararı 2026-09-23): kulakta → konuşma,
 # elde (mesajlaşma/bakma) → elde kullanım. alerts.kind aynı kalır, etiket ayrışır.
 TELEFON_ALT_TUR = {"konusma": "telefonla konuşma", "elde": "elde telefon kullanımı"}
+# Ön uyarıyı NE tetikledi — kanıt ekranındaki analiz zaman çizgisinde yazılır
+_ON_UYARI_NOT = {"telefon": "el kulak/ağız hizasında, kol duruşu telefon pozu",
+                 "sigara": "el ağza gitti — dokunuş sayılmaya başladı"}
 
 
 def aktif_siniflar(tasks: dict | None) -> tuple[str, ...]:
@@ -173,12 +176,13 @@ class _Iz:
     __slots__ = ("id", "kutu", "son_ts", "gecmis", "durum", "baslangic", "son_alarm",
                  "dokunus", "agiz_giris", "dogrulama", "bas_kutu", "son_dogrulama_ts",
                  "telefon_alt", "telefon_pay", "temas_onay", "onayli_dokunus", "agiz_cikis",
-                 "son_telefon_ts")
+                 "son_telefon_ts", "dogdu")
 
     def __init__(self, tid: int, kutu, ts: float) -> None:
         self.id = tid
         self.kutu = kutu
         self.son_ts = ts
+        self.dogdu = ts                       # ilk görülme — kanıtta "N sn izlendi"
         self.gecmis: deque = deque()          # (ts, kulak, agiz)
         self.durum = {s: "izle" for s in SINIFLAR}
         self.baslangic = {s: None for s in SINIFLAR}   # on_uyari anı
@@ -520,7 +524,37 @@ class DavranisTakip:
                 "alt_pay": iz.telefon_pay if sinif == "telefon" else (),
                 "kutu": tuple(float(v) for v in iz.kutu), "track_id": iz.id,
                 "dogrulama": kaynak, "sure": round(float(sure), 1),
-                "ts_seconds": round(ts, 2)}
+                "ts_seconds": round(ts, 2),
+                "analiz": self._analiz(iz, sinif, durum, ts, kaynak, sure, skor)}
+
+    def _analiz(self, iz: _Iz, sinif: str, durum: str, ts: float, kaynak: str,
+                sure: float, skor: float) -> dict:
+        """Kanıtta gösterilecek analiz özeti: ne yakalandı, hangi anda ne oldu.
+
+        Operatör isteği 2026-09-24: "test ekranı gibi neyi yakaladı, hangi anda
+        uyarı, hangi anda alarma döndü". Aşama zamanları ALARM ANINA GÖRE geriye
+        saniye olarak verilir; alarmın veritabanı zamanı mutlak andır, UI ikisini
+        toplayıp saat yazar — böylece kayıt/klip saatiyle birebir tutar.
+        """
+        izlendi = max(0.0, ts - iz.dogdu)
+        basla = iz.baslangic[sinif]
+        asamalar = [{"durum": "izle", "once_sn": round(izlendi, 1),
+                     "not": "kişi izlenmeye başlandı"}]
+        if basla is not None:
+            asamalar.append({"durum": "on_uyari", "once_sn": round(max(0.0, ts - basla), 1),
+                             "not": _ON_UYARI_NOT.get(sinif, "poz eşiği aşıldı")})
+        if durum == "alarm":
+            asamalar.append({"durum": "alarm", "once_sn": 0.0,
+                             "not": ("doğrulayıcı onayladı: " + kaynak) if kaynak != "poz"
+                             else "poz tek başına yeterli süre sürdü"})
+        if sinif == "sigara":
+            olcum = {"dokunus": len(iz.dokunus), "onayli_dokunus": len(iz.onayli_dokunus)}
+        else:
+            olcum = {"alt_tur": TELEFON_ALT_TUR.get(iz.telefon_alt, iz.telefon_alt)}
+        return {"sinif": sinif, "durum": durum, "iz": iz.id,
+                "izlendi_sn": round(izlendi, 1), "sure_sn": round(float(sure), 1),
+                "guven": round(float(skor), 2), "dogrulama": kaynak,
+                "asamalar": asamalar, "olcum": olcum}
 
     def etiketler(self) -> dict[int, str]:
         """iz id → panel etiketi ('telefon', 'sigara?', ...). Yalnız aktif olanlar."""
@@ -796,8 +830,10 @@ class DavranisHatti:
         if self.on_alert is not None:
             self.on_alert(o)
         if self.store is not None:
+            import json
             self.store.add_alert(o["sinif"], o["sinif"], o["sinif"], alarm_etiketi(o),
-                                 self.camera_id, snapshot=o["snapshot"], clip=o.get("clip", ""))
+                                 self.camera_id, snapshot=o["snapshot"], clip=o.get("clip", ""),
+                                 detay=json.dumps(o.get("analiz") or {}, ensure_ascii=False))
 
 
 def _ciz(kare, tespitler) -> Any:

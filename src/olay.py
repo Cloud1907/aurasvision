@@ -18,6 +18,24 @@ def _web(cfg, alarm: dict) -> None:
     gonder(cfg, alarm)
 
 
+def _analiz_json(p: dict) -> str:
+    """Olayın analiz özetini alarm satırına yazılacak JSON'a çevirir.
+
+    Özet worker'da (davranis.py) üretilir; Redis yolunda sözlük olarak, tek makine
+    yolunda da aynı şekilde gelir. Zaten metin geldiyse dokunulmaz.
+    """
+    a = p.get("analiz") or p.get("detay") or ""
+    if not a:
+        return ""
+    if isinstance(a, str):
+        return a
+    import json
+    try:
+        return json.dumps(a, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return ""
+
+
 
 def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
          cfg=None) -> None:
@@ -52,7 +70,8 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
         # zaten üretiliyordu ama buradan geçerken düşüyordu (bkz. bus.py:BusStore.add_alert)
         store.add_alert(p.get("kind", "intrusion"), p.get("ref", ""),
                         p.get("list_type", ""), p.get("label", ""), camera_id,
-                        snapshot=p.get("snapshot") or "", clip=p.get("clip") or "")
+                        snapshot=p.get("snapshot") or "", clip=p.get("clip") or "",
+                        detay=_analiz_json(p))
         _web(cfg, {"tur": p.get("kind", "intrusion"), "ref": p.get("ref", ""),
                    "etiket": p.get("label", ""), "kamera": camera_id})
     elif type_ == "fire":
@@ -82,8 +101,9 @@ def isle(store, alert_min_reads: int, type_: str, camera_id: str, p: dict,
             from .davranis import alarm_etiketi
             etiket = alarm_etiketi(p)
             sinif = p.get("sinif", "davranis")
-            store.add_alert(sinif, sinif, sinif, etiket,
-                            camera_id, snapshot=p.get("snapshot", ""), clip=p.get("clip", ""))
+            store.add_alert(sinif, sinif, sinif, etiket, camera_id,
+                            snapshot=p.get("snapshot", ""), clip=p.get("clip", ""),
+                            detay=_analiz_json(p))
             _web(cfg, {"tur": sinif, "ref": sinif, "etiket": etiket,
                        "kamera": camera_id, "kanit": p.get("snapshot", ""),
                        "klip": p.get("clip", "")})

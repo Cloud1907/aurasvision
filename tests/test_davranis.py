@@ -315,6 +315,61 @@ class HatTest(unittest.TestCase):
         self.assertEqual(hat.sonuc.kisiler_max, 1)
         self.assertEqual(olaylar[-1].get("snapshot"), "")   # kanıt kapalı
 
+    def test_alarm_analiz_zaman_cizgisi_tasir(self):
+        """Alarm, kanıt ekranındaki analiz özetini yanında taşır.
+
+        Operatör isteği 2026-09-24: kanıtta "neyi yakaladı, hangi anda ön uyarı,
+        hangi anda alarm" görünsün. Özet olayın içinde doğar (alerts.detay'a
+        JSON olarak yazılır); burada üretildiği yerde doğrulanır.
+        """
+        class Cfg(dict):
+            def get(self, k, d=None):
+                return dict.get(self, k, d)
+        cfg = Cfg({"davranis.telefon_sn": 2.0, "davranis.camera_cooldown_seconds": 0,
+                   "evidence.enabled": False})
+        kare = np.zeros((480, 640, 3), dtype=np.uint8)
+        olaylar = []
+        hat = DavranisHatti(cfg, 640, 480, "test", 4.0,
+                            poz=lambda bgr: [kisi(bilek=TELEFON)],
+                            on_event=olaylar.append, on_alert=olaylar.append)
+        for i in range(40):
+            hat.kare(kare, i / 4, i)
+        alarm = next(o for o in olaylar if o["durum"] == "alarm")
+        a = alarm["analiz"]
+        self.assertEqual(a["sinif"], "telefon")
+        asamalar = [x["durum"] for x in a["asamalar"]]
+        self.assertEqual(asamalar, ["izle", "on_uyari", "alarm"])
+        # Zamanlar alarm anına göre GERİYE saniye: izle en eski, alarm sıfır
+        once = [x["once_sn"] for x in a["asamalar"]]
+        self.assertGreaterEqual(once[0], once[1])
+        self.assertEqual(once[-1], 0.0)
+        self.assertGreater(a["izlendi_sn"], 0.0)
+        self.assertTrue(all(x["not"] for x in a["asamalar"]))
+        self.assertEqual(a["olcum"]["alt_tur"], "telefonla konuşma")
+
+    def test_analiz_json_olarak_alarm_satirina_yazilir(self):
+        """store.add_alert(detay=...) yazılıp geri okunur — kanıt ekranının kaynağı."""
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from src.store import SqliteStore
+        with tempfile.TemporaryDirectory() as td:
+            st = SqliteStore(str(Path(td) / "deneme.db"))
+            try:
+                detay = {"sinif": "sigara", "asamalar": [{"durum": "alarm", "once_sn": 0.0}]}
+                st.add_alert("sigara", "sigara", "sigara", "sigara içme", "kam",
+                             snapshot="k.jpg", clip="k.mp4",
+                             detay=json.dumps(detay, ensure_ascii=False))
+                satir = st.recent_alerts(1)[0]
+                self.assertEqual(json.loads(satir["detay"]), detay)
+                # Olay akışı da taşır: Olaylar ekranındaki satır kanıtı açabilsin
+                olay = st.recent_events(5)[0]
+                self.assertEqual(json.loads(olay["detay"]), detay)
+                self.assertEqual(olay["clip"], "k.mp4")
+            finally:
+                st.close()
+
 
 if __name__ == "__main__":
     unittest.main()
