@@ -377,6 +377,42 @@ class HatTest(unittest.TestCase):
         self.assertEqual(a["kare"], a["kareler"][-1]["kare"])
         self.assertEqual(a["kareler"][-1]["asama"], "alarm")
 
+    def test_kanit_karesine_yakalanan_nesne_cizilir(self):
+        """Kanıt karesi, analizin YAKALADIĞI nesneyi de çizer (kişi kutusu yetmiyor).
+
+        Operatör isteği 2026-09-24: "analizi çizsin, hangisini yakaladığını
+        göstersin". Kırpma, nesne kişi kutusunun dışına taşsa da onu kapsar.
+        """
+        import tempfile
+        from pathlib import Path
+
+        import cv2
+
+        from src.evidence import kaydet
+
+        class Cfg(dict):
+            def get(self, k, d=None):
+                return dict.get(self, k, d)
+
+        with tempfile.TemporaryDirectory() as td:
+            import src.evidence as ev
+            eski = ev._ROOT
+            ev._ROOT = Path(td)
+            try:
+                cfg = Cfg({"paths.output_dir": "cikti", "evidence.enabled": True,
+                           "evidence.telefon": True, "evidence.keep_days": 30})
+                kare = np.zeros((360, 640, 3), dtype=np.uint8)
+                yol = kaydet(cfg, kare, "kam", "telefon", box=(300, 100, 380, 300),
+                             etiket="elde telefon", vurgular=[((280, 180, 296, 200), "telefon")])
+                self.assertTrue(yol)
+                img = cv2.imread(str(Path(td) / "cikti" / yol.replace("evidence/", "evidence/")))
+                self.assertIsNotNone(img)
+                # Kırmızı (BGR 40,40,255) piksel var: nesne kutusu çizilmiş
+                kirmizi = ((img[:, :, 2] > 200) & (img[:, :, 0] < 90) & (img[:, :, 1] < 90)).sum()
+                self.assertGreater(kirmizi, 40)
+            finally:
+                ev._ROOT = eski
+
     def test_analiz_json_olarak_alarm_satirina_yazilir(self):
         """store.add_alert(detay=...) yazılıp geri okunur — kanıt ekranının kaynağı."""
         import json
