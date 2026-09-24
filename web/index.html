@@ -2564,7 +2564,8 @@ function analizHtml(detay,zaman){
       doğrulama: ${esc(a.dogrulama==="poz"?"yalnız poz (doğrulayıcı kutu yok)":(a.dogrulama||"—"))}
       · ön uyarıdan alarma ${a.sure_sn||0} sn · kişi ${a.izlendi_sn||0} sn izlendi · iz #${esc(a.iz??"—")}
       ${a.kare!=null?` · alarm karesi ${esc(a.kare)} (${(+a.ts_sn||0).toFixed(2)} sn)`:""}
-      ${olcum.length?" · "+esc(olcum.join(" · ")):""}</div></div>`;
+      ${olcum.length?" · "+esc(olcum.join(" · ")):""}
+      ${a.tempo_fps?`<br>analiz temposu ${(+a.tempo_fps).toFixed(1)} kare/sn${a.hedef_fps&&a.tempo_fps<a.hedef_fps*0.6?` (hedef ${(+a.hedef_fps).toFixed(0)} — GPU dolu, zamansal kurallar daha az örnekle karar verdi)`:""}`:""}</div></div>`;
 }
 /* Kare kare tespit dökümü — Test ekranındaki satırların kanıttaki karşılığı.
    Klip görseldir, bu liste okunabilir kanıttır: hangi karede izleme, hangi
