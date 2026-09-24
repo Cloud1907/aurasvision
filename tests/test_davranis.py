@@ -462,6 +462,43 @@ class HatTest(unittest.TestCase):
             finally:
                 ev._ROOT = eski
 
+    def test_uzun_dar_kisi_kutusunda_buyutme_basilir(self):
+        """Ayakta duran kişinin (dar, uzun kutu) büyütmesi kareden taşıp atlanmamalı.
+
+        Ölçüm 2026-09-24 (alarm #751, 2880×1616): kişi kutusu 216×559 → yalnız
+        genişliğe göre 4× büyütme 864×2236 oluyor, kareye sığmıyor ve kırpma HİÇ
+        basılmıyordu — en çok gereken yerde (uzaktaki küçük kişi) kayboluyordu.
+        """
+        import tempfile
+        from pathlib import Path
+
+        import cv2
+
+        from src.evidence import kaydet
+
+        class Cfg(dict):
+            def get(self, k, d=None):
+                return dict.get(self, k, d)
+
+        with tempfile.TemporaryDirectory() as td:
+            import src.evidence as ev
+            eski = ev._ROOT
+            ev._ROOT = Path(td)
+            try:
+                cfg = Cfg({"paths.output_dir": "cikti", "evidence.enabled": True,
+                           "evidence.telefon": True})
+                kare = np.zeros((1616, 2880, 3), dtype=np.uint8)
+                kare[:] = 30
+                # Sahadaki oranlar: dar ve uzun kişi kutusu
+                yol = kaydet(cfg, kare, "kam", "telefon", box=(1800, 500, 2016, 1059),
+                             etiket="elde telefon")
+                img = cv2.imread(str(Path(td) / "cikti" / yol))
+                # Büyütme sol üst köşeye basıldıysa oradaki sarı çerçeve görünür
+                sari = ((img[:, :, 0] < 90) & (img[:, :, 1] > 180) & (img[:, :, 2] > 180)).sum()
+                self.assertGreater(sari, 500, "kırpma çerçevesi yok — büyütme basılmamış")
+            finally:
+                ev._ROOT = eski
+
     def test_analiz_json_olarak_alarm_satirina_yazilir(self):
         """store.add_alert(detay=...) yazılıp geri okunur — kanıt ekranının kaynağı."""
         import json
