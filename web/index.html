@@ -2590,16 +2590,15 @@ function kareIziHtml(a){
       <td class="mono">${esc(k.kare)}</td>
       <td class="mono">${(+k.ts_sn||0).toFixed(2)} sn</td>
       <td>${esc(k.etiket)}</td>
-      <td><span class="chip" style="background:${c[0]};color:${c[1]};">${esc(_ASAMA_KISA[k.asama]||k.asama)}</span></td>
-      <td class="mono mut-s">%${Math.round((k.ortusme||0)*100)}</td></tr>`;};
+      <td><span class="chip" style="background:${c[0]};color:${c[1]};">${esc(_ASAMA_KISA[k.asama]||k.asama)}</span></td></tr>`;};
   return `<details style="border-top:1px solid var(--line);">
     <summary style="padding:10px 15px;cursor:pointer;font-weight:650;font-size:12px;">Kare tespitleri (${ks.length} kare)</summary>
     <div style="max-height:230px;overflow:auto;padding:0 15px 12px;">
       <table style="width:100%;border-collapse:collapse;font-size:11px;">
         <thead><tr class="mut-s" style="text-align:left;">
-          <th>kare</th><th>akış saniyesi</th><th>etiket</th><th>aşama</th><th>örtüşme</th></tr></thead>
+          <th>kare</th><th>akış saniyesi</th><th>etiket</th><th>aşama</th></tr></thead>
         <tbody>${ks.map(satir).join("")}</tbody></table>
-      <div class="mut-s" style="margin-top:8px;">Örtüşme: o karedeki kutunun alarm kutusuyla kesişimi — kalabalıkta doğru kişiye bakıldığını gösterir.</div>
+      <div class="mut-s" style="margin-top:8px;">Yalnız alarma konu kişinin izi (#${esc(a.iz??"—")}) listelenir; kişinin görünmediği kareler atlanır.</div>
     </div></details>`;
 }
 function kanitAc(yol,klip,detay,zaman){

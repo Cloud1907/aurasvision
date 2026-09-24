@@ -67,13 +67,12 @@ function FrameTrace({ analiz }) {
     <summary>Kare tespitleri ({ks.length} kare)</summary>
     <div>
       <table>
-        <thead><tr><th>kare</th><th>akış saniyesi</th><th>etiket</th><th>aşama</th><th>örtüşme</th></tr></thead>
+        <thead><tr><th>kare</th><th>akış saniyesi</th><th>etiket</th><th>aşama</th></tr></thead>
         <tbody>{ks.map((k, i) => <tr key={i} data-alarm={k.kare === analiz.kare ? '1' : undefined}>
           <td>{k.kare}</td><td>{(+k.ts_sn || 0).toFixed(2)} sn</td><td>{k.etiket}</td>
-          <td data-asama={k.asama}>{ASAMA_KISA[k.asama] || k.asama}</td>
-          <td>%{Math.round((k.ortusme || 0) * 100)}</td></tr>)}</tbody>
+          <td data-asama={k.asama}>{ASAMA_KISA[k.asama] || k.asama}</td></tr>)}</tbody>
       </table>
-      <p>Örtüşme: o karedeki kutunun alarm kutusuyla kesişimi — kalabalıkta doğru kişiye bakıldığını gösterir.</p>
+      <p>Yalnız alarma konu kişinin izi (#{analiz.iz ?? '—'}) listelenir; kişinin görünmediği kareler atlanır.</p>
     </div>
   </details>;
 }

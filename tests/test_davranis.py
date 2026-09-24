@@ -373,7 +373,6 @@ class HatTest(unittest.TestCase):
         for k in a["kareler"]:
             self.assertAlmostEqual(k["ts_sn"], k["kare"] / 4, places=2)
             self.assertIn(k["asama"], ("izle", "on_uyari", "alarm"))
-            self.assertGreater(k["ortusme"], 0.2)
         # Alarm karesi dökümün İÇİNDE: klipteki an listede bulunabilmeli
         self.assertEqual(a["kare"], a["kareler"][-1]["kare"])
         self.assertEqual(a["kareler"][-1]["asama"], "alarm")
