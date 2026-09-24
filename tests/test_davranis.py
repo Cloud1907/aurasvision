@@ -377,6 +377,28 @@ class HatTest(unittest.TestCase):
         self.assertEqual(a["kare"], a["kareler"][-1]["kare"])
         self.assertEqual(a["kareler"][-1]["asama"], "alarm")
 
+    def test_klip_gercek_tempoyla_yazilir(self):
+        """Klip hedef fps ile değil ÖLÇÜLEN fps ile yazılır.
+
+        Saha ölçümü 2026-09-24: hedef 4 kare/sn, gerçekleşen 0,5–1,8 (GPU dolu,
+        kademe kare düşürüyor). Hedefle yazılan klip gerçeğin katları hızda
+        oynuyordu; kanıt yanıltıcı olmamalı.
+        """
+        class Cfg(dict):
+            def get(self, k, d=None):
+                return dict.get(self, k, d)
+        cfg = Cfg({"davranis.telefon_sn": 2.0, "davranis.camera_cooldown_seconds": 0,
+                   "evidence.enabled": False})
+        kare = np.zeros((480, 640, 3), dtype=np.uint8)
+        hat = DavranisHatti(cfg, 640, 480, "test", 4.0, poz=lambda bgr: [kisi(bilek=TELEFON)])
+        # Hedef 4 fps ama kareler saniyede 1 geliyor
+        for i in range(12):
+            hat.kare(kare, float(i), i)
+        self.assertAlmostEqual(hat._olculen_fps(), 1.0, places=2)
+        # Tampon boşken hedefe düşer
+        bos = DavranisHatti(cfg, 640, 480, "test", 4.0, poz=lambda bgr: [])
+        self.assertEqual(bos._olculen_fps(), 4.0)
+
     def test_kanit_karesine_yakalanan_nesne_cizilir(self):
         """Kanıt karesi, analizin YAKALADIĞI nesneyi de çizer (kişi kutusu yetmiyor).
 

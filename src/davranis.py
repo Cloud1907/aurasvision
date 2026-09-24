@@ -793,6 +793,11 @@ class DavranisHatti:
         kisiler = self.poz(bgr)
         # Tam karede kaybolan küçük telefonu kişi kırpmasında ara. Çağrı sayısı
         # kamera başına saniyede bir, en büyük altı kişiyle sınırlıdır.
+        #
+        # 2026-09-24 denendi ve GERİ ALINDI: "yalnız eli yukarıdaki kişiyi tara"
+        # filtresi saha karelerinde taramayı yalnız %10 azaltıyordu (uzak kişide poz
+        # bilekleri gövdenin üstünde topluyor) — tempo darboğazı burası değil,
+        # sayım+yangın+davranışın aynı GPU'yu paylaşması. Tespit riski almaya değmez.
         interval = max(0.25, float(self.cfg.get("davranis.telefon_aralik_sn", 1.0)))
         if self.telefon is not None and ts - self._telefon_ts >= interval:
             self._telefon_boxes = []
@@ -880,6 +885,23 @@ class DavranisHatti:
             cikti.append(img)
         return cikti
 
+    def _olculen_fps(self) -> float:
+        """Klibin yazılacağı GERÇEK tempo (kare/sn).
+
+        Hedef tempo (`davranis.fps`) ile gerçekleşen tempo sahada ayrışıyor: GPU
+        doluyken kademe kare düşürüyor (ölçüm 2026-09-24, kamera-201/207: hedef 4,
+        gerçekleşen 0,5–1,8). Hedef temposuyla yazılan klip gerçeğin 2–8 katı hızda
+        oynuyordu — kanıt yanıltıcı olur. Halka tamponundaki zaman damgalarından
+        ölçülür; tampon boşsa hedefe düşer.
+        """
+        m = list(self.halka_meta)
+        if len(m) < 2:
+            return self.efektif_fps
+        sure = m[-1][1] - m[0][1]
+        if sure <= 0:
+            return self.efektif_fps
+        return max(1.0, min(30.0, (len(m) - 1) / sure))
+
     def _kare_izi(self, o: dict) -> list[dict]:
         """Alarm kişisinin son karelerdeki tespit dökümü — Test ekranındaki satırların aynısı.
 
@@ -915,6 +937,10 @@ class DavranisHatti:
             analiz["kare"] = int(o.get("frame_idx") or 0)
             analiz["ts_sn"] = float(o.get("ts_seconds") or 0.0)
             analiz["kareler"] = self._kare_izi(o)
+            # Gerçekleşen analiz temposu: hedefin altındaysa zamansal kurallar daha
+            # az örnekle karar veriyor demektir — kanıtta görünsün.
+            analiz["tempo_fps"] = round(self._olculen_fps(), 2)
+            analiz["hedef_fps"] = round(float(self.efektif_fps), 2)
         # Kanıt türü ve uyarı türü = sınıf: "telefon" ve "sigara" panelde, kanıt
         # klasöründe ve webhook'ta AYRI görünür (evidence.telefon / evidence.sigara).
         vurgu = o.get("dogrulama_kutu")
@@ -922,7 +948,7 @@ class DavranisHatti:
                                      box=o["kutu"], etiket=_ascii(alarm_etiketi(o)),
                                      vurgular=[(vurgu, _ascii(o["sinif"]))] if vurgu else None)
         o["clip"] = klip_kaydet(self.cfg, self._klip_kareleri(o), self.camera_id, o["sinif"],
-                                fps=self.efektif_fps)
+                                fps=self._olculen_fps())
         self.sonuc.alarmlar.append(o)
         if self.on_alert is not None:
             self.on_alert(o)

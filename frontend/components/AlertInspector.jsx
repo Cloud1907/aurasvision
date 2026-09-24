@@ -52,7 +52,10 @@ function AnalysisTimeline({ detay, time }) {
     <p>doğrulama: {a.dogrulama === 'poz' ? 'yalnız poz (doğrulayıcı kutu yok)' : (a.dogrulama || '—')}
       {' · '}ön uyarıdan alarma {a.sure_sn || 0} sn · kişi {a.izlendi_sn || 0} sn izlendi · iz #{a.iz ?? '—'}
       {a.kare != null ? ` · alarm karesi ${a.kare} (${(+a.ts_sn || 0).toFixed(2)} sn)` : ''}
-      {olcum.length ? ` · ${olcum.join(' · ')}` : ''}</p>
+      {olcum.length ? ` · ${olcum.join(' · ')}` : ''}
+      {a.tempo_fps ? <><br/>analiz temposu {(+a.tempo_fps).toFixed(1)} kare/sn
+        {a.hedef_fps && a.tempo_fps < a.hedef_fps * 0.6
+          ? ` (hedef ${(+a.hedef_fps).toFixed(0)} — GPU dolu, zamansal kurallar daha az örnekle karar verdi)` : ''}</> : null}</p>
   </section>;
 }
 
