@@ -711,6 +711,9 @@ class DavranisHatti:
         # Kare başına çizim bilgisi (etiket, kutu) — klip ANALİZ KATMANIYLA yazılır:
         # operatör kanıtta "izle → ön uyarı → alarm" ilerleyişini görsün (istek 2026-09-23)
         self.halka_ciz: deque = deque(maxlen=self.halka.maxlen)
+        # Kare kimliği + akış saniyesi: kanıttaki KARE DÖKÜMÜ bunlardan yazılır
+        # (istek 2026-09-24: "olaylarda da Test ekranındaki kare/sn detayı olsun")
+        self.halka_meta: deque = deque(maxlen=self.halka.maxlen)
         self.sonuc = DavranisResult(fps=efektif_fps)
         self.store = store
         self.on_event = on_event
@@ -742,6 +745,11 @@ class DavranisHatti:
         """
         self.sonuc.frames += 1
         self.halka.append(bgr.copy())
+        self.halka_meta.append((frame_idx, ts))
+        # Etiket yeri şimdi açılır, kare sonunda doldurulur: halka ile BİREBİR
+        # hizalı kalsın. Önceden etiketler kare sonunda eklendiği için klipte
+        # kutular bir kare geriden çiziliyordu ve alarm karesi etiketsiz kalıyordu.
+        self.halka_ciz.append([])
         kisiler = self.poz(bgr)
         # Tam karede kaybolan küçük telefonu kişi kırpmasında ara. Çağrı sayısı
         # kamera başına saniyede bir, en büyük altı kişiyle sınırlıdır.
@@ -762,17 +770,20 @@ class DavranisHatti:
         if 0 <= ts - self._telefon_ts < interval:
             boxes.extend(self._telefon_boxes)
         self.sonuc.kisiler_max = max(self.sonuc.kisiler_max, len(kisiler))
-        for o in self.takip.guncelle(kisiler, ts, boxes, self._sigara_kontrol(bgr)):
-            o["camera_id"] = self.camera_id
-            o["frame_idx"] = frame_idx
-            self._yay(o, bgr)
+        olaylar = self.takip.guncelle(kisiler, ts, boxes, self._sigara_kontrol(bgr))
+        # Etiketler olaylardan ÖNCE yazılır: alarm karesinin kendisi de kanıt
+        # klibinde ve kare dökümünde etiketli görünsün.
         et = self.takip.etiketler()
         out = []
         for iz in self.takip.izler.values():
             if iz.son_ts != ts:
                 continue
             out.append((et.get(iz.id, "kisi"), *iz.kutu, 1.0))
-        self.halka_ciz.append(list(out))
+        self.halka_ciz[-1] = list(out)
+        for o in olaylar:
+            o["camera_id"] = self.camera_id
+            o["frame_idx"] = frame_idx
+            self._yay(o, bgr)
         return out
 
     def _klip_kareleri(self, o: dict) -> list:
@@ -784,12 +795,13 @@ class DavranisHatti:
         """
         import cv2
         kareler = list(self.halka)
-        cizler = list(self.halka_ciz)
-        cizler = [[]] * (len(kareler) - len(cizler)) + cizler[-len(kareler):]
+        cizler = list(self.halka_ciz)     # halka ile birebir hizalı (bkz. kare())
+        metalar = list(self.halka_meta)
         hedef = tuple(o["kutu"])
         cikti = []
         n = len(kareler)
         for i, (kare, ciz) in enumerate(zip(kareler, cizler)):
+            meta = metalar[i] if i < len(metalar) else (0, 0.0)
             img = _ciz(kare, ciz)
             k = max(1.0, img.shape[1] / 1280)
             # alarm kişisi: en yüksek IoU'lu kutu, kalın kırmızı + aşama metni
@@ -807,9 +819,36 @@ class DavranisHatti:
                 cv2.rectangle(img, (int(en[1]), int(en[2])), (int(en[3]), int(en[4])), renk, max(2, round(3 * k)))
                 cv2.putText(img, f"{_ascii(o['sinif'])}: {asama}", (int(en[1]), max(16, int(en[2]) - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7 * k, renk, max(2, round(2 * k)))
-            cv2.putText(img, f"{_ascii(alarm_etiketi(o))}  kare {i + 1}/{n}", (10, int(28 * k)),
+            # Bant: kare numarası ve akış saniyesi kanıttaki kare dökümüyle AYNI
+            # değerlerdir — operatör klipteki anı listede bulabilsin.
+            cv2.putText(img, f"{_ascii(alarm_etiketi(o))}  kare {meta[0]} ({i + 1}/{n})"
+                             f"  {meta[1]:.2f} sn", (10, int(28 * k)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6 * k, (255, 255, 255), max(1, round(2 * k)))
             cikti.append(img)
+        return cikti
+
+    def _kare_izi(self, o: dict) -> list[dict]:
+        """Alarm kişisinin son karelerdeki tespit dökümü — Test ekranındaki satırların aynısı.
+
+        Her kare için: kare numarası, akış saniyesi, o karede verilen etiket ve
+        aşaması. Klip görsel kanıt, bu liste OKUNABİLİR kanıttır: "hangi karede
+        izleme, hangi karede ön uyarı, hangi karede alarm" listeden görülür.
+        Halka tamponu kadar (davranis.clip_seconds) geriye gider.
+        """
+        hedef = tuple(o["kutu"])
+        cikti = []
+        for (fi, fts), ciz in zip(self.halka_meta, self.halka_ciz):
+            en, en_ortusme = None, 0.2
+            for et, x1, y1, x2, y2, _c in ciz:
+                s_ = _iou((x1, y1, x2, y2), hedef)
+                if s_ > en_ortusme:
+                    en, en_ortusme = et, s_
+            if en is None:
+                continue
+            asama = "izle" if en == "kisi" else ("on_uyari" if en.endswith("?") else "alarm")
+            cikti.append({"kare": int(fi), "ts_sn": round(float(fts), 2),
+                          "etiket": en, "asama": asama,
+                          "ortusme": round(float(en_ortusme), 2)})
         return cikti
 
     def _yay(self, o: dict, kare) -> None:
@@ -820,6 +859,13 @@ class DavranisHatti:
             return
         from .evidence import kaydet as kanit_kaydet
         from .evidence import klip_kaydet
+        # Analiz özetine kare düzeyi eklenir: hangi kare, kaçıncı saniye ve alarm
+        # kişisinin kare kare tespit dökümü (kanıt ekranı bunu liste olarak gösterir).
+        analiz = o.get("analiz")
+        if isinstance(analiz, dict):
+            analiz["kare"] = int(o.get("frame_idx") or 0)
+            analiz["ts_sn"] = float(o.get("ts_seconds") or 0.0)
+            analiz["kareler"] = self._kare_izi(o)
         # Kanıt türü ve uyarı türü = sınıf: "telefon" ve "sigara" panelde, kanıt
         # klasöründe ve webhook'ta AYRI görünür (evidence.telefon / evidence.sigara).
         o["snapshot"] = kanit_kaydet(self.cfg, kare, self.camera_id, o["sinif"],
