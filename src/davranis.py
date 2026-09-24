@@ -714,6 +714,10 @@ class DavranisHatti:
         # Kare kimliği + akış saniyesi: kanıttaki KARE DÖKÜMÜ bunlardan yazılır
         # (istek 2026-09-24: "olaylarda da Test ekranındaki kare/sn detayı olsun")
         self.halka_meta: deque = deque(maxlen=self.halka.maxlen)
+        # Kare başına iz kimliği → (etiket, kutu). Döküm ve klip vurgusu bundan
+        # okunur: kutu örtüşmesiyle eşleştirmek yürüyen kişide iz kopartıyordu
+        # (canlı alarm #644'te 5 saniyelik tampondan yalnız 2 kare eşleşti).
+        self.halka_iz: deque = deque(maxlen=self.halka.maxlen)
         self.sonuc = DavranisResult(fps=efektif_fps)
         self.store = store
         self.on_event = on_event
@@ -750,6 +754,7 @@ class DavranisHatti:
         # hizalı kalsın. Önceden etiketler kare sonunda eklendiği için klipte
         # kutular bir kare geriden çiziliyordu ve alarm karesi etiketsiz kalıyordu.
         self.halka_ciz.append([])
+        self.halka_iz.append({})
         kisiler = self.poz(bgr)
         # Tam karede kaybolan küçük telefonu kişi kırpmasında ara. Çağrı sayısı
         # kamera başına saniyede bir, en büyük altı kişiyle sınırlıdır.
@@ -775,11 +780,15 @@ class DavranisHatti:
         # klibinde ve kare dökümünde etiketli görünsün.
         et = self.takip.etiketler()
         out = []
+        izmap = {}
         for iz in self.takip.izler.values():
             if iz.son_ts != ts:
                 continue
-            out.append((et.get(iz.id, "kisi"), *iz.kutu, 1.0))
+            etiket = et.get(iz.id, "kisi")
+            out.append((etiket, *iz.kutu, 1.0))
+            izmap[iz.id] = (etiket, tuple(float(v) for v in iz.kutu))
         self.halka_ciz[-1] = list(out)
+        self.halka_iz[-1] = izmap
         for o in olaylar:
             o["camera_id"] = self.camera_id
             o["frame_idx"] = frame_idx
@@ -790,34 +799,31 @@ class DavranisHatti:
         """Halka tamponunu analiz katmanıyla döker: kişi kutuları + o karedeki aşama.
 
         Aşama etiketi hattın o andaki durumudur ('kisi' → izle, 'x?' → ön uyarı,
-        'x' → alarm); son kare alarmın kendisidir. Alarm kutusuyla örtüşen kişi
-        vurgulanır ki kalabalıkta hangi kişiye ait olduğu belli olsun.
+        'x' → alarm); son kare alarmın kendisidir. Alarm kişisi İZ KİMLİĞİNDEN
+        bulunup vurgulanır — kalabalıkta hangi kişiye ait olduğu belli olsun ve
+        kişi yürürken kutu örtüşmesi düşse de iz kopmasın.
         """
         import cv2
         kareler = list(self.halka)
         cizler = list(self.halka_ciz)     # halka ile birebir hizalı (bkz. kare())
         metalar = list(self.halka_meta)
-        hedef = tuple(o["kutu"])
+        izler = list(self.halka_iz)
+        tid = o.get("track_id")
         cikti = []
         n = len(kareler)
         for i, (kare, ciz) in enumerate(zip(kareler, cizler)):
             meta = metalar[i] if i < len(metalar) else (0, 0.0)
             img = _ciz(kare, ciz)
             k = max(1.0, img.shape[1] / 1280)
-            # alarm kişisi: en yüksek IoU'lu kutu, kalın kırmızı + aşama metni
-            asama = "izle"
-            en = None; en_iou = 0.2
-            for et, x1, y1, x2, y2, _c in ciz:
-                s_ = _iou((x1, y1, x2, y2), hedef)
-                if s_ > en_iou:
-                    en, en_iou = (et, x1, y1, x2, y2), s_
+            # alarm kişisi: iz kimliğiyle bulunur, kalın kırmızı + aşama metni
+            en = (izler[i] if i < len(izler) else {}).get(tid)
             if en is not None:
-                et = en[0]
+                et, kutu = en
                 asama = "ALARM" if (i == n - 1 or et == o["sinif"]) else \
                         ("on uyari" if et.endswith("?") else "izle")
                 renk = (40, 40, 255) if asama == "ALARM" else ((0, 200, 255) if asama == "on uyari" else (200, 200, 200))
-                cv2.rectangle(img, (int(en[1]), int(en[2])), (int(en[3]), int(en[4])), renk, max(2, round(3 * k)))
-                cv2.putText(img, f"{_ascii(o['sinif'])}: {asama}", (int(en[1]), max(16, int(en[2]) - 8)),
+                cv2.rectangle(img, (int(kutu[0]), int(kutu[1])), (int(kutu[2]), int(kutu[3])), renk, max(2, round(3 * k)))
+                cv2.putText(img, f"{_ascii(o['sinif'])}: {asama}", (int(kutu[0]), max(16, int(kutu[1]) - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7 * k, renk, max(2, round(2 * k)))
             # Bant: kare numarası ve akış saniyesi kanıttaki kare dökümüyle AYNI
             # değerlerdir — operatör klipteki anı listede bulabilsin.
@@ -835,20 +841,16 @@ class DavranisHatti:
         izleme, hangi karede ön uyarı, hangi karede alarm" listeden görülür.
         Halka tamponu kadar (davranis.clip_seconds) geriye gider.
         """
-        hedef = tuple(o["kutu"])
+        tid = o.get("track_id")
         cikti = []
-        for (fi, fts), ciz in zip(self.halka_meta, self.halka_ciz):
-            en, en_ortusme = None, 0.2
-            for et, x1, y1, x2, y2, _c in ciz:
-                s_ = _iou((x1, y1, x2, y2), hedef)
-                if s_ > en_ortusme:
-                    en, en_ortusme = et, s_
-            if en is None:
-                continue
-            asama = "izle" if en == "kisi" else ("on_uyari" if en.endswith("?") else "alarm")
+        for (fi, fts), izmap in zip(self.halka_meta, self.halka_iz):
+            kayit = izmap.get(tid)
+            if kayit is None:
+                continue          # kişi o karede sahnede değil (ya da iz kopmuş)
+            et = kayit[0]
+            asama = "izle" if et == "kisi" else ("on_uyari" if et.endswith("?") else "alarm")
             cikti.append({"kare": int(fi), "ts_sn": round(float(fts), 2),
-                          "etiket": en, "asama": asama,
-                          "ortusme": round(float(en_ortusme), 2)})
+                          "etiket": et, "asama": asama})
         return cikti
 
     def _yay(self, o: dict, kare) -> None:
