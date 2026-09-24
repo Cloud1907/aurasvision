@@ -347,6 +347,37 @@ class HatTest(unittest.TestCase):
         self.assertTrue(all(x["not"] for x in a["asamalar"]))
         self.assertEqual(a["olcum"]["alt_tur"], "telefonla konuşma")
 
+    def test_alarm_kare_dokumu_tasir(self):
+        """Alarm, kare kare tespit dökümünü taşır (Test ekranındaki kare/sn detayı).
+
+        Operatör isteği 2026-09-24: "olaylarda kare tespit detayları yok, test
+        gibi görmek istiyorum". Klip görsel kanıt; bu liste okunabilir kanıttır.
+        """
+        class Cfg(dict):
+            def get(self, k, d=None):
+                return dict.get(self, k, d)
+        cfg = Cfg({"davranis.telefon_sn": 2.0, "davranis.camera_cooldown_seconds": 0,
+                   "evidence.enabled": False, "davranis.clip_seconds": 3.0})
+        kare = np.zeros((480, 640, 3), dtype=np.uint8)
+        olaylar = []
+        hat = DavranisHatti(cfg, 640, 480, "test", 4.0,
+                            poz=lambda bgr: [kisi(bilek=TELEFON)],
+                            on_event=olaylar.append, on_alert=olaylar.append)
+        for i in range(40):
+            hat.kare(kare, i / 4, i)
+        a = next(o for o in olaylar if o["durum"] == "alarm")["analiz"]
+        self.assertGreater(len(a["kareler"]), 1)
+        # Kare numaraları artan, akış saniyeleri kare/fps ile tutarlı
+        kareler = [k["kare"] for k in a["kareler"]]
+        self.assertEqual(kareler, sorted(kareler))
+        for k in a["kareler"]:
+            self.assertAlmostEqual(k["ts_sn"], k["kare"] / 4, places=2)
+            self.assertIn(k["asama"], ("izle", "on_uyari", "alarm"))
+            self.assertGreater(k["ortusme"], 0.2)
+        # Alarm karesi dökümün İÇİNDE: klipteki an listede bulunabilmeli
+        self.assertEqual(a["kare"], a["kareler"][-1]["kare"])
+        self.assertEqual(a["kareler"][-1]["asama"], "alarm")
+
     def test_analiz_json_olarak_alarm_satirina_yazilir(self):
         """store.add_alert(detay=...) yazılıp geri okunur — kanıt ekranının kaynağı."""
         import json

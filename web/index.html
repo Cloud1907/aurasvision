@@ -1665,7 +1665,7 @@ const SCREENS={
         :`<span class="av" style="background:var(--danger-soft);color:var(--danger);flex-shrink:0;">${a.kind==='intrusion'?'⚠':'!'}</span>`}
       <div style="flex:1;min-width:0;">
         <div style="font-weight:700;">${alarmBasligi(a)}</div>
-        <div class="mut-s">${esc(a.label||'—')} ${a.camera_id?'· '+esc(adOf(a.camera_id)):''} · ${esc(gecenSure(a.time))}</div></div>
+        <div class="mut-s">${esc(a.label||'—')} ${a.camera_id?'· '+esc(adOf(a.camera_id)):''} · ${esc(gecenSure(a.time))}${kareBilgisi(a)}</div></div>
       <span class="chip" style="background:var(--danger-soft);color:var(--danger);flex-shrink:0;">${esc(listeEtiketi[a.list_type]||a.list_type||'liste')}</span>
       <button class="btn sm" onclick="recordAt('${esc(a.camera_id||'')}','${esc(a.time||'')}')" title="Kayıtta olay anına git">${svg('play',13)} Kayıt</button></div>`;
     const filtered=!!(f.tur||f.kamera||f.q||f.start||f.end);
@@ -1715,7 +1715,7 @@ const SCREENS={
              onclick="kanitAc(this.dataset.y,this.dataset.k,this.dataset.d,this.dataset.t)"/>`
           :`<span class="av" style="background:${m[1]};color:${m[2]};">${svg(m[0],17)}</span>`}
         <div style="flex:1;min-width:0;"><div style="font-weight:700;">${m[3]}${e.camera_id?' · <span class="mut-s">'+esc(adOf(e.camera_id))+'</span>':''}</div>
-          <div class="mono mut-s">${esc(e.detail)}${e.plaka_tur==="yabanci"
+          <div class="mono mut-s">${esc(e.detail)}${kareBilgisi(e)}${e.plaka_tur==="yabanci"
             ?' <span title="TR formatı dışında — yapısal doğrulama yok, yalnız OCR güveniyle kabul edildi" style="font-family:var(--sans,inherit);font-size:10px;font-weight:700;letter-spacing:.4px;padding:1px 6px;border-radius:99px;background:color-mix(in srgb,var(--uyari,#f59e0b) 18%,transparent);color:var(--uyari,#f59e0b);vertical-align:1px;">YABANCI</span>':''}</div></div>
         <span class="mut-s" style="text-align:right;">${esc(gecenSure(e.time))}<br><time style="font-size:11px;">${esc(AurasRuntime.parseTime(e.time)?.toLocaleString('tr-TR')||e.time)}</time>
           ${e.camera_id?`<br><button class="btn sm" style="margin-top:6px;" onclick="recordAt('${esc(e.camera_id)}','${esc(e.time)}')">Kayda git</button>`:''}</span></div>`}).join("")
@@ -2559,10 +2559,48 @@ function analizHtml(detay,zaman){
       ${svg('events',16)} Analiz · ${esc(_ANALIZ_SINIF[a.sinif]||a.sinif||"olay")}
       <span class="chip" style="margin-left:auto;background:var(--accent-soft);color:var(--accent);">güven %${Math.round((a.guven||0)*100)}</span></div>
     ${satirlar}
+    ${kareIziHtml(a)}
     <div class="mut-s" style="padding:10px 15px;border-top:1px solid var(--line);">
       doğrulama: ${esc(a.dogrulama==="poz"?"yalnız poz (doğrulayıcı kutu yok)":(a.dogrulama||"—"))}
       · ön uyarıdan alarma ${a.sure_sn||0} sn · kişi ${a.izlendi_sn||0} sn izlendi · iz #${esc(a.iz??"—")}
+      ${a.kare!=null?` · alarm karesi ${esc(a.kare)} (${(+a.ts_sn||0).toFixed(2)} sn)`:""}
       ${olcum.length?" · "+esc(olcum.join(" · ")):""}</div></div>`;
+}
+/* Kare kare tespit dökümü — Test ekranındaki satırların kanıttaki karşılığı.
+   Klip görseldir, bu liste okunabilir kanıttır: hangi karede izleme, hangi
+   karede ön uyarı, hangi karede alarm (istek 2026-09-24). */
+const _ASAMA_KISA={izle:"izleme",on_uyari:"ön uyarı",alarm:"ALARM"};
+/* Olay akışı satırında kare/saniye — sayım, plaka ve yangın olaylarında sütunda
+   duruyor; telefon/sigara alarmlarında analiz özetinin içinde. İkisi de aynı
+   biçimde yazılır ki liste tek dille okunsun. */
+function kareBilgisi(e){
+  let kare=e.frame_idx,ts=e.ts_seconds;
+  if(kare==null&&e.detay){try{const a=JSON.parse(e.detay);kare=a.kare;ts=a.ts_sn;}catch(x){}}
+  if(kare==null&&ts==null)return "";
+  const p=[];
+  if(kare!=null)p.push(`kare ${kare}`);
+  if(ts!=null)p.push(`${(+ts).toFixed(2)} sn`);
+  return ` <span class="mut-s">· ${esc(p.join(" · "))}</span>`;
+}
+function kareIziHtml(a){
+  const ks=a.kareler;
+  if(!Array.isArray(ks)||!ks.length)return "";
+  const satir=k=>{const c=_ANALIZ_RENK[k.asama]||_ANALIZ_RENK.izle;
+    return `<tr${k.kare===a.kare?' style="font-weight:700;"':''}>
+      <td class="mono">${esc(k.kare)}</td>
+      <td class="mono">${(+k.ts_sn||0).toFixed(2)} sn</td>
+      <td>${esc(k.etiket)}</td>
+      <td><span class="chip" style="background:${c[0]};color:${c[1]};">${esc(_ASAMA_KISA[k.asama]||k.asama)}</span></td>
+      <td class="mono mut-s">%${Math.round((k.ortusme||0)*100)}</td></tr>`;};
+  return `<details style="border-top:1px solid var(--line);">
+    <summary style="padding:10px 15px;cursor:pointer;font-weight:650;font-size:12px;">Kare tespitleri (${ks.length} kare)</summary>
+    <div style="max-height:230px;overflow:auto;padding:0 15px 12px;">
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr class="mut-s" style="text-align:left;">
+          <th>kare</th><th>akış saniyesi</th><th>etiket</th><th>aşama</th><th>örtüşme</th></tr></thead>
+        <tbody>${ks.map(satir).join("")}</tbody></table>
+      <div class="mut-s" style="margin-top:8px;">Örtüşme: o karedeki kutunun alarm kutusuyla kesişimi — kalabalıkta doğru kişiye bakıldığını gösterir.</div>
+    </div></details>`;
 }
 function kanitAc(yol,klip,detay,zaman){
   const m=document.createElement("div");m.className="mask";

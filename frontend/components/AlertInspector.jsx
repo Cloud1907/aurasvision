@@ -48,10 +48,34 @@ function AnalysisTimeline({ detay, time }) {
       <b aria-hidden="true">{ASAMA_IM[s.durum] || '·'}</b>
       <div><strong>{ASAMA_AD[s.durum] || s.durum}</strong><span>{s.not}</span></div>
       <time>{saat(s.once_sn)}</time></li>)}</ol>
+    <FrameTrace analiz={a}/>
     <p>doğrulama: {a.dogrulama === 'poz' ? 'yalnız poz (doğrulayıcı kutu yok)' : (a.dogrulama || '—')}
       {' · '}ön uyarıdan alarma {a.sure_sn || 0} sn · kişi {a.izlendi_sn || 0} sn izlendi · iz #{a.iz ?? '—'}
+      {a.kare != null ? ` · alarm karesi ${a.kare} (${(+a.ts_sn || 0).toFixed(2)} sn)` : ''}
       {olcum.length ? ` · ${olcum.join(' · ')}` : ''}</p>
   </section>;
+}
+
+const ASAMA_KISA = { izle: 'izleme', on_uyari: 'ön uyarı', alarm: 'ALARM' };
+
+/* Kare kare tespit dökümü: klip görsel kanıt, bu liste okunabilir kanıttır —
+   hangi karede izleme, hangi karede ön uyarı, hangi karede alarm. */
+function FrameTrace({ analiz }) {
+  const ks = analiz.kareler;
+  if (!Array.isArray(ks) || !ks.length) return null;
+  return <details className="ops-frames">
+    <summary>Kare tespitleri ({ks.length} kare)</summary>
+    <div>
+      <table>
+        <thead><tr><th>kare</th><th>akış saniyesi</th><th>etiket</th><th>aşama</th><th>örtüşme</th></tr></thead>
+        <tbody>{ks.map((k, i) => <tr key={i} data-alarm={k.kare === analiz.kare ? '1' : undefined}>
+          <td>{k.kare}</td><td>{(+k.ts_sn || 0).toFixed(2)} sn</td><td>{k.etiket}</td>
+          <td data-asama={k.asama}>{ASAMA_KISA[k.asama] || k.asama}</td>
+          <td>%{Math.round((k.ortusme || 0) * 100)}</td></tr>)}</tbody>
+      </table>
+      <p>Örtüşme: o karedeki kutunun alarm kutusuyla kesişimi — kalabalıkta doğru kişiye bakıldığını gösterir.</p>
+    </div>
+  </details>;
 }
 
 function EvidenceImage({ path, bridge }) {
