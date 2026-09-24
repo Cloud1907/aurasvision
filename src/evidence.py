@@ -35,6 +35,37 @@ def etkin(cfg, tur: str) -> bool:
     return bool(cfg.get(f"evidence.{tur}", tur != "face"))
 
 
+def _h264_yaz(yol, kareler, w: int, h: int, fps: float) -> bool:
+    """BGR kareleri H.264/yuv420p mp4 olarak yazar (tarayıcıda oynar). Hata → False."""
+    try:
+        import av
+        import cv2
+        from fractions import Fraction
+        # H.264 çift boyut ister; tek piksel varsa kırp
+        w2, h2 = w - (w % 2), h - (h % 2)
+        with av.open(str(yol), "w", options={"movflags": "+faststart"}) as out:
+            vs = out.add_stream("libx264", rate=Fraction(fps).limit_denominator(1000))
+            vs.width, vs.height = w2, h2
+            vs.pix_fmt = "yuv420p"
+            vs.options = {"preset": "veryfast", "crf": "26"}
+            for k in kareler:
+                if k.shape[:2] != (h, w):
+                    k = cv2.resize(k, (w, h))
+                fr = av.VideoFrame.from_ndarray(k[:h2, :w2], format="bgr24")
+                for pkt in vs.encode(fr):
+                    out.mux(pkt)
+            for pkt in vs.encode(None):
+                out.mux(pkt)
+        return True
+    except Exception as e:
+        print(f"[evidence] H.264 klip yazılamadı ({e.__class__.__name__}: {e}) — mp4v yedeği", flush=True)
+        try:
+            Path(yol).unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
 def klip_kaydet(cfg, kareler, camera_id: str, tur: str, fps: float = 5.0) -> str:
     """Doğrulayan kareleri kısa MP4 olarak yazar, /media'ya göreli yolu döndürür.
 
@@ -54,6 +85,12 @@ def klip_kaydet(cfg, kareler, camera_id: str, tur: str, fps: float = 5.0) -> str
         klasor = _kok(cfg) / date.today().isoformat()
         klasor.mkdir(parents=True, exist_ok=True)
         ad = f"{camera_id}_{tur}_{uuid.uuid4().hex[:10]}.mp4"
+        # H.264 (avc1) + faststart: tarayıcı OpenCV'nin mp4v (MPEG-4 Part 2) çıktısını
+        # OYNATMAZ — kanıt penceresinde klip siyah kalıyordu ("video oynamıyor",
+        # 2026-09-24). PyAV libx264 bundle'lı; başarısızsa mp4v'ye düşülür (en azından
+        # dosya olur, indirilebilir).
+        if _h264_yaz(klasor / ad, kareler, w, h, max(1.0, float(fps))):
+            return f"evidence/{klasor.name}/{ad}"
         yazici = cv2.VideoWriter(str(klasor / ad), cv2.VideoWriter_fourcc(*"mp4v"),
                                  max(1.0, float(fps)), (w, h))
         if not yazici.isOpened():
