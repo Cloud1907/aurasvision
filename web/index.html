@@ -748,11 +748,18 @@ function toggleMenu(force){
   else if(document.activeElement?.closest('.rail'))button.focus();
 }
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.body.classList.contains('menu-open'))toggleMenu(false);});
+/* Alarm zamanı, analizin BAKTIĞI kareden ~2 sn sonrasıdır: satır karar anında
+   yazılır, kare ise çözücüden gecikmeli gelir (ölçüm 2026-09-25, kamera-207 —
+   alarm saniyesinde kişi kadrajdan çıkmış, −2 sn'de kutunun tam içinde). Olaya
+   birkaç saniye ÖNCEDEN girilir; operatör olayın gelişini de görür. */
+const _OLAY_ONCE_SN=4;
+/* Analiz karesi ile alarm satırı arasındaki ölçülmüş gecikme (sn). */
+const _ANALIZ_GECIKME_SN=2;
 function recordAt(camera,at){
   window._rc=camera;
   const d=AurasRuntime.parseTime(at);
   if(d){window._rg=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    window._rseek=d.getHours()*3600+d.getMinutes()*60+d.getSeconds();}
+    window._rseek=Math.max(0,d.getHours()*3600+d.getMinutes()*60+d.getSeconds()-_OLAY_ONCE_SN);}
   return go('rec');
 }
 const panelBridge={api,go,openCamera:openCam,record:recordAt,snapshot:id=>snap(id)+"&t="+Date.now(),
@@ -2437,7 +2444,11 @@ function recSonaGit(){
 /* Bant konumu SEÇİLİ GÜNÜN başına göre ölçülür. Saat-dakika-saniye almak, bir
    önceki geceden sarkan segmenti (23:59:43'te başlayıp 00:00:43'te biten) bandın
    EN SAĞINA koyuyordu ve oynatma oradan başlıyordu (ölçüm 2026-09-25). */
-const _recSaniye=t=>{const d=new Date(String(t).replace(" ","T"));
+const _recSaniye=t=>{
+  // Date de kabul edilir: alarm zamanları UTC saklandığı için çağıran tarafta
+  // AurasRuntime.parseTime ile çözülüp BURAYA Date olarak geliyor. String(Date)
+  // biçimi "Thu Sep 25 ..." olduğundan eski hâli NaN üretiyordu (ölçüm 2026-09-25).
+  const d=(t instanceof Date)?t:new Date(String(t).replace(" ","T"));
   if(REC.gun){const g0=new Date(`${REC.gun}T00:00:00`);
     if(!isNaN(g0))return (d-g0)/1000;}
   return d.getHours()*3600+d.getMinutes()*60+d.getSeconds();};
@@ -2456,7 +2467,10 @@ async function recAlarmYukle(cam,gun,ctx){
     REC.alarmlar=(ev||[]).filter(e=>e.detay&&(e.type==="telefon"||e.type==="sigara")).map(e=>{
       let a=null;try{a=JSON.parse(e.detay);}catch(x){return null;}
       if(!a||!Array.isArray(a.kareler)||!a.kareler.length||!a.kare_wh)return null;
-      const t0=_recSaniye(AurasRuntime.parseTime(e.time));   // alarmın gün içi saniyesi
+      // Alarm satırı karar anında yazılır, analiz edilen kare ondan ~2 sn ÖNCEDİR
+      // (ölçüm 2026-09-25, kamera-207: −2 sn'de kişi kutunun tam içinde, 0'da kadraj
+      // dışında). Kutular bu kadar geri kaydırılmazsa boş zemine çiziliyor.
+      const t0=_recSaniye(AurasRuntime.parseTime(e.time))-_ANALIZ_GECIKME_SN;
       // Her karenin alarma göre geriye ofseti: alarm akış saniyesi − kare akış saniyesi
       const kareler=a.kareler.filter(k=>k.kutu).map(k=>({sn:t0-((+a.ts_sn||0)-(+k.ts_sn||0)),
         kutu:k.kutu,asama:k.asama}));
@@ -2490,7 +2504,7 @@ function recKatmanCiz(){
   const al=REC.alarmlar.find(a=>REC.imlec>=a.bas-0.5&&REC.imlec<=a.bit);
   if(!al)return;
   // O ana en yakın kare (yarım saniyeden uzaksa çizme — yanlış yere kutu koymayalım)
-  let en=null,fark=0.6;
+  let en=null,fark=0.9;   // gecikme kameradan kameraya biraz oynuyor
   for(const k of al.kareler){const d=Math.abs(k.sn-REC.imlec);if(d<fark){fark=d;en=k;}}
   const alarmda=REC.imlec>=al.sn-0.6;
   if(!en&&!alarmda)return;
