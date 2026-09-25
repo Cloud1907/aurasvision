@@ -1591,7 +1591,7 @@ const SCREENS={
     // Gün YEREL tarihtir: toISOString UTC verir ve 00:00–03:00 arasında DÜNÜ açıyordu
     // (o günde kayıt yoksa ekran boş geliyor, "kayda git çalışmıyor" olarak görünüyordu).
     const gun=window._rg||_yerelGun();window._rg=gun;
-    REC={segler:[],gun,cam:camId};
+    REC={segler:[],gun,cam:camId,alarmlar:[],katman:_katmanAcik()};
     $("#tact").innerHTML=`<button class="btn" onclick="disaAktar()">${svg('bolt',15)} Kanıt olarak dışa aktar</button>`;
     $("#content").innerHTML=`
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
@@ -1601,7 +1601,10 @@ const SCREENS={
       <div class="card pad">
         <div id="recwrap" style="position:relative;width:100%;aspect-ratio:16/9;max-height:56vh;background:#000;border-radius:var(--r-lg);overflow:hidden;">
           <video id="recvid" playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;"></video>
-          <video id="recvid2" playsinline muted preload="auto" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;opacity:0;pointer-events:none;"></video></div>
+          <video id="recvid2" playsinline muted preload="auto" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;opacity:0;pointer-events:none;"></video>
+          <!-- Analiz katmanı: arşiv HAM görüntüdür, kutular oynatırken üstüne bindirilir
+               (istek 2026-09-25: "kayıttan izlerken de sigara içenin üstünü çizsin") -->
+          <canvas id="rovl" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;"></canvas></div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">
           <div class="seg">
             <button title="60 sn geri (Shift+←)" onclick="recAtla(-60)">−60</button>
@@ -1610,6 +1613,8 @@ const SCREENS={
             <button title="10 sn ileri (→)" onclick="recAtla(10)">+10</button>
             <button title="60 sn ileri (Shift+→)" onclick="recAtla(60)">+60</button></div>
           <div class="seg" id="rhiz">${[0.5,1,2,4,8].map(h=>`<button class="${h===1?'on':''}" onclick="recHiz(${h},this)">${h}×</button>`).join("")}</div>
+          <button class="btn sm ${REC.katman?'on':''}" id="rkat" title="Alarm anlarında kişi ve yakalanan nesne kutusunu videonun üstüne çizer"
+                  onclick="recKatmanAc(this)">${svg('events',13)} Analiz katmanı</button>
           <button class="btn sm" title="Günün son kaydına git" onclick="recSonaGit()">Son kayıt</button>
           <button class="btn sm" title="İzlenen segment dosyasını indir" onclick="recIndir()">İndir</button>
           <button class="btn sm" title="Bu kameranın/günün klasörünü sunucuda açar" onclick="klasorAc(REC.cam,REC.gun)">Klasör</button>
@@ -2224,7 +2229,17 @@ function gecenSure(t){
    hls.js KULLANILMIYOR: çevrimdışı kurulumda CDN yok, kütüphaneyi repoya kopyalamak
    da bakım yükü. Segmentlerimiz düz mp4 olduğu için sıradaki dosyayı <video>'ya
    yüklemek yeterli — seek = doğru segmenti bul + içinde offset'e git. */
-let REC={segler:[],gun:"",cam:""};
+let REC={segler:[],gun:"",cam:"",alarmlar:[],katman:true};
+/* Analiz katmanı tercihi kalıcıdır: operatör bir kez kapattıysa her gün yeniden
+   kapatmasın (panel katman anahtarlarıyla aynı desen). */
+const _KATMAN_ANAHTAR="aurasvision-kayit-katman-v1";
+function _katmanAcik(){try{return localStorage.getItem(_KATMAN_ANAHTAR)!=="0";}catch(e){return true;}}
+function recKatmanAc(btn){
+  REC.katman=!REC.katman;
+  try{localStorage.setItem(_KATMAN_ANAHTAR,REC.katman?"1":"0");}catch(e){}
+  if(btn)btn.classList.toggle("on",REC.katman);
+  recKatmanCiz();
+}
 /* Boş gün açıklaması: arşiv bu kamerada nereden başlıyor, neden daha eskisi yok.
    Arşiv derinliğini gün sayısı değil DİSK KOTASI belirliyor; operatör dün için
    boş ekran görünce "kayıt çalışmıyor" sanıyordu (2026-09-24). */
@@ -2307,6 +2322,7 @@ function recBagla(v){
     REC.imlec=_recSaniye(REC.aktif.start_time)+v.currentTime;
     $("#rsaat").textContent=recSaatYaz(REC.imlec);
     const p=$("#rpp");if(p)p.textContent=v.paused?"▶":"❚❚";
+    recKatmanCiz();   // analiz kutuları her karede güncellenir (bant 400 ms'de bir)
     if(!REC._cizZamani||Date.now()-REC._cizZamani>400){REC._cizZamani=Date.now();recCiz();}
   };
 }
@@ -2319,6 +2335,7 @@ async function recYukle(cam,gun,ctx){
     REC.segler=await ctx.get(`/recordings?camera=${encodeURIComponent(cam)}&start=${bas}&end=${bit}&limit=20000`);
   }catch(e){if(!ctx.current())return;throw e;}
   REC.gun=gun;REC.cam=cam;
+  recAlarmYukle(cam,gun,ctx);
   const st=$("#rstat");
   const toplam=REC.segler.reduce((n,r)=>n+(+r.duration||0),0);
   if(st){
@@ -2354,7 +2371,7 @@ async function recYukle(cam,gun,ctx){
   };
   ctx.cleanup(()=>{document.onkeydown=null;clearTimeout(REC._onTimer);REC.v?.pause();REC.v2?.pause();});
   if(window._rseek!=null){const t=window._rseek;window._rseek=null;recOlayAni(t);}
-  else if(REC.segler.length)recOynat(_recSaniye(REC.segler[0].start_time));
+  else if(REC.segler.length)recOynat(Math.max(0,_recSaniye(REC.segler[0].start_time)));
 }
 function recOlayAni(t){
   REC.imlec=t;REC.aktif=null;recCiz();
@@ -2417,8 +2434,84 @@ function recSonaGit(){
   const son=REC.segler[REC.segler.length-1];
   recOynat(_recSaniye(son.start_time)+Math.max(0,(+son.duration||0)-5));
 }
+/* Bant konumu SEÇİLİ GÜNÜN başına göre ölçülür. Saat-dakika-saniye almak, bir
+   önceki geceden sarkan segmenti (23:59:43'te başlayıp 00:00:43'te biten) bandın
+   EN SAĞINA koyuyordu ve oynatma oradan başlıyordu (ölçüm 2026-09-25). */
 const _recSaniye=t=>{const d=new Date(String(t).replace(" ","T"));
+  if(REC.gun){const g0=new Date(`${REC.gun}T00:00:00`);
+    if(!isNaN(g0))return (d-g0)/1000;}
   return d.getHours()*3600+d.getMinutes()*60+d.getSeconds();};
+/* ---- Arşiv üzerinde ANALİZ KATMANI ----
+   Arşiv segmenti kameranın ham görüntüsüdür; kaydederken üstüne hiçbir şey
+   yazılmaz (yazsaydık kanıt değeri düşerdi ve yeniden kodlama gerekirdi).
+   Bu yüzden kutular oynatırken bindirilir: her alarmın analiz özetinde kare kare
+   kutular ve kaynak çözünürlük var (davranis._kare_izi), alarmın saatiyle
+   birlikte her kare için MUTLAK zaman çıkar. İstek 2026-09-25. */
+async function recAlarmYukle(cam,gun,ctx){
+  REC.alarmlar=[];
+  try{
+    const bas=new Date(`${gun}T00:00:00`).toISOString(),bit=new Date(`${gun}T23:59:59.999`).toISOString();
+    const ev=await ctx.get(`/events?kamera=${encodeURIComponent(cam)}&start=${encodeURIComponent(bas)}&end=${encodeURIComponent(bit)}&limit=500`);
+    if(!ctx.current()||REC.cam!==cam||REC.gun!==gun)return;
+    REC.alarmlar=(ev||[]).filter(e=>e.detay&&(e.type==="telefon"||e.type==="sigara")).map(e=>{
+      let a=null;try{a=JSON.parse(e.detay);}catch(x){return null;}
+      if(!a||!Array.isArray(a.kareler)||!a.kareler.length||!a.kare_wh)return null;
+      const t0=_recSaniye(AurasRuntime.parseTime(e.time));   // alarmın gün içi saniyesi
+      // Her karenin alarma göre geriye ofseti: alarm akış saniyesi − kare akış saniyesi
+      const kareler=a.kareler.filter(k=>k.kutu).map(k=>({sn:t0-((+a.ts_sn||0)-(+k.ts_sn||0)),
+        kutu:k.kutu,asama:k.asama}));
+      if(!kareler.length)return null;
+      return {tur:e.type,sn:t0,wh:a.kare_wh,nesne:a.nesne||null,kareler,
+              bas:kareler[0].sn,bit:t0+1.0};
+    }).filter(Boolean);
+  }catch(e){/* alarm katmanı yoksa oynatma yine çalışır */}
+  recCiz();
+}
+/* Tema jetonunu canvas'a taşı: sabit hex karanlık temada kör kalıyor. */
+const _jeton=(ad,yedek="#888")=>
+  (getComputedStyle(document.body).getPropertyValue(ad)||"").trim()||yedek;
+/* Videonun GERÇEKTEN çizildiği dikdörtgen: object-fit:contain letterbox bırakır,
+   kutuları kutunun tamamına göre ölçeklersek kayarlar. */
+function _videoAlani(v,kutuW,kutuH){
+  const vw=v.videoWidth||16,vh=v.videoHeight||9;
+  const o=Math.min(kutuW/vw,kutuH/vh);
+  const w=vw*o,h=vh*o;
+  return {x:(kutuW-w)/2,y:(kutuH-h)/2,w,h,olcek:o,vw,vh};
+}
+function recKatmanCiz(){
+  // Oynatıcı çift tamponlu: ölçek AKTİF videodan alınır, yoksa kutular kayar.
+  const cv=$("#rovl"),v=recV();if(!cv||!v)return;
+  const kutu=cv.parentElement.getBoundingClientRect();
+  if(cv.width!==Math.round(kutu.width)||cv.height!==Math.round(kutu.height)){
+    cv.width=Math.round(kutu.width);cv.height=Math.round(kutu.height);
+  }
+  const cx=cv.getContext("2d");cx.clearRect(0,0,cv.width,cv.height);
+  if(!REC.katman||!REC.alarmlar?.length||REC.imlec==null)return;
+  const al=REC.alarmlar.find(a=>REC.imlec>=a.bas-0.5&&REC.imlec<=a.bit);
+  if(!al)return;
+  // O ana en yakın kare (yarım saniyeden uzaksa çizme — yanlış yere kutu koymayalım)
+  let en=null,fark=0.6;
+  for(const k of al.kareler){const d=Math.abs(k.sn-REC.imlec);if(d<fark){fark=d;en=k;}}
+  const alarmda=REC.imlec>=al.sn-0.6;
+  if(!en&&!alarmda)return;
+  const alan=_videoAlani(v,cv.width,cv.height);
+  const sx=alan.w/al.wh[0],sy=alan.h/al.wh[1];
+  const ciz=(b,renk,etiket,kalin)=>{
+    const x=alan.x+b[0]*sx,y=alan.y+b[1]*sy,w=(b[2]-b[0])*sx,h=(b[3]-b[1])*sy;
+    cx.lineWidth=kalin;cx.strokeStyle=renk;cx.strokeRect(x,y,w,h);
+    if(etiket){cx.font="600 13px system-ui,sans-serif";
+      const m=cx.measureText(etiket).width+10;
+      cx.fillStyle=renk;cx.fillRect(x,Math.max(0,y-19),m,18);
+      cx.fillStyle="#fff";cx.fillText(etiket,x+5,Math.max(13,y-6));}
+  };
+  const et={telefon:"telefon",sigara:"sigara"}[al.tur]||al.tur;
+  if(en){
+    const renk=_jeton(en.asama==="alarm"?"--danger":(en.asama==="on_uyari"?"--warn":"--ink-3"));
+    const asama=en.asama==="alarm"?"ALARM":(en.asama==="on_uyari"?"ön uyarı":"izleme");
+    ciz(en.kutu,renk,`${et} · ${asama}`,3);
+  }
+  if(al.nesne&&alarmda)ciz(al.nesne,_jeton("--danger"),et,2);
+}
 function recCiz(){
   const cv=$("#rtl");if(!cv)return;
   cv.width=cv.clientWidth||900;
@@ -2434,6 +2527,11 @@ function recCiz(){
   REC.segler.forEach(r=>{
     const b=_recSaniye(r.start_time),g=Math.max(1,(+r.duration||0)/86400*W);
     cx.fillRect(b/86400*W,8,g,H-16);
+  });
+  // alarm işaretleri: bantta nereye bakacağını GÖR (telefon uyarı, sigara tehlike rengi)
+  (REC.alarmlar||[]).forEach(a=>{
+    cx.fillStyle=_jeton(a.tur==="sigara"?"--danger":"--warn");
+    cx.fillRect(a.sn/86400*W-1.5,0,3,7);
   });
   // oynatma imleci
   if(REC.imlec!=null){
@@ -2456,8 +2554,16 @@ function recBul(saniye,yon){
   return sonraki?{r:sonraki,offset:0}:(onceki?{r:onceki,offset:Math.max(0,(+onceki.duration||0)-3)}:null);
 }
 function recOynat(saniye,yon){
-  const bul=recBul(saniye,yon);
+  let bul=recBul(saniye,yon);
   if(!bul){toast("O anda kayıt yok","warn");return;}
+  // Segmentin son yarım saniyesine denk gelen istek sonraki segmente kaydırılır:
+  // günün ilk saniyesi bir ÖNCEKİ geceden sarkan segmentin kuyruğuna düşüyordu ve
+  // oynatıcı donmuş bir karede bekliyordu (ölçüm 2026-09-25, kamera-207).
+  const sure=+bul.r.duration||0;
+  if(sure>0&&bul.offset>=sure-0.5){
+    const sonraki=recBul(_recSaniye(bul.r.start_time)+sure+0.1,"ileri");
+    if(sonraki)bul=sonraki;
+  }
   // İstenen segment yedek oynatıcıda zaten açıldıysa takas et: çözücü kurulu,
   // görüntü anında gelir. readyState>=2 = ilk kare çözülmüş (HAVE_CURRENT_DATA).
   const bek=recBek();
@@ -2479,6 +2585,7 @@ function recOynat(saniye,yon){
     .catch(e=>{const p=$("#rpp");if(p)p.textContent="▶";toast("Oynatma tarayıcı tarafından engellendi — ▶ düğmesine basın ("+(e&&e.name||"")+")","warn",6000);});
   const p=$("#rpp");if(p)p.textContent="❚❚";
   recCiz();
+  recKatmanCiz();
   recOnYukle();
 }
 function recSonraki(){

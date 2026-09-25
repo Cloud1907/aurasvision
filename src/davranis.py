@@ -925,10 +925,13 @@ class DavranisHatti:
             kayit = izmap.get(tid)
             if kayit is None:
                 continue          # kişi o karede sahnede değil (ya da iz kopmuş)
-            et = kayit[0]
+            et, kutu = kayit
             asama = "izle" if et == "kisi" else ("on_uyari" if et.endswith("?") else "alarm")
             cikti.append({"kare": int(fi), "ts_sn": round(float(fts), 2),
-                          "etiket": et, "asama": asama})
+                          "etiket": et, "asama": asama,
+                          # Kutu, ARŞİV OYNATICISININ üstüne çizebilmesi için taşınır
+                          # (istek 2026-09-25: "kayıttan izlerken de üstünü çizsin")
+                          "kutu": [round(float(v), 1) for v in kutu]})
         return cikti
 
     def _yay(self, o: dict, kare) -> None:
@@ -950,6 +953,12 @@ class DavranisHatti:
             # az örnekle karar veriyor demektir — kanıtta görünsün.
             analiz["tempo_fps"] = round(self._olculen_fps(), 2)
             analiz["hedef_fps"] = round(float(self.efektif_fps), 2)
+            # Arşiv oynatıcısı kutuları kendi ölçeğine çevirebilsin: kaynak çözünürlük,
+            # alarm anındaki kişi kutusu ve doğrulayıcının gördüğü nesne kutusu.
+            analiz["kare_wh"] = [int(self.w), int(self.h)]
+            analiz["kutu"] = [round(float(v), 1) for v in o["kutu"]]
+            if o.get("dogrulama_kutu"):
+                analiz["nesne"] = [round(float(v), 1) for v in o["dogrulama_kutu"]]
         # Kanıt türü ve uyarı türü = sınıf: "telefon" ve "sigara" panelde, kanıt
         # klasöründe ve webhook'ta AYRI görünür (evidence.telefon / evidence.sigara).
         vurgu = o.get("dogrulama_kutu")
